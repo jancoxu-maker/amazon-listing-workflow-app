@@ -120,6 +120,38 @@ Recommended internal beta architecture:
 - Object storage or server disk for generated images and export ZIPs.
 - Database for projects, claim ledgers, review history, brand library, and user roles.
 
+## Vercel + Render Beta Deployment
+
+Recommended order:
+
+1. Deploy the backend API on Render from this GitHub repository.
+2. Copy the Render service URL, for example `https://listingflow-api.onrender.com`.
+3. Deploy the frontend on Vercel from the same GitHub repository.
+4. Set the Vercel environment variable:
+
+```text
+VITE_IMAGE_API_BASE_URL=https://your-render-api-url.onrender.com
+```
+
+5. Redeploy the Vercel frontend after setting the environment variable.
+
+Render backend environment variables:
+
+```text
+IMAGE_API_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_TEXT_MODEL=gemini-3.5-flash
+GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
+```
+
+Optional after the Vercel URL is known:
+
+```text
+CORS_ORIGIN=https://your-vercel-app.vercel.app
+```
+
+For the first beta, generated images and ZIP exports use the Render service filesystem. This is enough for smoke testing, but not a durable multi-user storage plan. Use object storage or a persistent disk before wider rollout.
+
 ## Known Gaps Before Wider Rollout
 
 - No account login yet.
@@ -128,4 +160,3 @@ Recommended internal beta architecture:
 - No immutable audit log yet.
 - Brand library is still local storage.
 - Visual generation quality still depends on model output and prompt iteration.
-

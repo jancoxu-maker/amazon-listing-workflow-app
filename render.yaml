@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: listingflow-api
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run api
+    healthCheckPath: /api/health
+    envVars:
+      - key: IMAGE_API_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_TEXT_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_IMAGE_MODEL
+        value: gemini-3.1-flash-image
+      - key: GENERATED_IMAGE_DIR
+        value: generated-images
+      - key: EXPORT_DIR
+        value: exports

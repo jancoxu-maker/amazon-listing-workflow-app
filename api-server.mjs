@@ -20,7 +20,7 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
-const PORT = Number(process.env.API_PORT || 5174);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 5174);
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image';
 const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || 'gemini-3.5-flash';
@@ -30,7 +30,7 @@ const IMAGE_API_PROVIDER = process.env.IMAGE_API_PROVIDER || (GEMINI_API_KEY ? '
 const MAX_BODY_BYTES = 18 * 1024 * 1024;
 const GENERATED_IMAGE_DIR = resolve(process.env.GENERATED_IMAGE_DIR || 'generated-images');
 const EXPORT_DIR = resolve(process.env.EXPORT_DIR || 'exports');
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 function sendJson(response, status, payload) {
