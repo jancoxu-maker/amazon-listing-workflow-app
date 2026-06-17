@@ -2677,87 +2677,6 @@ async function createAiReviewImageDataUrl(imageSrc, maxSide = 1200) {
   return createImageThumbnail(sourceDataUrl, maxSide);
 }
 
-function trimTransparentImagePadding(dataUrl) {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => {
-      const width = image.naturalWidth;
-      const height = image.naturalHeight;
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d', { willReadFrequently: true });
-      if (!context) {
-        resolve(dataUrl);
-        return;
-      }
-      context.drawImage(image, 0, 0);
-      const pixels = context.getImageData(0, 0, width, height).data;
-      let hasTransparency = false;
-      let minX = width;
-      let minY = height;
-      let maxX = -1;
-      let maxY = -1;
-
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const alpha = pixels[(y * width + x) * 4 + 3];
-          if (alpha < 250) hasTransparency = true;
-          if (alpha > 12) {
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-          }
-        }
-      }
-
-      if (!hasTransparency || maxX < minX || maxY < minY) {
-        resolve(dataUrl);
-        return;
-      }
-
-      const padding = Math.max(8, Math.round(Math.max(width, height) * 0.025));
-      const cropX = Math.max(0, minX - padding);
-      const cropY = Math.max(0, minY - padding);
-      const cropRight = Math.min(width - 1, maxX + padding);
-      const cropBottom = Math.min(height - 1, maxY + padding);
-      const cropWidth = cropRight - cropX + 1;
-      const cropHeight = cropBottom - cropY + 1;
-      const cropArea = cropWidth * cropHeight;
-      const fullArea = width * height;
-
-      if (cropArea / fullArea > 0.92) {
-        resolve(dataUrl);
-        return;
-      }
-
-      const outputCanvas = document.createElement('canvas');
-      outputCanvas.width = cropWidth;
-      outputCanvas.height = cropHeight;
-      const outputContext = outputCanvas.getContext('2d');
-      if (!outputContext) {
-        resolve(dataUrl);
-        return;
-      }
-      outputContext.drawImage(
-        image,
-        cropX,
-        cropY,
-        cropWidth,
-        cropHeight,
-        0,
-        0,
-        cropWidth,
-        cropHeight
-      );
-      resolve(outputCanvas.toDataURL('image/png'));
-    };
-    image.onerror = () => resolve(dataUrl);
-    image.src = dataUrl;
-  });
-}
-
 async function saveGeneratedImageToApi({ imageDataUrl, projectForm, slotId, runId }) {
   const response = await fetch(`${IMAGE_API_BASE_URL}/api/save-generated-image`, {
     method: 'POST',
@@ -3616,8 +3535,7 @@ function ProjectPage({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const rawPreview = String(reader.result || '');
-      const preview = await trimTransparentImagePadding(rawPreview);
+      const preview = String(reader.result || '');
       const referenceType = referenceTypes.find((item) => item.id === referenceId);
       setImageAuditStatus(`${referenceType?.label || '参考图'}检测中...`);
       try {
@@ -3722,24 +3640,24 @@ function ProjectPage({
                       <strong>{reference.label}</strong>
                       <p>{reference.helper}</p>
                       {reference.name && <span>{reference.name}</span>}
-                    </div>
-                    <div className="reference-upload-actions">
-                      <label className="secondary-button upload-button" htmlFor={`reference-upload-${reference.id}`}>
-                        <Upload size={17} />
-                        上传
-                      </label>
-                      <input
-                        accept="image/*"
-                        className="file-input"
-                        id={`reference-upload-${reference.id}`}
-                        onChange={(event) => handleReferenceImageUpload(reference.id, event)}
-                        type="file"
-                      />
-                      {reference.preview && !reference.fallback && (
-                        <button className="text-button" onClick={() => removeReferenceImage(reference.id)}>
-                          移除
-                        </button>
-                      )}
+                      <div className="reference-upload-actions">
+                        <label className="secondary-button upload-button" htmlFor={`reference-upload-${reference.id}`}>
+                          <Upload size={17} />
+                          上传
+                        </label>
+                        <input
+                          accept="image/*"
+                          className="file-input"
+                          id={`reference-upload-${reference.id}`}
+                          onChange={(event) => handleReferenceImageUpload(reference.id, event)}
+                          type="file"
+                        />
+                        {reference.preview && !reference.fallback && (
+                          <button className="text-button" onClick={() => removeReferenceImage(reference.id)}>
+                            移除
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
