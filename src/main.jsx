@@ -3646,7 +3646,7 @@ function ProjectPage({
               <div className="reference-set-grid">
                 {getReferenceItems(projectForm).map((reference) => (
                   <div className={reference.required ? 'reference-upload-card required' : 'reference-upload-card'} key={reference.id}>
-                    <div className="reference-upload-preview">
+                    <div className={reference.preview ? 'reference-upload-preview has-image' : 'reference-upload-preview'}>
                       {reference.preview ? (
                         <img src={reference.preview} alt={reference.label} />
                       ) : (
