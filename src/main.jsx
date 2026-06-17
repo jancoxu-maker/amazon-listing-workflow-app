@@ -895,6 +895,7 @@ const promptTuningRules = {
 
 const listingImageStrategyRules = [
   'First principle: the image must visually prove the selected selling point. Use scene, product detail, physical state, comparison, scale, or structure as evidence before relying on explanatory text.',
+  'For standard listing slot 01, the product should visually fill about 80-85% of the canvas, should not fall below 75% unless the product shape is unusually long or thin, and must remain fully visible without cropping or distortion.',
   'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short English title or a few short labels over paragraphs.',
   'Blocked or forbidden claims must not be stated, suggested, implied, staged, symbolized, or visually hinted as a benefit. You may show neutral factual product appearance or ordinary use only when it does not communicate the blocked claim.',
   'For standard listing images, if an image includes a title, place the title consistently at the top of the image. A+ content is an exception: title placement may follow the module layout and does not have to be at the top.',
@@ -908,7 +909,8 @@ function getListingImageStrategyText() {
 const slotQualityGuardrails = {
   main: [
     'Primary image rule: preserve the original product as the hero. Do not add visible text, props, badges, lifestyle scenes, colored backgrounds, or extra accessories.',
-    'Keep the product large, centered, and cleanly cut out on pure white without changing the silhouette.'
+    'Keep the product large, centered, and cleanly cut out on pure white without changing the silhouette.',
+    'Product coverage rule: target 80-85% of the canvas, minimum 75% unless the product is unusually long or thin. Never crop or distort the product just to fill the frame.'
   ],
   benefits: [
     'Core benefits rule: show no more than three short English callouts. Each callout must point to a visible product feature or a visually demonstrated benefit.',
@@ -2815,7 +2817,7 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
       'Do not use crowded text; make the module richer through composition, hierarchy, imagery, spacing, and evidence, not through paragraphs.'
     ].join(' ')
     : isWhiteMainImage
-    ? 'Slot 01 is the Amazon primary white-background image: pure white background, product only, no text, no lifestyle scene, no props, no badges, no colored background.'
+    ? 'Slot 01 is the Amazon primary white-background image: pure white background, product only, no text, no lifestyle scene, no props, no badges, no colored background. Product coverage rule: make the product fill about 80-85% of the canvas, with a hard minimum around 75% unless the product is unusually long or thin. Keep the whole product visible with clean margins; do not crop, stretch, deform, or remove any part just to fill the frame.'
     : [
       'This is not the primary white-background image. It may use a clean background, background color, soft layout blocks, or a realistic use-scene background when that helps show the selected selling point.',
       options.baselineMode
@@ -2942,9 +2944,9 @@ function getImageAuditChecks(audit) {
   const longestSide = Math.max(audit.width, audit.height);
   const sizeStatus = longestSide >= 1600 ? 'pass' : longestSide >= 1000 ? 'warn' : 'fail';
   const backgroundStatus = audit.borderWhiteRatio >= 0.94 ? 'pass' : audit.borderWhiteRatio >= 0.85 ? 'warn' : 'fail';
-  const coverageStatus = audit.subjectCoverage >= 0.78 && audit.subjectCoverage <= 0.95
+  const coverageStatus = audit.subjectCoverage >= 0.75 && audit.subjectCoverage <= 0.9
     ? 'pass'
-    : audit.subjectCoverage >= 0.62 && audit.subjectCoverage <= 0.98
+    : audit.subjectCoverage >= 0.65 && audit.subjectCoverage <= 0.96
       ? 'warn'
       : 'fail';
   const storageStatus = audit.fileSizeMb <= 2.5 ? 'pass' : audit.fileSizeMb <= 4.5 ? 'warn' : 'fail';
@@ -2966,7 +2968,7 @@ function getImageAuditChecks(audit) {
       label: '主体占比',
       value: `${Math.round(audit.subjectCoverage * 100)}%`,
       status: coverageStatus,
-      detail: '按非白区域外接框粗估，目标接近 85%。'
+      detail: '主图目标 80%-85%，最低约 75%；细长产品可略低，但不能裁切或变形。'
     },
     {
       label: '本地保存体积',
@@ -6082,7 +6084,7 @@ function GenerationPage({
                 </div>
                 <div className="language-rule-note">
                   <Check size={15} />
-                  <p>关键词和卖点可以中文填写；生成图片里的可见文案统一输出英文。标准主图优先用画面证明卖点，尽量少放说明文字；如有标题通常放在图上方，7 张图保持统一字体和风格。A+ 是内容模块例外：不要求第一张白底，标题可按版式摆放，也可组合相关可用卖点。禁用卖点不能用画面暗示成卖点。</p>
+                  <p>关键词和卖点可以中文填写；生成图片里的可见文案统一输出英文。标准主图优先用画面证明卖点，尽量少放说明文字；第 1 张白底主图产品占画面目标 80%-85%，最低约 75%，且不能裁切或变形；如有标题通常放在图上方，7 张图保持统一字体和风格。A+ 是内容模块例外：不要求第一张白底，标题可按版式摆放，也可组合相关可用卖点。禁用卖点不能用画面暗示成卖点。</p>
                 </div>
                 <details className="disclosure-panel inline-disclosure">
                   <summary>

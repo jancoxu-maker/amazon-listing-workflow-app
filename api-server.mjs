@@ -702,7 +702,7 @@ function buildStoryboardPlannerPrompt(payload) {
     'When details or structure images are useful, prefer visible parts and construction facts over broad marketing claims.',
     isAPlusOutput
       ? 'A+ mode: no slot is required to be product-only on pure white. Backgrounds may use brand color fields, lifestyle scenes, detail panels, comparison bands, or editorial layouts when they support allowed claims.'
-      : 'Only slot 1, the Amazon primary image, must be product-only on a pure white background with no text, props, badges, scene, or colored background.',
+      : 'Only slot 1, the Amazon primary image, must be product-only on a pure white background with no text, props, badges, scene, or colored background. Plan slot 1 so the product fills about 80-85% of the canvas, with a minimum around 75% unless the product is unusually long or thin, while staying fully visible without cropping or distortion.',
     isAPlusOutput
       ? 'A+ modules should feel richer than standard listing images while staying readable, truthful, and product-led.'
       : 'Slots 2-7 are secondary listing images. They may use clean backgrounds, brand color backgrounds, soft layout blocks, or realistic use-scene backgrounds when the background helps communicate a supported selling point.',
@@ -858,7 +858,7 @@ function buildImageReviewPrompt(payload) {
     isAPlusOutput
       ? 'Background/layout rule: this is A+ content, not the Amazon primary image. It does not need a pure white background, and headings do not have to sit at the top. Richer editorial layout, brand color fields, lifestyle context, detail crops, and combined related allowed claims are acceptable if truthful and visually supported.'
       : isWhiteMainImage
-      ? 'Background rule: slot 1 primary image must be product-only on pure white background, with no visible copy, props, badges, scene, or colored background. Non-white background, visible copy, added props, heavy shadow, crop, or product deformation is a fail.'
+      ? 'Background rule: slot 1 primary image must be product-only on pure white background, with no visible copy, props, badges, scene, or colored background. Product size rule: the product should occupy about 80-85% of the canvas and should not fall below about 75% unless unusually long or thin. Too-small product is a warn/fail risk; non-white background, visible copy, added props, heavy shadow, crop, product deformation, or missing parts is a fail.'
       : 'Background rule: this is a secondary listing image. Clean backgrounds, brand color backgrounds, soft layout blocks, or realistic use-scene backgrounds are allowed if they support a verified selling point and remain physically believable.',
     '',
     'Strict pass/fail policy:',
@@ -870,6 +870,7 @@ function buildImageReviewPrompt(payload) {
     '',
     'Review dimensions:',
     '1. productConsistency: Does the candidate preserve product silhouette, part count, structure, material, color family, hardware, fold/open state, and proportions from the references? Changed shape, missing/extra parts, wrong material/color, or wrong product identity is a fail.',
+    '1b. mainImageCoverage: For slot 1 primary image only, does the product occupy roughly 80-85% of the canvas and at least about 75% while staying complete, centered, uncropped, and undeformed? Too-small product is warn/fail; cropped, stretched, deformed, or missing product parts are fail.',
     '2. scalePhysicalLogic: Are scale, contact points, shadows, scene placement, use state, and physical logic believable? Floating parts, object intersections, impossible supports, strange perspective, wrong human/product scale, or arrows that imply impossible motion are fail/warn risks.',
     '3. claimAccuracy: Are visible claims and visual implications supported by the brief/Ledger, and does the image actually prove the primary claim instead of merely stating it as text? Invented numbers, certifications, accessories, dimensions, blocked claims, or unproven benefits are fail risks.',
     '4. textRisk: Is any visible text, badge, logo, number, or claim garbled, misspelled, too tiny, invented, non-English, or risky? Final generated image copy must be short English only; Chinese visible text is a fail unless it is part of a photographed product label in the original reference.',
