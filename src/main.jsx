@@ -34,7 +34,30 @@ import './styles.css';
 
 const PROJECTS_STORAGE_KEY = 'listingflow.projects.v1';
 const BRAND_LIBRARY_STORAGE_KEY = 'listingflow.brands.v1';
+const INVITE_ACCESS_STORAGE_KEY = 'vistamz.inviteAccess.v1';
 const IMAGE_API_BASE_URL = import.meta.env.VITE_IMAGE_API_BASE_URL || 'http://localhost:5174';
+const inviteAccessCodes = [
+  { label: '内测邀请码 01', role: 'tester', hash: '48f3e317987ea2d51b3ca8dfd17c95eddbeb5f186715be4cf2d0f8709f0519db' },
+  { label: '内测邀请码 02', role: 'tester', hash: 'fc59c6c106d2378251a1873a68652192541fa07477f69f44af7b8ccb57d8edb3' },
+  { label: '内测邀请码 03', role: 'tester', hash: '20fefd0ca681e1f439db7e70fd007b05972172acde4628ac95093b99aa767dbf' },
+  { label: '内测邀请码 04', role: 'tester', hash: '9b058607078caec1266439fbbe95bcc2dca4f67984d86f586dcd5cb8732f63a0' },
+  { label: '内测邀请码 05', role: 'tester', hash: 'b1d010aad39db84d7a2bdd55513180c74e8febb7514a29f76a4c276b5e9f409e' },
+  { label: '管理员码', role: 'admin', hash: '777f93d0acc151f4b010aea9028e60a5f8bb74e9c38b24c8988588b34c317797' }
+];
+const helloCloud = [
+  { text: '你好', top: '10%', left: '5%', size: '32px', delay: '-4s', duration: '25s' },
+  { text: 'Hello', top: '18%', left: '72%', size: '46px', delay: '-11s', duration: '31s' },
+  { text: 'Hola', top: '31%', left: '18%', size: '24px', delay: '-7s', duration: '27s' },
+  { text: 'Bonjour', top: '43%', left: '66%', size: '30px', delay: '-14s', duration: '34s' },
+  { text: 'Hallo', top: '58%', left: '8%', size: '52px', delay: '-18s', duration: '36s' },
+  { text: 'Ciao', top: '67%', left: '78%', size: '26px', delay: '-2s', duration: '24s' },
+  { text: 'Olá', top: '79%', left: '22%', size: '38px', delay: '-9s', duration: '32s' },
+  { text: 'Hej', top: '25%', left: '45%', size: '20px', delay: '-20s', duration: '29s' },
+  { text: 'こんにちは', top: '72%', left: '48%', size: '28px', delay: '-13s', duration: '35s' },
+  { text: '안녕하세요', top: '7%', left: '38%', size: '22px', delay: '-6s', duration: '26s' },
+  { text: 'สวัสดี', top: '50%', left: '32%', size: '42px', delay: '-16s', duration: '33s' },
+  { text: 'مرحباً', top: '88%', left: '63%', size: '24px', delay: '-23s', duration: '37s' }
+];
 const sourceImage = '/sample/source/main-source.jpg';
 const generatedImages = [
   '/sample/final/01-main-white-background.png',
@@ -449,6 +472,141 @@ const mobileTabLabels = {
 function BrandLogo({ size = 26 }) {
   return (
     <img src="/favicon.svg" width={size} height={size} alt="" aria-hidden="true" />
+  );
+}
+
+function BrandLogoMark({ size = 96 }) {
+  return (
+    <svg
+      className="auth-logo-mark"
+      width={size}
+      height={size}
+      viewBox="0 0 329.32 329.44"
+      aria-hidden="true"
+    >
+      <path d="M179.81,208.73c-.9,1-1.67,1.73-2.41,2.55-9.73,10.67-22,15.24-36.24,15.38-6.14.05-12.24-.21-18.1-2.24-10.32-3.56-17.34-10.47-20.35-21-3.33-11.69-2.95-23.28,2.4-34.36,4.78-9.88,12.77-16.37,22.79-20.47,8.94-3.66,18.38-5.19,27.91-6.24,5.84-.65,11.7-1.14,17.56-1.68.74-.07,1.22-.2,1.19-1.12-.13-4.1-.05-8.21-.35-12.3-.66-8.69-6.47-13-14.23-13.88a24.43,24.43,0,0,0-11.45,1.23c-5.83,2.16-9.63,6.24-11,12.23-1.1,4.7-3,5.72-7.71,5.1-6.53-.84-13.08-1.48-19.62-2.14-3.91-.39-5.45-2.27-4.58-6.1,3.09-13.54,10.71-23.61,23.23-29.81,11-5.44,22.72-7.08,34.82-6.74A61.9,61.9,0,0,1,189.49,93c12,5.83,18.84,15.37,19.61,28.63.66,11.4.45,22.84.6,34.27.12,8.91.18,17.82.29,26.73a22.52,22.52,0,0,0,4.38,12.91c1.5,2.14,3.08,4.22,4.61,6.34,1.9,2.63,1.58,5-.85,7.13q-8.16,7-16.29,14.11c-.49.43-1,.87-1.49,1.27-2.41,1.91-4.76,2-7.14.08a56,56,0,0,1-11.76-13.23ZM174.3,160c-2.25,0-4.53-.11-6.79,0A55.56,55.56,0,0,0,152,162.81c-4.77,1.71-8.93,4.26-11.67,8.66a24.78,24.78,0,0,0-3.1,19.11c1.47,6.56,6.08,10.4,12.75,11.14a21,21,0,0,0,21.08-12.25,31,31,0,0,0,3.17-12.23C174.44,171.49,174.3,165.72,174.3,160Z" />
+      <path d="M160.44,268.3c-24.36-.43-46.51-5.67-67.43-16a155.14,155.14,0,0,1-40-28.6c-1-1-1.21-2.11-.53-3s1.95-.95,3.29-.18c5.74,3.3,11.37,6.81,17.26,9.81a199.11,199.11,0,0,0,163.55,8.05c2.87-1.11,5.69-2.34,8.53-3.51a8.55,8.55,0,0,1,.92-.34,3.51,3.51,0,0,1,4.24,1.55c.61,1.25.11,2.63-1.39,3.87A108.67,108.67,0,0,1,226,254a149.79,149.79,0,0,1-37.95,11.79A157.14,157.14,0,0,1,160.44,268.3Z" />
+      <path d="M286.13,96.05a12.25,12.25,0,0,1-1.55.74c-2.41.69-4.9,1.17-7.24,2-7.89,3-12.37,9-14.65,16.83-.38,1.3-.58,2.65-1,3.94-.13.45-.62.79-.94,1.18a4.2,4.2,0,0,1-.82-1.15c-.58-2-1-4-1.63-5.93-2.87-8.74-9.06-13.86-17.82-16.11-1.17-.31-2.37-.48-3.53-.82-.41-.12-.72-.55-1.08-.85.37-.29.7-.72,1.13-.85,2.22-.69,4.5-1.18,6.69-2,8.28-3,13.1-9.06,15.22-17.45.33-1.31.55-2.65.92-4a4.82,4.82,0,0,1,.87-1.24,4.86,4.86,0,0,1,.91,1.21c1,3.1,1.64,6.34,2.92,9.31,3.3,7.6,9.71,11.39,17.38,13.45.94.26,1.92.39,2.86.66A6.32,6.32,0,0,1,286.13,96.05Z" />
+      <path d="M245.49,226.48c-4.41.5-8.94,1-13.48,1.52-1.1.12-2.54.73-3.07-.75s.75-2.19,1.74-2.88a35.51,35.51,0,0,1,15.16-5.74,44.85,44.85,0,0,1,19.56.72c3,.86,4,1.94,4,5.09.14,12.49-3.83,23.42-12.71,32.4a4.31,4.31,0,0,1-1.56,1.14,2.39,2.39,0,0,1-1.91,0,2.07,2.07,0,0,1-.38-1.84c.64-2,1.48-3.92,2.2-5.89a71.09,71.09,0,0,0,4.23-15.77c.65-5.2-.61-7-5.8-7.52C250.87,226.69,248.26,226.64,245.49,226.48Z" />
+      <path d="M226,86.81a7.83,7.83,0,0,1-.64-1.25c-.35-1.26-.58-2.55-1-3.79-2.21-7-7.26-10.81-14.25-12.36a11.47,11.47,0,0,1-2.06-.85,9.57,9.57,0,0,1,2-1.09c5.13-1.33,9.76-3.49,12.32-8.41,1.24-2.4,1.84-5.14,2.77-7.71a7.84,7.84,0,0,1,.88-1.38,6.36,6.36,0,0,1,.78,1.32c.53,1.69.9,3.43,1.51,5.09,2.3,6.25,7.21,9.37,13.35,11,.59.16,1.2.23,1.76.43.27.09.46.4.69.61-.24.24-.44.58-.73.7a12.59,12.59,0,0,1-1.64.37c-8.12,1.75-12.95,6.76-14.68,14.84a12.54,12.54,0,0,1-.34,1.5A5.67,5.67,0,0,1,226,86.81Z" />
+      <path d="M246,120.56c.78,2.93,1.43,5.91,3.7,8.12a14.68,14.68,0,0,0,7.91,3.69l0,.7c-2.92.57-5.75,1.3-7.89,3.47s-3,5-3.62,7.86h-.52c-.23-.69-.49-1.37-.68-2.07-.92-3.51-2.78-6.3-6.16-7.86a28.86,28.86,0,0,0-3.18-1c-.46-.15-.92-.32-1.38-.49l0-.37a7.13,7.13,0,0,1,1.26-.52c5.49-1.21,8.67-4.62,9.7-10.1a12.59,12.59,0,0,1,.42-1.36Z" />
+    </svg>
+  );
+}
+
+function normalizeInviteCode(value = '') {
+  return value.trim().toUpperCase().replace(/\s+/g, '');
+}
+
+async function hashInviteCode(value) {
+  const bytes = new TextEncoder().encode(normalizeInviteCode(value));
+  const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function loadInviteAccess() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(INVITE_ACCESS_STORAGE_KEY) || 'null');
+    if (!stored?.hash) return null;
+    const match = inviteAccessCodes.find((item) => item.hash === stored.hash);
+    return match ? { ...stored, role: match.role, label: match.label } : null;
+  } catch {
+    return null;
+  }
+}
+
+function InviteGate({ children }) {
+  const [access, setAccess] = useState(() => loadInviteAccess());
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [isChecking, setIsChecking] = useState(false);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!showCodeEntry) {
+      setShowCodeEntry(true);
+      return;
+    }
+    if (!code.trim()) {
+      setError('请输入邀请码');
+      return;
+    }
+    setIsChecking(true);
+    setError('');
+    try {
+      const hash = await hashInviteCode(code);
+      const match = inviteAccessCodes.find((item) => item.hash === hash);
+      if (!match) {
+        setError('邀请码不正确，请检查后重试');
+        return;
+      }
+      const nextAccess = {
+        hash,
+        role: match.role,
+        label: match.label,
+        unlockedAt: new Date().toISOString()
+      };
+      window.localStorage.setItem(INVITE_ACCESS_STORAGE_KEY, JSON.stringify(nextAccess));
+      setAccess(nextAccess);
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  if (access) {
+    return children;
+  }
+
+  return (
+    <main className="auth-screen">
+      <div className="hello-field" aria-hidden="true">
+        {helloCloud.map((item, index) => (
+          <span
+            key={`${item.text}-${index}`}
+            style={{
+              '--top': item.top,
+              '--left': item.left,
+              '--size': item.size,
+              '--delay': item.delay,
+              '--duration': item.duration
+            }}
+          >
+            {item.text}
+          </span>
+        ))}
+      </div>
+      <section className="auth-panel" aria-label="Vistamz 内测入口">
+        <BrandLogoMark size={116} />
+        <div className="auth-title">
+          <h1>Vistamz</h1>
+          <p>Claim-based Amazon visuals</p>
+        </div>
+        <form className={showCodeEntry ? 'auth-form visible' : 'auth-form'} onSubmit={handleSubmit}>
+          {showCodeEntry && (
+            <label>
+              <span>输入邀请码</span>
+              <input
+                autoFocus
+                value={code}
+                onChange={(event) => {
+                  setCode(event.target.value);
+                  setError('');
+                }}
+                placeholder="VMZ-XXXX-0000"
+                autoComplete="one-time-code"
+              />
+            </label>
+          )}
+          {error && <p className="auth-error">{error}</p>}
+          <button type="submit" className="auth-enter-button" disabled={isChecking}>
+            {isChecking ? '正在验证...' : '进入 Vistamz'}
+          </button>
+        </form>
+      </section>
+    </main>
   );
 }
 
@@ -6646,7 +6804,7 @@ function ExportPage({
   );
 }
 
-function App() {
+function WorkspaceApp() {
   const initialProjects = useMemo(() => loadStoredProjects(), []);
   const hasStoredProjects = initialProjects.length > 0;
   const initialProject = initialProjects[0] || createProjectRecord(blankProjectForm, [], createProjectId());
@@ -7385,6 +7543,14 @@ function App() {
         })}
       </nav>
     </main>
+  );
+}
+
+function App() {
+  return (
+    <InviteGate>
+      <WorkspaceApp />
+    </InviteGate>
   );
 }
 
