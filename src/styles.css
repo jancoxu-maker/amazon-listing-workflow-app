@@ -4005,14 +4005,14 @@ button:disabled {
 
 .reference-set-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 12px;
 }
 
 .reference-upload-card {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  gap: 14px;
   align-items: center;
   min-height: 146px;
   padding: 12px;
@@ -4028,8 +4028,8 @@ button:disabled {
 
 .reference-upload-preview {
   display: grid;
-  width: 112px;
-  height: 112px;
+  width: 120px;
+  height: 120px;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 8px;
@@ -4054,6 +4054,8 @@ button:disabled {
   margin: 0;
   color: #60706a;
   font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .reference-upload-card span {
@@ -4064,7 +4066,8 @@ button:disabled {
 
 .reference-upload-actions {
   display: flex;
-  grid-column: 1 / -1;
+  flex-shrink: 0;
+  justify-content: flex-end;
   gap: 10px;
   align-items: center;
 }
@@ -4737,6 +4740,10 @@ button:disabled {
 
   .quick-review-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .reference-upload-actions {
+    justify-content: flex-start;
   }
 
   .auto-advance-toggle {
