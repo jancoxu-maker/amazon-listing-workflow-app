@@ -446,26 +446,9 @@ const mobileTabLabels = {
   export: '导出'
 };
 
-// Amazon-style "a + smile + sparkles" glyph (white, sits on the orange brand chip)
 function BrandLogo({ size = 26 }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" aria-hidden="true">
-      <text
-        x="47"
-        y="72"
-        textAnchor="middle"
-        fontFamily="'Arial Black', 'Helvetica Neue', Arial, sans-serif"
-        fontSize="68"
-        fontWeight="900"
-        fill="#fff"
-      >
-        a
-      </text>
-      <path d="M20 75c18 15 46 14 64-3" stroke="#fff" strokeWidth="7" strokeLinecap="round" />
-      <path d="M84 72l5-12-12 4z" fill="#fff" />
-      <path d="M71 14c0 9 4 13 13 13-9 0-13 4-13 13 0-9-4-13-13-13 9 0 13-4 13-13z" fill="#fff" />
-      <path d="M90 35c0 5 2 7 7 7-5 0-7 2-7 7 0-5-2-7-7-7 5 0 7-2 7-7z" fill="#fff" opacity="0.92" />
-    </svg>
+    <img src="/favicon.svg" width={size} height={size} alt="" aria-hidden="true" />
   );
 }
 

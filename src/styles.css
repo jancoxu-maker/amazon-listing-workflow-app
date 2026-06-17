@@ -128,12 +128,20 @@ textarea:focus {
 
 .brand-mark {
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 48px;
+  height: 48px;
   place-items: center;
-  border-radius: 8px;
-  background: #ff8a3d;
-  color: #18211f;
+  overflow: hidden;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .brand h1,
@@ -5519,10 +5527,9 @@ textarea:focus {
 /* Aurora glass — contrast + accent fixes (phase 3)                    */
 /* ------------------------------------------------------------------ */
 
-/* Logo mark: gradient instead of flat violet */
 .brand-mark {
-  background: linear-gradient(135deg, #ff7a1a, #ff9a2e);
-  color: #fff;
+  background: transparent;
+  color: inherit;
 }
 
 /* Sidebar tool icons sit on a neutral glass chip */
