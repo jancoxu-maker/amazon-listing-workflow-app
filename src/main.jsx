@@ -570,6 +570,33 @@ function formatBrandColorPalette(brand = {}) {
     : 'no brand colors configured';
 }
 
+const brandArrowStyleOptions = [
+  {
+    id: 'minimal-line',
+    label: '细线箭头',
+    prompt: 'Use thin clean line arrows with small arrowheads, minimal curves, no heavy shadows, and restrained brand-color accents.'
+  },
+  {
+    id: 'soft-rounded',
+    label: '圆角柔和',
+    prompt: 'Use soft rounded arrows with gentle curves, medium stroke weight, subtle shadows, and friendly brand-color accents.'
+  },
+  {
+    id: 'bold-callout',
+    label: '醒目指示',
+    prompt: 'Use bold ecommerce callout arrows with clear direction, simple geometry, high contrast, and no cartoon exaggeration.'
+  },
+  {
+    id: 'no-arrows',
+    label: '尽量不用箭头',
+    prompt: 'Avoid arrows whenever possible. Prefer proximity, crops, labels, circles, subtle lines, or composition to connect text and product features.'
+  }
+];
+
+function getBrandArrowStyle(optionId) {
+  return brandArrowStyleOptions.find((option) => option.id === optionId) || brandArrowStyleOptions[0];
+}
+
 function createDeleteChallengeText() {
   const alphabet = 'abcdefghijklmnopqrstuvwxyz';
   const bytes = new Uint8Array(8);
@@ -594,6 +621,8 @@ const defaultBrandLibrary = [
     forbiddenStyles: ['过度装饰', '廉价促销风'],
     logoPolicy: '不展示 Logo',
     logoPreview: '',
+    arrowStyle: 'minimal-line',
+    titleColor: '#18211F',
     styleRules: ['真实产品优先', '画面简洁', '不使用过度装饰']
   },
   {
@@ -610,6 +639,8 @@ const defaultBrandLibrary = [
     forbiddenStyles: ['夸张安全承诺', '强促销风', '暗黑科技感'],
     logoPolicy: 'Logo 只允许出现在 A+ 模式图片；主图和非 A+ 图片一律不展示 Logo。',
     logoPreview: '',
+    arrowStyle: 'soft-rounded',
+    titleColor: '#2F4A35',
     styleRules: ['柔和自然光', '家庭生活感', '避免夸张安全承诺']
   },
   {
@@ -626,6 +657,8 @@ const defaultBrandLibrary = [
     forbiddenStyles: ['廉价促销风', '过度奢华', '卡通风'],
     logoPolicy: 'Logo 只允许出现在 A+ 模式图片；主图和非 A+ 图片一律不展示 Logo。',
     logoPreview: '',
+    arrowStyle: 'bold-callout',
+    titleColor: '#2F3432',
     styleRules: ['真实材质质感', '干净高对比', '避免廉价促销风']
   }
 ];
@@ -643,6 +676,8 @@ function normalizeBrandProfile(brand = {}) {
       ? '不展示 Logo'
       : 'Logo 只允许出现在 A+ 模式图片；主图和非 A+ 图片一律不展示 Logo。',
     logoPreview: brand.logoPreview || '',
+    arrowStyle: getBrandArrowStyle(brand.arrowStyle).id,
+    titleColor: normalizeHexColor(brand.titleColor) || '#18211F',
     styleRules: Array.isArray(brand.styleRules) ? brand.styleRules : splitListText(brand.styleRules)
   };
 }
@@ -2682,6 +2717,8 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
   const isWhiteMainImage = outputPreset.id === 'main-image' && slot.id === 1;
   const isAPlusOutput = outputPreset.id === 'aplus';
   const brandPaletteText = formatBrandColorPalette(brand);
+  const brandArrowStyle = getBrandArrowStyle(brand.arrowStyle);
+  const brandTitleColor = normalizeHexColor(brand.titleColor) || '#18211F';
   const logoInstruction = isAPlusOutput
     ? (brand.logoPreview
       ? 'Logo rule: A+ mode only. The uploaded brand logo may appear once as a restrained brand mark if it supports the layout. Do not distort, redraw, recolor, or invent the logo.'
@@ -2700,6 +2737,8 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
       brand.scenes.length ? `Preferred scene cues: ${brand.scenes.join(', ')}.` : '',
       brand.forbiddenStyles.length ? `Avoid these brand-forbidden styles: ${brand.forbiddenStyles.join(', ')}.` : '',
       logoInstruction,
+      `Visible title color rule: use ${brandTitleColor} as the consistent title color whenever a visible title or main heading appears. This HEX value is an internal art-direction rule only; do not print the HEX code.`,
+      `Arrow and pointer style rule: ${brandArrowStyle.prompt}`,
       `Style rules: ${brand.styleRules.join('; ')}.`
     ].filter(Boolean).join(' ');
   const backgroundInstruction = isAPlusOutput
@@ -4100,6 +4139,8 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
       scenes: ['real product use scene'],
       forbiddenStyles: ['cheap promotion', 'cartoon style'],
       logoPolicy: 'Logo 只允许出现在 A+ 模式图片；主图和非 A+ 图片一律不展示 Logo。',
+      arrowStyle: 'minimal-line',
+      titleColor: '#18211F',
       styleRules: ['clean layout', 'realistic lighting']
     });
     onUpdateBrands([...brandLibrary, nextBrand]);
@@ -4229,6 +4270,36 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
             <label>
               <span>视觉语气</span>
               <input disabled={!editable} value={selectedBrand.tone} onChange={(event) => updateBrand({ tone: event.target.value })} />
+            </label>
+            <label>
+              <span>统一标题颜色</span>
+              <div className="brand-title-color-row">
+                <input
+                  aria-label="统一标题颜色"
+                  disabled={!editable}
+                  type="color"
+                  value={selectedBrand.titleColor}
+                  onChange={(event) => updateBrand({ titleColor: normalizeHexColor(event.target.value) || selectedBrand.titleColor })}
+                />
+                <input
+                  aria-label="统一标题颜色 HEX"
+                  disabled={!editable}
+                  pattern="^#[0-9A-Fa-f]{6}$"
+                  value={selectedBrand.titleColor}
+                  onChange={(event) => {
+                    const nextHex = normalizeHexColor(event.target.value);
+                    if (nextHex) updateBrand({ titleColor: nextHex });
+                  }}
+                />
+              </div>
+            </label>
+            <label>
+              <span>箭头使用样式</span>
+              <select disabled={!editable} value={selectedBrand.arrowStyle} onChange={(event) => updateBrand({ arrowStyle: event.target.value })}>
+                {brandArrowStyleOptions.map((option) => (
+                  <option key={option.id} value={option.id}>{option.label}</option>
+                ))}
+              </select>
             </label>
             <div className="brand-color-editor">
               <div className="brand-color-editor-head">

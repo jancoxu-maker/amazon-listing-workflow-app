@@ -448,6 +448,22 @@ function formatBrandPaletteForPrompt(brand = {}) {
   return colors.length ? colors.join(', ') : 'no brand colors configured';
 }
 
+const brandArrowStylePromptMap = {
+  'minimal-line': 'Use thin clean line arrows with small arrowheads, minimal curves, no heavy shadows, and restrained brand-color accents.',
+  'soft-rounded': 'Use soft rounded arrows with gentle curves, medium stroke weight, subtle shadows, and friendly brand-color accents.',
+  'bold-callout': 'Use bold ecommerce callout arrows with clear direction, simple geometry, high contrast, and no cartoon exaggeration.',
+  'no-arrows': 'Avoid arrows whenever possible. Prefer proximity, crops, labels, circles, subtle lines, or composition to connect text and product features.'
+};
+
+function getBrandArrowStylePrompt(brand = {}) {
+  return brandArrowStylePromptMap[brand.arrowStyle] || brandArrowStylePromptMap['minimal-line'];
+}
+
+function normalizePromptHexColor(value = '') {
+  const color = String(value || '').trim().toUpperCase();
+  return /^#[0-9A-F]{6}$/.test(color) ? color : '#18211F';
+}
+
 function getDefaultVisualProof(visualType = 'benefits', primaryClaim = '') {
   const claimText = primaryClaim ? `"${primaryClaim}"` : 'the primary claim';
   const map = {
@@ -709,6 +725,8 @@ function buildStoryboardPlannerPrompt(payload) {
     `Forbidden visual styles: ${Array.isArray(brand.forbiddenStyles) ? brand.forbiddenStyles.join(', ') : brand.forbiddenStyles || 'not specified'}`,
     `Logo usage: ${brand.logoPolicy || 'Logo is allowed only in A+ mode. Never plan a logo for main-image output or non-A+ listing images.'}`,
     'If a logo exists, it may be planned only for A+ output. For all non-A+ listing images, do not display, imitate, or invent a logo.',
+    `Visible title color rule: use ${normalizePromptHexColor(brand.titleColor)} as the consistent title color whenever a visible title or main heading appears. This HEX value is an internal art-direction rule only; do not print the HEX code.`,
+    `Arrow and pointer style rule: ${getBrandArrowStylePrompt(brand)}`,
     `Style rules: ${Array.isArray(brand.styleRules) ? brand.styleRules.join('; ') : brand.styleRules || 'Keep ecommerce visuals clean, realistic, and product-led.'}`,
     '',
     'Ledger facts:',
