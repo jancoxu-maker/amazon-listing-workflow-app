@@ -719,6 +719,7 @@ const initialProjectForm = {
   planOutputPresetId: 'main-image',
   sourceImageName: '画板 1.jpg',
   sourceImagePreview: sourceImage,
+  sourceImageDisplayPreview: sourceImage,
   sourceImageAudit: null,
   referenceImages: {},
   claimsText: [
@@ -742,6 +743,7 @@ const blankProjectForm = {
   planOutputPresetId: 'main-image',
   sourceImageName: '',
   sourceImagePreview: '',
+  sourceImageDisplayPreview: '',
   sourceImageAudit: null,
   referenceImages: {},
   claimsText: ''
@@ -2356,6 +2358,7 @@ function compactProjectFormForStorage(form = {}, keepPreview = true) {
   const nextForm = { ...form };
   if (!keepPreview) {
     nextForm.sourceImagePreview = '';
+    nextForm.sourceImageDisplayPreview = '';
   }
   if (nextForm.referenceImages && typeof nextForm.referenceImages === 'object') {
     nextForm.referenceImages = Object.fromEntries(Object.entries(nextForm.referenceImages).map(([key, reference]) => ([
@@ -2363,6 +2366,7 @@ function compactProjectFormForStorage(form = {}, keepPreview = true) {
       {
         ...reference,
         preview: keepPreview && key === 'main' ? reference?.preview || '' : '',
+        displayPreview: reference?.displayPreview || '',
         audit: reference?.audit ? {
           kind: reference.audit.kind,
           confidence: reference.audit.confidence,
@@ -2492,6 +2496,7 @@ function getReferenceItems(form) {
         ...type,
         name: form?.sourceImageName || '',
         preview: form?.sourceImagePreview || '',
+        displayPreview: form?.sourceImageDisplayPreview || form?.sourceImagePreview || '',
         audit: form?.sourceImageAudit || null,
         fallback: true
       };
@@ -2500,6 +2505,7 @@ function getReferenceItems(form) {
       ...type,
       name: item?.name || '',
       preview: item?.preview || '',
+      displayPreview: item?.displayPreview || item?.preview || '',
       audit: item?.audit || null,
       fallback: false
     };
@@ -2675,6 +2681,83 @@ function createImageThumbnail(imageSrc, maxSide = 560) {
 async function createAiReviewImageDataUrl(imageSrc, maxSide = 1200) {
   const sourceDataUrl = await imageSourceToDataUrl(imageSrc);
   return createImageThumbnail(sourceDataUrl, maxSide);
+}
+
+function createReferenceDisplayPreview(imageSrc, maxSide = 520) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) {
+        resolve(imageSrc);
+        return;
+      }
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let hasTransparency = false;
+      let minX = width;
+      let minY = height;
+      let maxX = -1;
+      let maxY = -1;
+
+      for (let y = 0; y < height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          const alpha = pixels[(y * width + x) * 4 + 3];
+          if (alpha < 250) hasTransparency = true;
+          if (alpha > 8) {
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+        }
+      }
+
+      if (!hasTransparency || maxX < minX || maxY < minY) {
+        resolve(imageSrc);
+        return;
+      }
+
+      const padding = Math.max(18, Math.round(Math.max(maxX - minX + 1, maxY - minY + 1) * 0.1));
+      const cropX = Math.max(0, minX - padding);
+      const cropY = Math.max(0, minY - padding);
+      const cropRight = Math.min(width - 1, maxX + padding);
+      const cropBottom = Math.min(height - 1, maxY + padding);
+      const cropWidth = cropRight - cropX + 1;
+      const cropHeight = cropBottom - cropY + 1;
+      const scale = Math.min(1, maxSide / Math.max(cropWidth, cropHeight));
+      const outputWidth = Math.max(1, Math.round(cropWidth * scale));
+      const outputHeight = Math.max(1, Math.round(cropHeight * scale));
+      const outputCanvas = document.createElement('canvas');
+      outputCanvas.width = outputWidth;
+      outputCanvas.height = outputHeight;
+      const outputContext = outputCanvas.getContext('2d');
+      if (!outputContext) {
+        resolve(imageSrc);
+        return;
+      }
+      outputContext.clearRect(0, 0, outputWidth, outputHeight);
+      outputContext.drawImage(
+        image,
+        cropX,
+        cropY,
+        cropWidth,
+        cropHeight,
+        0,
+        0,
+        outputWidth,
+        outputHeight
+      );
+      resolve(outputCanvas.toDataURL('image/png'));
+    };
+    image.onerror = () => resolve(imageSrc);
+    image.src = imageSrc;
+  });
 }
 
 async function saveGeneratedImageToApi({ imageDataUrl, projectForm, slotId, runId }) {
@@ -3536,6 +3619,7 @@ function ProjectPage({
     const reader = new FileReader();
     reader.onload = async () => {
       const preview = String(reader.result || '');
+      const displayPreview = await createReferenceDisplayPreview(preview);
       const referenceType = referenceTypes.find((item) => item.id === referenceId);
       setImageAuditStatus(`${referenceType?.label || '参考图'}检测中...`);
       try {
@@ -3544,12 +3628,14 @@ function ProjectPage({
           ...current,
           sourceImageName: referenceId === 'main' ? file.name : current.sourceImageName,
           sourceImagePreview: referenceId === 'main' ? preview : current.sourceImagePreview,
+          sourceImageDisplayPreview: referenceId === 'main' ? displayPreview : current.sourceImageDisplayPreview,
           sourceImageAudit: referenceId === 'main' ? audit : current.sourceImageAudit,
           referenceImages: {
             ...(current.referenceImages || {}),
             [referenceId]: {
               name: file.name,
               preview,
+              displayPreview,
               audit
             }
           }
@@ -3560,12 +3646,14 @@ function ProjectPage({
           ...current,
           sourceImageName: referenceId === 'main' ? file.name : current.sourceImageName,
           sourceImagePreview: referenceId === 'main' ? preview : current.sourceImagePreview,
+          sourceImageDisplayPreview: referenceId === 'main' ? displayPreview : current.sourceImageDisplayPreview,
           sourceImageAudit: referenceId === 'main' ? null : current.sourceImageAudit,
           referenceImages: {
             ...(current.referenceImages || {}),
             [referenceId]: {
               name: file.name,
               preview,
+              displayPreview,
               audit: null
             }
           }
@@ -3586,6 +3674,7 @@ function ProjectPage({
         ...current,
         sourceImageName: referenceId === 'main' ? '' : current.sourceImageName,
         sourceImagePreview: referenceId === 'main' ? '' : current.sourceImagePreview,
+        sourceImageDisplayPreview: referenceId === 'main' ? '' : current.sourceImageDisplayPreview,
         sourceImageAudit: referenceId === 'main' ? null : current.sourceImageAudit,
         referenceImages: nextReferenceImages
       };
@@ -3629,9 +3718,9 @@ function ProjectPage({
               <div className="reference-set-grid">
                 {getReferenceItems(projectForm).map((reference) => (
                   <div className={reference.required ? 'reference-upload-card required' : 'reference-upload-card'} key={reference.id}>
-                    <div className={reference.preview ? 'reference-upload-preview has-image' : 'reference-upload-preview'}>
-                      {reference.preview ? (
-                        <img src={reference.preview} alt={reference.label} />
+                    <div className={(reference.displayPreview || reference.preview) ? 'reference-upload-preview has-image' : 'reference-upload-preview'}>
+                      {(reference.displayPreview || reference.preview) ? (
+                        <img src={reference.displayPreview || reference.preview} alt={reference.label} />
                       ) : (
                         <ImagePlus size={28} />
                       )}
@@ -3652,7 +3741,7 @@ function ProjectPage({
                           onChange={(event) => handleReferenceImageUpload(reference.id, event)}
                           type="file"
                         />
-                        {reference.preview && !reference.fallback && (
+                        {(reference.displayPreview || reference.preview) && !reference.fallback && (
                           <button className="text-button" onClick={() => removeReferenceImage(reference.id)}>
                             移除
                           </button>
