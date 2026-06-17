@@ -1,4 +1,4 @@
-# ListingFlow Internal Beta Plan
+# Vistamz Internal Beta Plan
 
 ## Phase 1: Local Release Readiness
 

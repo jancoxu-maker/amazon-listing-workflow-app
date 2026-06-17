@@ -7271,8 +7271,8 @@ function App() {
             <BrandLogo size={26} />
           </div>
           <div>
-            <h1>ListingFlow</h1>
-            <p>Amazon image workflow</p>
+            <h1>Vistamz</h1>
+            <p>Claim-based Amazon visuals</p>
           </div>
         </div>
 

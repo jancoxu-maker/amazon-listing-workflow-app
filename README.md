@@ -1,4 +1,4 @@
-# ListingFlow
+# Vistamz
 
 Internal Amazon listing image workflow app for generating and reviewing main image / A+ image sets from product photos and product claims.
 
