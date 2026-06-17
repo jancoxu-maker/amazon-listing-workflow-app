@@ -4865,6 +4865,9 @@ function getGenerationErrorMessage(error) {
   if (/load failed|failed to fetch|networkerror|request body is too large/i.test(raw)) {
     return '预审请求网络中断。系统会保留已生成图片，请稍后重试 AI 预审或直接人工判断。';
   }
+  if (/did not return an image|没有返回图片|text only/i.test(raw)) {
+    return 'Gemini 本次没有返回图片。请重新生成当前图槽，或稍后再试。';
+  }
   return raw;
 }
 

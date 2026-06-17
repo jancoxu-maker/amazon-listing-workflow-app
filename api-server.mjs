@@ -114,6 +114,30 @@ function getImageExtension(mimeType = 'image/jpeg') {
   return 'jpg';
 }
 
+function extractGeminiImageParts(result = {}) {
+  const parts = result?.candidates?.[0]?.content?.parts || [];
+  const imagePart = parts.find((part) => part.inlineData?.data || part.inline_data?.data);
+  const inlineData = imagePart?.inlineData || imagePart?.inline_data;
+  return {
+    parts,
+    imageBase64: inlineData?.data || '',
+    imageMimeType: inlineData?.mimeType || inlineData?.mime_type || 'image/png',
+    textPart: parts.find((part) => part.text)?.text || '',
+    finishReason: result?.candidates?.[0]?.finishReason || '',
+    safetyRatings: result?.candidates?.[0]?.safetyRatings || []
+  };
+}
+
+function getGeminiNoImageError(result = {}, fallback = 'Gemini 本次没有返回图片。') {
+  const { textPart, finishReason, safetyRatings } = extractGeminiImageParts(result);
+  const details = [
+    textPart ? `模型返回：${String(textPart).slice(0, 300)}` : '',
+    finishReason ? `结束原因：${finishReason}` : '',
+    safetyRatings?.length ? `安全判断：${safetyRatings.map((rating) => `${rating.category}:${rating.probability}`).join(', ')}` : ''
+  ].filter(Boolean).join('；');
+  return details ? `${fallback}${details}` : fallback;
+}
+
 const crc32Table = Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) {
@@ -995,27 +1019,35 @@ async function generateWithGemini(payload) {
   }));
   const imageParts = imagePartGroups.flat();
   const startedAt = Date.now();
-  const geminiResponse = await fetch(
-    `https://generativelanguage.googleapis.com/v1/models/${GEMINI_IMAGE_MODEL}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'x-goog-api-key': GEMINI_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
-            { text: prompt },
-            ...imageParts
-          ]
-        }]
-      })
-    }
-  );
-  const requestId = geminiResponse.headers.get('x-request-id') || geminiResponse.headers.get('x-goog-request-id');
-  const result = await geminiResponse.json().catch(() => ({}));
+  const callGeminiImage = async (requestPrompt) => {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1/models/${GEMINI_IMAGE_MODEL}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': GEMINI_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: requestPrompt },
+              ...imageParts
+            ]
+          }]
+        })
+      }
+    );
+    return {
+      response,
+      requestId: response.headers.get('x-request-id') || response.headers.get('x-goog-request-id'),
+      result: await response.json().catch(() => ({}))
+    };
+  };
+
+  let retryCount = 0;
+  let { response: geminiResponse, requestId, result } = await callGeminiImage(prompt);
 
   if (!geminiResponse.ok) {
     return {
@@ -1026,19 +1058,37 @@ async function generateWithGemini(payload) {
     };
   }
 
-  const parts = result?.candidates?.[0]?.content?.parts || [];
-  const imagePart = parts.find((part) => part.inlineData?.data || part.inline_data?.data);
-  const inlineData = imagePart?.inlineData || imagePart?.inline_data;
-  const imageBase64 = inlineData?.data;
-  const imageMimeType = inlineData?.mimeType || inlineData?.mime_type || 'image/png';
-  const textPart = parts.find((part) => part.text)?.text || '';
+  let { imageBase64, imageMimeType, textPart } = extractGeminiImageParts(result);
+
+  if (!imageBase64) {
+    retryCount = 1;
+    const retryPrompt = [
+      'Generate exactly one ecommerce product image now.',
+      'Return an image output. Do not answer with text only. Do not describe the image instead of generating it.',
+      'If the original request includes text layout, render only short English text that is visually present in the image.',
+      'Preserve the provided product reference structure and do not invent a different product.',
+      prompt
+    ].join('\n\n');
+    ({ response: geminiResponse, requestId, result } = await callGeminiImage(retryPrompt));
+    if (!geminiResponse.ok) {
+      return {
+        ok: false,
+        status: geminiResponse.status,
+        requestId,
+        retryCount,
+        error: result?.error?.message || 'Gemini image API returned an error after retry.'
+      };
+    }
+    ({ imageBase64, imageMimeType, textPart } = extractGeminiImageParts(result));
+  }
 
   if (!imageBase64) {
     return {
       ok: false,
       status: 502,
       requestId,
-      error: textPart || 'Gemini did not return an image.'
+      retryCount,
+      error: getGeminiNoImageError(result, 'Gemini 两次尝试都没有返回图片。')
     };
   }
 
@@ -1049,6 +1099,7 @@ async function generateWithGemini(payload) {
     requestId,
     model: GEMINI_IMAGE_MODEL,
     durationMs: Date.now() - startedAt,
+    retryCount,
     imageDataUrl: `data:${imageMimeType};base64,${imageBase64}`,
     imageUrl: null,
     text: textPart
