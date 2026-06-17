@@ -1522,6 +1522,13 @@ function normalizeGenerationRuns(runs = []) {
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+function stripTransientGenerationRun(run = {}) {
+  return {
+    ...run,
+    reviewImageDataUrl: ''
+  };
+}
+
 function getGenerationQualityStats(runs = []) {
   const total = runs.length;
   const reviewed = runs.filter((run) => run.verdict !== 'unreviewed').length;
@@ -2553,18 +2560,20 @@ async function planStoryboardWithApi(projectForm, ledgerFacts, brands = defaultB
 }
 
 async function reviewGeneratedImageWithApi({ projectForm, brief, run, sourceImages }) {
+  const generatedImageDataUrl = run.reviewImageDataUrl
+    || await createAiReviewImageDataUrl(run.rawImageSrc || run.imageSrc);
   const normalizedSourceImages = sourceImages.length
     ? await Promise.all(sourceImages.map(async (reference) => ({
       id: reference.id,
       label: reference.label,
       name: reference.name,
-      dataUrl: await imageSourceToDataUrl(reference.preview)
+      dataUrl: await createAiReviewImageDataUrl(reference.preview)
     })))
     : [{
       id: 'main',
       label: '主参考图',
       name: getReferenceImageName(projectForm),
-      dataUrl: await imageSourceToDataUrl(getReferenceImage(projectForm))
+      dataUrl: await createAiReviewImageDataUrl(getReferenceImage(projectForm))
     }];
   const response = await fetch(`${IMAGE_API_BASE_URL}/api/review-image`, {
     method: 'POST',
@@ -2575,7 +2584,7 @@ async function reviewGeneratedImageWithApi({ projectForm, brief, run, sourceImag
       run,
       sourceImages: normalizedSourceImages,
       sourceImageDataUrl: normalizedSourceImages[0]?.dataUrl,
-      generatedImageDataUrl: run.imageSrc,
+      generatedImageDataUrl,
       prompt: run.prompt
     })
   });
@@ -2643,6 +2652,11 @@ function createImageThumbnail(imageSrc, maxSide = 560) {
     image.onerror = () => reject(new Error('候选图预览处理失败'));
     image.src = imageSrc;
   });
+}
+
+async function createAiReviewImageDataUrl(imageSrc, maxSide = 1200) {
+  const sourceDataUrl = await imageSourceToDataUrl(imageSrc);
+  return createImageThumbnail(sourceDataUrl, maxSide);
 }
 
 async function saveGeneratedImageToApi({ imageDataUrl, projectForm, slotId, runId }) {
@@ -4848,6 +4862,9 @@ function getGenerationErrorMessage(error) {
   if (/API key|GEMINI_API_KEY|OPENAI_API_KEY/i.test(raw)) {
     return 'API Key 不可用或未配置，请检查本地 .env.local。';
   }
+  if (/load failed|failed to fetch|networkerror|request body is too large/i.test(raw)) {
+    return '预审请求网络中断。系统会保留已生成图片，请稍后重试 AI 预审或直接人工判断。';
+  }
   return raw;
 }
 
@@ -5227,6 +5244,7 @@ function GenerationPage({
       const sourceDataUrl = await blobToDataUrl(file);
       const fittedImageSrc = await resizeImageToPreset(sourceDataUrl, outputPreset);
       const previewImageSrc = await createImageThumbnail(fittedImageSrc);
+      const reviewImageDataUrl = await createImageThumbnail(fittedImageSrc, 1200);
       const runId = createGenerationRunId();
       let storedImage = null;
       try {
@@ -5247,6 +5265,7 @@ function GenerationPage({
         outputPresetLabel: outputPreset.label,
         outputPresetSize: outputPreset.size,
         imageSrc: storedImage?.imageUrl || previewImageSrc,
+        reviewImageDataUrl,
         rawImageSrc: '',
         imageFilePath: storedImage?.filePath || '',
         imageFilename: storedImage?.filename || '',
@@ -5325,6 +5344,7 @@ function GenerationPage({
       const rawImageSrc = result.imageDataUrl || result.imageUrl;
       const fittedImageSrc = await resizeImageToPreset(rawImageSrc, runOutputPreset);
       const previewImageSrc = await createImageThumbnail(fittedImageSrc);
+      const reviewImageDataUrl = await createImageThumbnail(fittedImageSrc, 1200);
       let storedImage = null;
       try {
         storedImage = await saveGeneratedImageToApi({
@@ -5344,6 +5364,7 @@ function GenerationPage({
         outputPresetLabel: runOutputPreset.label,
         outputPresetSize: runOutputPreset.size,
         imageSrc: storedImage?.imageUrl || previewImageSrc,
+        reviewImageDataUrl,
         rawImageSrc: '',
         imageFilePath: storedImage?.filePath || '',
         imageFilename: storedImage?.filename || '',
@@ -5417,18 +5438,36 @@ function GenerationPage({
           setBatchLog((items) => items.map((item) => (
             item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
           )));
-          const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, {
-            outputPreset
-          });
-          completedRuns.unshift(reviewedRun);
-          onSaveGenerationRuns(completedRuns);
-          setActiveRunId(reviewedRun.id);
-          setSelectedSlot(task.slot);
-          setBatchLog((items) => items.map((item) => (
-            item.id === logId
-              ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
-              : item
-          )));
+          try {
+            const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, {
+              outputPreset
+            });
+            completedRuns.unshift(reviewedRun);
+            onSaveGenerationRuns(completedRuns);
+            setActiveRunId(reviewedRun.id);
+            setSelectedSlot(task.slot);
+            setBatchLog((items) => items.map((item) => (
+              item.id === logId
+                ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
+                : item
+            )));
+          } catch (reviewError) {
+            const message = getGenerationErrorMessage(reviewError);
+            const keptRun = {
+              ...run,
+              note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。`
+            };
+            completedRuns.unshift(keptRun);
+            onSaveGenerationRuns(completedRuns);
+            setActiveRunId(keptRun.id);
+            setSelectedSlot(task.slot);
+            failedMessages.push(`AI 预审失败：${message}`);
+            setBatchLog((items) => items.map((item) => (
+              item.id === logId
+                ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
+                : item
+            )));
+          }
         } catch (error) {
           const message = getGenerationErrorMessage(error);
           failedMessages.push(message);
@@ -5538,18 +5577,36 @@ function GenerationPage({
         setBatchLog((items) => items.map((item) => (
           item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
         )));
-        const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, {
-          outputPreset: baselineOutputPreset
-        });
-        completedRuns.unshift(reviewedRun);
-        onSaveGenerationRuns(completedRuns);
-        setActiveRunId(reviewedRun.id);
-        setSelectedSlot(task.slot);
-        setBatchLog((items) => items.map((item) => (
-          item.id === logId
-            ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
-            : item
-        )));
+        try {
+          const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, {
+            outputPreset: baselineOutputPreset
+          });
+          completedRuns.unshift(reviewedRun);
+          onSaveGenerationRuns(completedRuns);
+          setActiveRunId(reviewedRun.id);
+          setSelectedSlot(task.slot);
+          setBatchLog((items) => items.map((item) => (
+            item.id === logId
+              ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
+              : item
+          )));
+        } catch (reviewError) {
+          const message = getGenerationErrorMessage(reviewError);
+          const keptRun = {
+            ...run,
+            note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。`
+          };
+          completedRuns.unshift(keptRun);
+          onSaveGenerationRuns(completedRuns);
+          setActiveRunId(keptRun.id);
+          setSelectedSlot(task.slot);
+          failedMessages.push(`AI 预审失败：${message}`);
+          setBatchLog((items) => items.map((item) => (
+            item.id === logId
+              ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
+              : item
+          )));
+        }
       } catch (error) {
         const message = getGenerationErrorMessage(error);
         failedMessages.push(message);
@@ -6890,7 +6947,7 @@ function App() {
     setSaveStatus(`${slot?.title || '图槽'} 已由${reviewerRoles[role]?.label || '审核人'}标记为${reviewStatusMeta[status]?.text || '待审核'}，已自动保存`);
   };
   const saveGenerationRun = (run) => {
-    const nextRuns = normalizeGenerationRuns([run, ...generationRuns]).slice(0, QUALITY_MAX_STORED_RUNS);
+    const nextRuns = normalizeGenerationRuns([stripTransientGenerationRun(run), ...generationRuns]).slice(0, QUALITY_MAX_STORED_RUNS);
     setGenerationRuns(nextRuns);
     const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, nextRuns, promptOverrides, exportSelections);
     const nextProjects = projects.some((project) => project.id === activeProjectId)
@@ -6900,7 +6957,7 @@ function App() {
     setSaveStatus('候选图已记录，请标记可用性');
   };
   const saveGenerationRuns = (runs) => {
-    const normalizedRuns = normalizeGenerationRuns(runs);
+    const normalizedRuns = normalizeGenerationRuns(runs.map(stripTransientGenerationRun));
     const newRunIds = new Set(normalizedRuns.map((run) => run.id));
     const nextRuns = normalizeGenerationRuns([
       ...normalizedRuns,
