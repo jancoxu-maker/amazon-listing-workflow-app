@@ -42,7 +42,7 @@ const inviteAccessCodes = [
   { label: '内测邀请码 03', role: 'tester', hash: '20fefd0ca681e1f439db7e70fd007b05972172acde4628ac95093b99aa767dbf' },
   { label: '内测邀请码 04', role: 'tester', hash: '9b058607078caec1266439fbbe95bcc2dca4f67984d86f586dcd5cb8732f63a0' },
   { label: '内测邀请码 05', role: 'tester', hash: 'b1d010aad39db84d7a2bdd55513180c74e8febb7514a29f76a4c276b5e9f409e' },
-  { label: '管理员码', role: 'admin', hash: '777f93d0acc151f4b010aea9028e60a5f8bb74e9c38b24c8988588b34c317797' }
+  { label: '管理员码', role: 'admin', hash: '2e803afc924afa7fbf912b121e74b26286e00b96995173acde634f58534b7cca' }
 ];
 const helloCloud = [
   { text: '你好', top: '10%', left: '5%', size: '32px', delay: '-4s', duration: '25s' },
