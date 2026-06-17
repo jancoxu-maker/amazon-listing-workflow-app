@@ -4011,9 +4011,9 @@ button:disabled {
 
 .reference-upload-card {
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) auto;
+  grid-template-columns: 120px minmax(0, 1fr);
   gap: 14px;
-  align-items: center;
+  align-items: start;
   min-height: 146px;
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -4066,8 +4066,10 @@ button:disabled {
 
 .reference-upload-actions {
   display: flex;
+  grid-column: 2;
   flex-shrink: 0;
-  justify-content: flex-end;
+  flex-wrap: wrap;
+  justify-content: flex-start;
   gap: 10px;
   align-items: center;
 }
