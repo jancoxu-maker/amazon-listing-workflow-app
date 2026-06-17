@@ -162,6 +162,15 @@ textarea:focus {
   color: #b9c4bc;
 }
 
+.brand p {
+  max-width: 180px;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nav-list {
   display: grid;
   gap: 6px;
