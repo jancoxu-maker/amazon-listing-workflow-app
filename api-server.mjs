@@ -30,8 +30,17 @@ const IMAGE_API_PROVIDER = process.env.IMAGE_API_PROVIDER || (GEMINI_API_KEY ? '
 const MAX_BODY_BYTES = 18 * 1024 * 1024;
 const GENERATED_IMAGE_DIR = resolve(process.env.GENERATED_IMAGE_DIR || 'generated-images');
 const EXPORT_DIR = resolve(process.env.EXPORT_DIR || 'exports');
+const INVITE_CLAIMS_FILE = resolve(process.env.INVITE_CLAIMS_FILE || 'data/invite-claims.json');
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+const INVITE_ACCESS_CODES = [
+  { label: '内测邀请码 01', role: 'tester', hash: '48f3e317987ea2d51b3ca8dfd17c95eddbeb5f186715be4cf2d0f8709f0519db' },
+  { label: '内测邀请码 02', role: 'tester', hash: 'fc59c6c106d2378251a1873a68652192541fa07477f69f44af7b8ccb57d8edb3' },
+  { label: '内测邀请码 03', role: 'tester', hash: '20fefd0ca681e1f439db7e70fd007b05972172acde4628ac95093b99aa767dbf' },
+  { label: '内测邀请码 04', role: 'tester', hash: '9b058607078caec1266439fbbe95bcc2dca4f67984d86f586dcd5cb8732f63a0' },
+  { label: '内测邀请码 05', role: 'tester', hash: 'b1d010aad39db84d7a2bdd55513180c74e8febb7514a29f76a4c276b5e9f409e' },
+  { label: '管理员码', role: 'admin', hash: '2e803afc924afa7fbf912b121e74b26286e00b96995173acde634f58534b7cca' }
+];
 
 function sendJson(response, status, payload) {
   response.writeHead(status, {
@@ -68,6 +77,79 @@ function readJsonBody(request) {
 
     request.on('error', reject);
   });
+}
+
+function normalizeInviteHash(hash = '') {
+  return String(hash || '').trim().toLowerCase();
+}
+
+function readInviteClaims() {
+  try {
+    if (!existsSync(INVITE_CLAIMS_FILE)) return { version: 1, claims: {} };
+    const parsed = JSON.parse(readFileSync(INVITE_CLAIMS_FILE, 'utf8') || '{}');
+    return {
+      version: 1,
+      claims: parsed?.claims && typeof parsed.claims === 'object' ? parsed.claims : {}
+    };
+  } catch {
+    return { version: 1, claims: {} };
+  }
+}
+
+function writeInviteClaims(record) {
+  mkdirSync(resolve(INVITE_CLAIMS_FILE, '..'), { recursive: true });
+  writeFileSync(INVITE_CLAIMS_FILE, JSON.stringify(record, null, 2), 'utf8');
+}
+
+function claimInviteAccess(payload = {}, request) {
+  const hash = normalizeInviteHash(payload.hash);
+  const invite = INVITE_ACCESS_CODES.find((item) => item.hash === hash);
+  if (!invite) {
+    return {
+      ok: false,
+      status: 403,
+      error: '邀请码不正确，请检查后重试。'
+    };
+  }
+
+  if (invite.role === 'admin') {
+    return {
+      ok: true,
+      status: 200,
+      role: invite.role,
+      label: invite.label,
+      reusable: true,
+      claimedAt: new Date().toISOString()
+    };
+  }
+
+  const record = readInviteClaims();
+  if (record.claims[hash]) {
+    return {
+      ok: false,
+      status: 409,
+      error: '这个邀请码已经被激活，请联系管理员更换新的邀请码。',
+      label: invite.label,
+      claimedAt: record.claims[hash].claimedAt || ''
+    };
+  }
+
+  const claimedAt = new Date().toISOString();
+  record.claims[hash] = {
+    label: invite.label,
+    role: invite.role,
+    claimedAt,
+    userAgent: String(request.headers['user-agent'] || '').slice(0, 240)
+  };
+  writeInviteClaims(record);
+  return {
+    ok: true,
+    status: 200,
+    role: invite.role,
+    label: invite.label,
+    reusable: false,
+    claimedAt
+  };
 }
 
 function dataUrlToBlob(dataUrl) {
@@ -1252,6 +1334,20 @@ const server = http.createServer(async (request, response) => {
     try {
       const payload = await readJsonBody(request);
       const result = await reviewImageWithGemini(payload);
+      sendJson(response, result.status || 200, result);
+    } catch (error) {
+      sendJson(response, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unknown server error'
+      });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && request.url === '/api/claim-invite') {
+    try {
+      const payload = await readJsonBody(request);
+      const result = claimInviteAccess(payload, request);
       sendJson(response, result.status || 200, result);
     } catch (error) {
       sendJson(response, 500, {

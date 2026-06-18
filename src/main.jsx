@@ -506,6 +506,19 @@ async function hashInviteCode(value) {
     .join('');
 }
 
+async function claimInviteCode(hash) {
+  const response = await fetch(`${IMAGE_API_BASE_URL}/api/claim-invite`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hash })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.ok) {
+    throw new Error(result.error || '邀请码验证服务暂不可用，请稍后再试。');
+  }
+  return result;
+}
+
 function loadInviteAccess() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(INVITE_ACCESS_STORAGE_KEY) || 'null');
@@ -543,14 +556,20 @@ function InviteGate({ children }) {
         setError('邀请码不正确，请检查后重试');
         return;
       }
+      const claim = match.role === 'admin'
+        ? { role: match.role, label: match.label, reusable: true, claimedAt: new Date().toISOString() }
+        : await claimInviteCode(hash);
       const nextAccess = {
         hash,
-        role: match.role,
-        label: match.label,
-        unlockedAt: new Date().toISOString()
+        role: claim.role || match.role,
+        label: claim.label || match.label,
+        reusable: Boolean(claim.reusable),
+        unlockedAt: claim.claimedAt || new Date().toISOString()
       };
       window.localStorage.setItem(INVITE_ACCESS_STORAGE_KEY, JSON.stringify(nextAccess));
       setAccess(nextAccess);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : '邀请码验证失败，请稍后再试');
     } finally {
       setIsChecking(false);
     }
