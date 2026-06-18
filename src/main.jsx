@@ -2071,6 +2071,17 @@ function getSlotCandidateRuns(slotId, generationRuns = []) {
   return normalizeGenerationRuns(generationRuns.filter((run) => run.slotId === slotId && run.imageSrc));
 }
 
+function getSlotGenerationReviewStatus(slotId, generationRuns = []) {
+  const runs = getSlotCandidateRuns(slotId, generationRuns);
+  if (runs.some((run) => run.verdict === 'usable')) {
+    return { status: 'passed', label: '通过', className: 'approved', icon: Check };
+  }
+  if (runs.some((run) => run.verdict !== 'unreviewed')) {
+    return { status: 'reviewed', label: '已审核', className: 'rework', icon: ClipboardCheck };
+  }
+  return { status: 'unreviewed', label: '未审核', className: 'review', icon: Eye };
+}
+
 function getSelectedRunForSlot(slotId, generationRuns = [], exportSelections = {}) {
   const selectedRunId = exportSelections?.[slotId];
   if (selectedRunId) {
@@ -3264,6 +3275,17 @@ function GenerationVerdictPill({ verdict }) {
   const Icon = item.icon;
   return (
     <span className={`status-pill ${item.className}`}>
+      <Icon size={14} />
+      {item.label}
+    </span>
+  );
+}
+
+function SlotGenerationStatusPill({ slotId, generationRuns }) {
+  const item = getSlotGenerationReviewStatus(slotId, generationRuns);
+  const Icon = item.icon;
+  return (
+    <span className={`status-pill generation-review-status ${item.className}`} title={item.label}>
       <Icon size={14} />
       {item.label}
     </span>
@@ -5930,7 +5952,7 @@ function GenerationPage({
 
   return (
     <section className="page-grid">
-      <div className="left-column">
+      <div className="left-column generation-left-sticky">
         <section className="panel api-panel">
           <div className="panel-header compact">
             <div>
@@ -5959,7 +5981,7 @@ function GenerationPage({
                   <strong>{String(slot.id).padStart(2, '0')} · {brief?.title || slot.title}</strong>
                   <small>{brief ? brief.goal : '等待方案'}</small>
                 </span>
-                {brief ? <BriefStatusPill status={brief.status} /> : <StatusPill status="review" />}
+                <SlotGenerationStatusPill slotId={slot.id} generationRuns={generationRuns} />
               </button>
               );
             })}
