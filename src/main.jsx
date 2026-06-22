@@ -1076,7 +1076,8 @@ const listingImageStrategyRules = [
   'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short English title or a few short labels over paragraphs.',
   'Blocked or forbidden claims must not be stated, suggested, implied, staged, symbolized, or visually hinted as a benefit. You may show neutral factual product appearance or ordinary use only when it does not communicate the blocked claim.',
   'For standard listing images, if an image includes a title, place the title consistently at the top of the image. A+ content is an exception: title placement may follow the module layout and does not have to be at the top.',
-  'Across all seven standard listing images, maintain a unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and overall ecommerce art direction. A+ should follow the selected brand system but may use richer section layouts.'
+  'Across all seven standard listing images, maintain a unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and overall ecommerce art direction.',
+  'A+ modules may use richer and more varied section layouts, but the full A+ set must still share one brand visual system: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
 ];
 
 function getListingImageStrategyText() {
@@ -3014,7 +3015,7 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
       'If using a real scene, the product must be placed in a physically believable real use context. The background should explain the benefit, not become generic decoration.'
     ].join(' ');
   const titlePlacementInstruction = isAPlusOutput
-    ? 'A+ title rule: a heading is optional and does not have to sit at the top. Place headings wherever the module layout looks most natural, such as left, center, over an image band, or beside the product. Keep typography consistent with the brand system.'
+    ? 'A+ title rule: a heading is optional and does not have to sit at the top. Place headings wherever the module layout looks most natural, such as left, center, over an image band, or beside the product. Keep typography, heading hierarchy, title color, spacing rhythm, callout treatment, graphic blocks, image treatment, and overall art direction consistent with the same brand visual system across the full A+ set.'
     : 'If a title is used, place it at the top of the image. Keep title style, font family, font weight, and label treatment consistent with the other images in the 7-image set.';
   const claimScopeInstruction = isAPlusOutput
     ? [
@@ -3038,7 +3039,7 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
     brief.primaryClaim ? `Primary claim: ${brief.primaryClaim}. The composition must visually prove this claim.` : '',
     brief.visualProof ? `Visual proof requirement: ${brief.visualProof}` : '',
     `Slot-specific quality guardrails: ${getSlotQualityGuardrailText(brief.visualType)}.`,
-    isAPlusOutput ? 'A+ module quality rule: allow richer content, broader composition, and combined benefit storytelling, but keep every claim truthful, readable, visually supported, and product-led.' : '',
+    isAPlusOutput ? 'A+ module quality rule: allow richer content, broader composition, and combined benefit storytelling, but keep every claim truthful, readable, visually supported, product-led, and visually consistent with the same brand system used across the A+ set.' : '',
     'Input claims, keywords, and notes may be Chinese, English, or mixed. Understand and translate them internally.',
     'Any visible copy in the generated image, including labels, callouts, badges, dimensions, feature text, comparison text, and short captions, must be natural English only. Do not render Chinese text in the final image.',
     'Internal prompt metadata must never appear in the image. Do not show brand color HEX codes, percentages, palette swatches, prompt labels, model notes, grid specs, or any design-system documentation.',

@@ -621,7 +621,8 @@ const listingImageStrategyRules = [
   'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short English title or a few short labels over paragraphs.',
   'Blocked or forbidden claims must not be stated, suggested, implied, staged, symbolized, or visually hinted as a benefit. Neutral factual product appearance or ordinary use is allowed only when it does not communicate the blocked claim.',
   'For standard listing images, if an image includes a title, place the title consistently at the top of the image. A+ content is an exception: title placement may follow the module layout and does not have to be at the top.',
-  'Across all seven standard listing images, maintain one unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and ecommerce art direction. A+ should follow the selected brand system but may use richer section layouts.'
+  'Across all seven standard listing images, maintain one unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and ecommerce art direction.',
+  'A+ modules may use richer and more varied section layouts, but the full A+ set must still share one brand visual system: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
 ];
 
 function getListingImageStrategyText() {
@@ -767,7 +768,7 @@ function buildStoryboardPlannerPrompt(payload) {
       ? 'For A+ output, headings are optional and may follow the module layout; they do not have to be at the top. Plan richer editorial modules with brand consistency, product evidence, and clean hierarchy.'
       : 'For standard listing output, if a slot uses a title, the title must sit at the top of the image.',
     isAPlusOutput
-      ? 'A+ modules may combine related allowed Ledger claims, use allowed claims not assigned to the selected slot, and create richer content modules rather than strict one-claim listing images.'
+      ? 'A+ modules may combine related allowed Ledger claims, use allowed claims not assigned to the selected slot, and create richer content modules rather than strict one-claim listing images. Even when layouts vary, the full A+ set must share the same brand visual system: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
       : 'Plan one unified 7-image visual system for standard listing output: consistent font style, font weight, title placement, label/callout treatment, spacing, lighting quality, icon style, and ecommerce art direction across the full set.',
     'Plan text as part of the generated image composition itself. Typography, callout positions, arrows, badges, and label hierarchy must be designed together with the product and scene, not added later as a separate overlay.',
     'Visible text must point to, sit near, or clearly relate to the product feature, scene action, measurement, or visual evidence it describes.',
@@ -938,7 +939,7 @@ function buildImageReviewPrompt(payload) {
     `Prompt snapshot: ${String(run.prompt || payload.prompt || '').slice(0, 1800)}`,
     '',
     isAPlusOutput
-      ? 'Background/layout rule: this is A+ content, not the Amazon primary image. It does not need a pure white background, and headings do not have to sit at the top. Richer editorial layout, brand color fields, lifestyle context, detail crops, and combined related allowed claims are acceptable if truthful and visually supported.'
+      ? 'Background/layout rule: this is A+ content, not the Amazon primary image. It does not need a pure white background, and headings do not have to sit at the top. Richer editorial layout, brand color fields, lifestyle context, detail crops, and combined related allowed claims are acceptable if truthful and visually supported. The A+ module must still fit the same brand visual system as the rest of the A+ set: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
       : isWhiteMainImage
       ? 'Background rule: slot 1 primary image must be product-only on pure white background, with no visible copy, props, badges, scene, or colored background. Product size rule: the product should occupy about 80-85% of the canvas and should not fall below about 75% unless unusually long or thin. Too-small product is a warn/fail risk; non-white background, visible copy, added props, heavy shadow, crop, product deformation, or missing parts is a fail.'
       : 'Background rule: this is a secondary listing image. Clean backgrounds, brand color backgrounds, soft layout blocks, or realistic use-scene backgrounds are allowed if they support a verified selling point and remain physically believable.',
@@ -957,14 +958,14 @@ function buildImageReviewPrompt(payload) {
     '3. claimAccuracy: Are visible claims and visual implications supported by the brief/Ledger, and does the image actually prove the primary claim instead of merely stating it as text? Invented numbers, certifications, accessories, dimensions, blocked claims, or unproven benefits are fail risks.',
     '4. textRisk: Is any visible text, badge, logo, number, or claim garbled, misspelled, too tiny, invented, non-English, or risky? Final generated image copy must be short English only; Chinese visible text is a fail unless it is part of a photographed product label in the original reference.',
     '4b. promptLeakRisk: Visible internal prompt metadata is a fail. Fail textRisk if the image shows HEX color codes, color usage percentages, palette swatches, color cards, design-token labels, style-guide panels, prompt words, model notes, or generation instructions.',
-    '5. aesthetics: Is the composition commercially usable without being too plain, cluttered, cheap-looking, badly cropped, off-brand, inconsistent with the image set, or polluted by internal design-guide graphics?',
+    '5. aesthetics: Is the composition commercially usable without being too plain, cluttered, cheap-looking, badly cropped, off-brand, inconsistent with the image set, inconsistent in typography/design language, or polluted by internal design-guide graphics?',
     '',
     'Common failures to actively catch:',
     '- The product looks like a different SKU, has changed legs/handles/lid/frame/fasteners/fabric/finish, or no longer matches the reference.',
     '- The scene does not logically prove the selling point; it only uses a title or decorative callout.',
     '- The image contains color palette blocks, HEX codes, percentages, prompt fragments, model notes, or other behind-the-scenes production marks.',
     isAPlusOutput
-      ? '- A+ layout failures: the module is cluttered, unreadable, visually cheap, uses unsupported claims, or combines unrelated claims without a clear content story.'
+      ? '- A+ layout failures: the module is cluttered, unreadable, visually cheap, uses unsupported claims, combines unrelated claims without a clear content story, or breaks the shared A+ brand system through mismatched fonts, title colors, heading hierarchy, callout style, spacing rhythm, image treatment, or graphic language.'
       : '- The layout is visually messy, the product is too small, important parts are cut off, or the set style/font/title placement is inconsistent.',
     isAPlusOutput
       ? '- Do not fail A+ just because it is not white-background or because its heading is not at the top; judge whether the richer module is truthful, readable, and commercially polished.'
