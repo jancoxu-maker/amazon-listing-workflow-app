@@ -60,11 +60,26 @@ export async function restoreTeamSession() {
   }
 }
 
-export async function activateTeamInvite({ inviteHash, displayName, email, requestedRole }) {
+export async function activateTeamInvite({ inviteHash, displayName, email, requestedRole, password }) {
   const result = await request('/api/auth/activate-invite', {
     method: 'POST',
     token: '',
-    body: JSON.stringify({ inviteHash, displayName, email, requestedRole })
+    body: JSON.stringify({ inviteHash, displayName, email, requestedRole, password })
+  });
+  const session = {
+    accessToken: result.accessToken,
+    expiresAt: result.expiresAt,
+    user: result.user
+  };
+  storeTeamSession(session);
+  return session;
+}
+
+export async function loginTeamAccount({ email, password }) {
+  const result = await request('/api/auth/login', {
+    method: 'POST',
+    token: '',
+    body: JSON.stringify({ email, password })
   });
   const session = {
     accessToken: result.accessToken,

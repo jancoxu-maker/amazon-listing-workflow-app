@@ -1,8 +1,11 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
 
 const MEMBER_ROLES = new Set(['designer', 'operator']);
 const ALL_ROLES = new Set(['designer', 'operator', 'admin']);
 const SESSION_DAYS = Math.max(1, Number(process.env.AUTH_SESSION_DAYS || 14));
+const PASSWORD_MIN_LENGTH = 10;
+const scrypt = promisify(scryptCallback);
 
 export class Stage1Error extends Error {
   constructor(message, status = 400, code = 'STAGE1_ERROR') {
@@ -19,6 +22,26 @@ function createId(prefix) {
 
 function hashToken(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+async function hashPassword(password) {
+  const salt = randomBytes(16).toString('base64url');
+  const derived = await scrypt(password, salt, 64);
+  return `scrypt$${salt}$${Buffer.from(derived).toString('base64url')}`;
+}
+
+async function verifyPassword(password, storedHash) {
+  const [algorithm, salt, encoded] = String(storedHash || '').split('$');
+  if (algorithm !== 'scrypt' || !salt || !encoded) return false;
+  const expected = Buffer.from(encoded, 'base64url');
+  const derived = Buffer.from(await scrypt(password, salt, expected.length));
+  return expected.length === derived.length && timingSafeEqual(expected, derived);
+}
+
+function assertPassword(password) {
+  if (typeof password !== 'string' || password.length < PASSWORD_MIN_LENGTH) {
+    throw new Stage1Error(`密码至少需要 ${PASSWORD_MIN_LENGTH} 位。`, 400, 'PASSWORD_TOO_SHORT');
+  }
 }
 
 function normalizeName(value) {
@@ -40,7 +63,8 @@ function userRecord(row) {
     displayName: row.display_name,
     email: row.email || '',
     role: row.role,
-    status: row.status
+    status: row.status,
+    passwordConfigured: Boolean(row.password_hash)
   };
 }
 
@@ -60,7 +84,7 @@ export function createStage1Store(database) {
     assertConfigured();
     if (!token) return null;
     const result = await database.query(`
-      SELECT s.id AS session_id, s.expires_at, u.id, u.display_name, u.email, u.role, u.status
+      SELECT s.id AS session_id, s.expires_at, u.id, u.display_name, u.email, u.role, u.status, u.password_hash
       FROM auth_sessions s
       JOIN app_users u ON u.id = s.user_id
       WHERE s.token_hash = $1
@@ -83,17 +107,22 @@ export function createStage1Store(database) {
     return session;
   }
 
-  async function activateInvite({ inviteHash, displayName, email, requestedRole }) {
+  async function activateInvite({ inviteHash, displayName, email, requestedRole, password }) {
     assertConfigured();
     const codeHash = String(inviteHash || '').trim().toLowerCase();
     const name = normalizeName(displayName);
     const normalizedEmail = normalizeEmail(email);
+    const normalizedPassword = String(password || '');
     if (!/^[a-f0-9]{64}$/.test(codeHash)) {
       throw new Stage1Error('邀请码格式无效。', 400, 'INVALID_INVITE');
     }
     if (name.length < 2) {
       throw new Stage1Error('请输入至少 2 个字符的姓名。', 400, 'DISPLAY_NAME_REQUIRED');
     }
+    if (!normalizedEmail) {
+      throw new Stage1Error('请输入有效的公司邮箱。', 400, 'EMAIL_REQUIRED');
+    }
+    assertPassword(normalizedPassword);
 
     return database.transaction(async (client) => {
       const inviteResult = await client.query('SELECT * FROM invite_codes WHERE code_hash = $1 FOR UPDATE', [codeHash]);
@@ -116,9 +145,10 @@ export function createStage1Store(database) {
       const sessionId = createId('ses');
       const token = randomBytes(32).toString('base64url');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+      const passwordHash = await hashPassword(normalizedPassword);
       await client.query(
-        'INSERT INTO app_users (id, email, display_name, role) VALUES ($1, $2, $3, $4)',
-        [userId, normalizedEmail || null, name, allowedRole]
+        'INSERT INTO app_users (id, email, display_name, role, password_hash) VALUES ($1, $2, $3, $4, $5)',
+        [userId, normalizedEmail, name, allowedRole, passwordHash]
       );
       if (!reusableAdminInvite) {
         await client.query('UPDATE invite_codes SET uses = uses + 1, updated_at = NOW() WHERE id = $1', [invite.id]);
@@ -136,9 +166,40 @@ export function createStage1Store(database) {
       return {
         accessToken: token,
         expiresAt: expiresAt.toISOString(),
-        user: { id: userId, displayName: name, email: normalizedEmail, role: allowedRole, status: 'active' }
+        user: { id: userId, displayName: name, email: normalizedEmail, role: allowedRole, status: 'active', passwordConfigured: true }
       };
     });
+  }
+
+  async function login({ email, password }) {
+    assertConfigured();
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail || typeof password !== 'string') {
+      throw new Stage1Error('邮箱或密码不正确。', 401, 'LOGIN_FAILED');
+    }
+    const result = await database.query(
+      'SELECT id, display_name, email, role, status, password_hash FROM app_users WHERE email = $1 LIMIT 1',
+      [normalizedEmail]
+    );
+    const user = result.rows[0];
+    if (!user || user.status !== 'active' || !await verifyPassword(password, user.password_hash)) {
+      throw new Stage1Error('邮箱或密码不正确。', 401, 'LOGIN_FAILED');
+    }
+    const sessionId = createId('ses');
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+    await database.transaction(async (client) => {
+      await client.query(
+        'INSERT INTO auth_sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)',
+        [sessionId, user.id, hashToken(token), expiresAt]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (id, actor_id, event_name, payload)
+         VALUES ($1, $2, 'auth.login', $3::jsonb)`,
+        [createId('audit'), user.id, JSON.stringify({ role: user.role })]
+      );
+    });
+    return { accessToken: token, expiresAt: expiresAt.toISOString(), user: userRecord(user) };
   }
 
   async function revokeSession(token) {
@@ -336,6 +397,7 @@ export function createStage1Store(database) {
     getSession,
     requireSession,
     activateInvite,
+    login,
     revokeSession,
     listProjects,
     createProject,

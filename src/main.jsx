@@ -35,6 +35,7 @@ import {
   activateTeamInvite,
   createTeamProject,
   listTeamProjects,
+  loginTeamAccount,
   logoutTeamSession,
   restoreTeamSession,
   updateTeamProject
@@ -555,9 +556,11 @@ function TeamAccessGate({ children }) {
   const [session, setSession] = useState(null);
   const [isRestoring, setIsRestoring] = useState(true);
   const [showCodeEntry, setShowCodeEntry] = useState(false);
+  const [authMode, setAuthMode] = useState('activate');
   const [requestedRole, setRequestedRole] = useState('designer');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
@@ -582,28 +585,35 @@ function TeamAccessGate({ children }) {
       setShowCodeEntry(true);
       return;
     }
-    if (!code.trim()) {
-      setError('请输入邀请码');
-      return;
-    }
     setIsChecking(true);
     setError('');
     try {
-      if (displayName.trim().length < 2) {
-        setError('请输入至少两个字的姓名或昵称');
-        return;
+      let nextSession;
+      if (authMode === 'login') {
+        nextSession = await loginTeamAccount({ email, password });
+        appLogger.log('auth.account.logged_in', { role: nextSession.user.role, userId: nextSession.user.id });
+      } else {
+        if (!code.trim()) {
+          setError('请输入邀请码');
+          return;
+        }
+        if (displayName.trim().length < 2) {
+          setError('请输入至少两个字的姓名或昵称');
+          return;
+        }
+        const hash = await hashInviteCode(code);
+        nextSession = await activateTeamInvite({
+          inviteHash: hash,
+          displayName,
+          email,
+          requestedRole,
+          password
+        });
+        appLogger.log('auth.invite.unlocked', {
+          role: nextSession.user.role,
+          userId: nextSession.user.id
+        });
       }
-      const hash = await hashInviteCode(code);
-      const nextSession = await activateTeamInvite({
-        inviteHash: hash,
-        displayName,
-        email,
-        requestedRole
-      });
-      appLogger.log('auth.invite.unlocked', {
-        role: nextSession.user.role,
-        userId: nextSession.user.id
-      });
       setSession(nextSession);
     } catch (error) {
       appLogger.error('auth.invite.error', error);
@@ -651,27 +661,43 @@ function TeamAccessGate({ children }) {
         <form className={showCodeEntry ? 'auth-form visible' : 'auth-form'} onSubmit={handleSubmit}>
           {showCodeEntry && (
             <>
-              <div className="auth-role-choice" role="group" aria-label="选择身份">
-                <button type="button" className={requestedRole === 'designer' ? 'active' : ''} onClick={() => setRequestedRole('designer')}>设计</button>
-                <button type="button" className={requestedRole === 'operator' ? 'active' : ''} onClick={() => setRequestedRole('operator')}>运营</button>
-              </div>
+              {authMode === 'activate' && <>
+                <div className="auth-role-choice" role="group" aria-label="选择身份">
+                  <button type="button" className={requestedRole === 'designer' ? 'active' : ''} onClick={() => setRequestedRole('designer')}>设计</button>
+                  <button type="button" className={requestedRole === 'operator' ? 'active' : ''} onClick={() => setRequestedRole('operator')}>运营</button>
+                </div>
+                <label>
+                  <span>姓名或昵称</span>
+                  <input autoFocus value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} placeholder="例如：Ava" autoComplete="name" />
+                </label>
+              </>}
               <label>
-                <span>姓名或昵称</span>
-                <input autoFocus value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} placeholder="例如：Ava" autoComplete="name" />
+                <span>公司邮箱</span>
+                <input value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="name@company.com" autoComplete="email" inputMode="email" />
               </label>
               <label>
-                <span>邮箱（选填）</span>
-                <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" autoComplete="email" />
+                <span>密码</span>
+                <input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} placeholder={authMode === 'activate' ? '至少 10 位' : '输入账户密码'} autoComplete={authMode === 'activate' ? 'new-password' : 'current-password'} />
               </label>
-              <label>
+              {authMode === 'activate' && <label>
                 <span>输入邀请码</span>
                 <input value={code} onChange={(event) => { setCode(event.target.value); setError(''); }} placeholder="VMZ-XXXX-0000" autoComplete="one-time-code" />
-              </label>
+              </label>}
+              <button
+                className="auth-mode-link"
+                type="button"
+                onClick={() => {
+                  setAuthMode(authMode === 'activate' ? 'login' : 'activate');
+                  setError('');
+                }}
+              >
+                {authMode === 'activate' ? '已有账号？登录' : '首次使用？用邀请码激活'}
+              </button>
             </>
           )}
           {error && <p className="auth-error">{error}</p>}
           <button type="submit" className="auth-enter-button" disabled={isChecking}>
-            {isChecking ? '正在验证...' : '进入 Vistamz'}
+            {isChecking ? '正在验证...' : !showCodeEntry ? '进入 Vistamz' : authMode === 'login' ? '登录 Vistamz' : '激活并进入'}
           </button>
         </form>
       </section>

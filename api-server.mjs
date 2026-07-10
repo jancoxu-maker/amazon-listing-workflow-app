@@ -1440,6 +1440,17 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && requestPath === '/api/auth/login') {
+    try {
+      const payload = await readJsonBody(request);
+      const result = await stage1Store.login(payload);
+      sendJson(response, 200, { ok: true, ...result });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
   if (request.method === 'GET' && requestPath === '/api/auth/session') {
     try {
       const session = await requireStage1Actor(request);

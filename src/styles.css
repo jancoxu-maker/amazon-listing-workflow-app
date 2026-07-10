@@ -253,6 +253,18 @@ textarea {
   color: #f2661d;
 }
 
+.auth-mode-link {
+  justify-self: center;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .auth-loading {
   margin: 24px 0 0;
   color: rgba(255, 255, 255, 0.82);
