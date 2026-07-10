@@ -1,6 +1,8 @@
 import http from 'node:http';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
+import { createDatabase } from './server/database.mjs';
+import { createStage1Store, getBearerToken, Stage1Error } from './server/stage1-store.mjs';
 
 function loadLocalEnv() {
   if (!existsSync('.env.local')) return;
@@ -31,8 +33,12 @@ const MAX_BODY_BYTES = 18 * 1024 * 1024;
 const GENERATED_IMAGE_DIR = resolve(process.env.GENERATED_IMAGE_DIR || 'generated-images');
 const EXPORT_DIR = resolve(process.env.EXPORT_DIR || 'exports');
 const INVITE_CLAIMS_FILE = resolve(process.env.INVITE_CLAIMS_FILE || 'data/invite-claims.json');
+const EVENT_LOG_DIR = resolve(process.env.EVENT_LOG_DIR || 'logs');
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`).replace(/\/$/, '');
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
+const MAX_EVENT_BATCH_SIZE = 100;
+const database = createDatabase();
+const stage1Store = createStage1Store(database);
 const INVITE_ACCESS_CODES = [
   { label: '内测邀请码 01', role: 'tester', hash: '48f3e317987ea2d51b3ca8dfd17c95eddbeb5f186715be4cf2d0f8709f0519db' },
   { label: '内测邀请码 02', role: 'tester', hash: 'fc59c6c106d2378251a1873a68652192541fa07477f69f44af7b8ccb57d8edb3' },
@@ -46,10 +52,31 @@ function sendJson(response, status, payload) {
   response.writeHead(status, {
     'Access-Control-Allow-Origin': CORS_ORIGIN,
     'Access-Control-Allow-Methods': 'POST, OPTIONS, GET',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Content-Type': 'application/json'
   });
   response.end(JSON.stringify(payload));
+}
+
+function sendStage1Error(response, error) {
+  const status = error instanceof Stage1Error ? error.status : error?.code === 'DATABASE_NOT_CONFIGURED' ? 503 : 500;
+  sendJson(response, status, {
+    ok: false,
+    code: error instanceof Stage1Error ? error.code : error?.code || 'STAGE1_UNAVAILABLE',
+    error: error instanceof Error ? error.message : '共享账号与项目服务暂时不可用。'
+  });
+}
+
+async function getOptionalStage1Actor(request) {
+  if (!database.configured) return null;
+  const token = getBearerToken(request.headers.authorization);
+  if (!token) return null;
+  return stage1Store.getSession(token);
+}
+
+async function requireStage1Actor(request) {
+  const token = getBearerToken(request.headers.authorization);
+  return stage1Store.requireSession(token);
 }
 
 function readJsonBody(request) {
@@ -99,6 +126,68 @@ function readInviteClaims() {
 function writeInviteClaims(record) {
   mkdirSync(resolve(INVITE_CLAIMS_FILE, '..'), { recursive: true });
   writeFileSync(INVITE_CLAIMS_FILE, JSON.stringify(record, null, 2), 'utf8');
+}
+
+function getClientIp(request) {
+  return String(request.headers['x-forwarded-for'] || request.socket?.remoteAddress || '')
+    .split(',')[0]
+    .trim()
+    .slice(0, 80);
+}
+
+function cleanEventPayload(value, depth = 0) {
+  if (depth > 5) return '[truncated]';
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'string') return value.length > 2000 ? `${value.slice(0, 2000)}...` : value;
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
+  if (Array.isArray(value)) return value.slice(0, 80).map((item) => cleanEventPayload(item, depth + 1));
+  if (typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).slice(0, 80).map(([key, item]) => [
+      key,
+      cleanEventPayload(item, depth + 1)
+    ]));
+  }
+  return String(value);
+}
+
+function normalizeEvent(rawEvent = {}, request) {
+  const now = new Date();
+  const eventName = String(rawEvent.event || rawEvent.name || 'app.unknown').trim().slice(0, 120);
+  return {
+    ts: rawEvent.ts || now.toISOString(),
+    receivedAt: now.toISOString(),
+    event: eventName || 'app.unknown',
+    level: ['debug', 'info', 'warn', 'error'].includes(rawEvent.level) ? rawEvent.level : 'info',
+    sessionId: String(rawEvent.sessionId || rawEvent.session_id || '').slice(0, 120),
+    userHint: String(rawEvent.userHint || rawEvent.user_hint || '').slice(0, 120),
+    projectId: String(rawEvent.projectId || rawEvent.project_id || '').slice(0, 120),
+    step: rawEvent.step ?? '',
+    traceId: String(rawEvent.traceId || rawEvent.trace_id || '').slice(0, 120),
+    payload: cleanEventPayload(rawEvent.payload || {}),
+    client: cleanEventPayload(rawEvent.client || {}),
+    server: {
+      ip: getClientIp(request),
+      userAgent: String(request.headers['user-agent'] || '').slice(0, 240)
+    }
+  };
+}
+
+function appendEventLog(events = [], request) {
+  const safeEvents = events
+    .slice(0, MAX_EVENT_BATCH_SIZE)
+    .map((event) => normalizeEvent(event, request));
+  if (!safeEvents.length) return { count: 0 };
+  mkdirSync(EVENT_LOG_DIR, { recursive: true });
+  const date = new Date().toISOString().slice(0, 10);
+  const filePath = resolve(EVENT_LOG_DIR, `events-${date}.jsonl`);
+  if (!filePath.startsWith(EVENT_LOG_DIR)) {
+    throw new Error('Invalid event log path');
+  }
+  appendFileSync(filePath, `${safeEvents.map((event) => JSON.stringify(event)).join('\n')}\n`, 'utf8');
+  return {
+    count: safeEvents.length,
+    filePath
+  };
 }
 
 function claimInviteAccess(payload = {}, request) {
@@ -1295,29 +1384,129 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'GET' && request.url === '/api/health') {
+  const requestPath = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`).pathname;
+
+  if (request.method === 'GET' && requestPath === '/api/health') {
+    const databaseHealth = await database.health();
     sendJson(response, 200, {
       ok: true,
       provider: IMAGE_API_PROVIDER,
       model: IMAGE_API_PROVIDER === 'openai' ? IMAGE_MODEL : GEMINI_IMAGE_MODEL,
       plannerModel: GEMINI_TEXT_MODEL,
       reviewModel: GEMINI_TEXT_MODEL,
-      hasApiKey: IMAGE_API_PROVIDER === 'openai' ? Boolean(OPENAI_API_KEY) : Boolean(GEMINI_API_KEY)
+      hasApiKey: IMAGE_API_PROVIDER === 'openai' ? Boolean(OPENAI_API_KEY) : Boolean(GEMINI_API_KEY),
+      eventLogDir: EVENT_LOG_DIR,
+      database: databaseHealth
     });
     return;
   }
 
-  if (request.method === 'GET' && request.url?.startsWith('/generated/')) {
+  if (request.method === 'POST' && requestPath === '/api/events') {
+    try {
+      const payload = await readJsonBody(request);
+      const events = Array.isArray(payload?.events) ? payload.events : [payload];
+      const result = appendEventLog(events, request);
+      let persistentCount = 0;
+      if (database.configured) {
+        try {
+          const actor = await getOptionalStage1Actor(request);
+          persistentCount = await stage1Store.appendAuditEvents(events, actor?.user || null);
+        } catch (error) {
+          console.warn(`Persistent audit logging unavailable: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      sendJson(response, 200, {
+        ok: true,
+        count: result.count,
+        persistentCount
+      });
+    } catch (error) {
+      sendJson(response, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Event logging failed'
+      });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/auth/activate-invite') {
+    try {
+      const payload = await readJsonBody(request);
+      const result = await stage1Store.activateInvite(payload);
+      sendJson(response, 201, { ok: true, ...result });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/auth/session') {
+    try {
+      const session = await requireStage1Actor(request);
+      sendJson(response, 200, { ok: true, user: session.user });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/auth/logout') {
+    try {
+      await stage1Store.revokeSession(getBearerToken(request.headers.authorization));
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/projects') {
+    try {
+      const session = await requireStage1Actor(request);
+      const projects = await stage1Store.listProjects(session.user);
+      sendJson(response, 200, { ok: true, projects });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && requestPath === '/api/projects') {
+    try {
+      const session = await requireStage1Actor(request);
+      const payload = await readJsonBody(request);
+      const project = await stage1Store.createProject(session.user, payload);
+      sendJson(response, 201, { ok: true, project });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  const assignmentMatch = /^\/api\/projects\/([^/]+)\/assignments$/.exec(requestPath);
+  if (request.method === 'POST' && assignmentMatch) {
+    try {
+      const session = await requireStage1Actor(request);
+      const payload = await readJsonBody(request);
+      await stage1Store.assignProject(session.user, decodeURIComponent(assignmentMatch[1]), payload);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath.startsWith('/generated/')) {
     serveGeneratedImage(request, response);
     return;
   }
 
-  if (request.method === 'GET' && request.url?.startsWith('/exports/')) {
+  if (request.method === 'GET' && requestPath.startsWith('/exports/')) {
     serveExportFile(request, response);
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/plan-storyboard') {
+  if (request.method === 'POST' && requestPath === '/api/plan-storyboard') {
     try {
       const payload = await readJsonBody(request);
       const result = await planStoryboardWithGemini(payload);
@@ -1331,7 +1520,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/review-image') {
+  if (request.method === 'POST' && requestPath === '/api/review-image') {
     try {
       const payload = await readJsonBody(request);
       const result = await reviewImageWithGemini(payload);
@@ -1345,7 +1534,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/claim-invite') {
+  if (request.method === 'POST' && requestPath === '/api/claim-invite') {
     try {
       const payload = await readJsonBody(request);
       const result = claimInviteAccess(payload, request);
@@ -1359,7 +1548,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/save-generated-image') {
+  if (request.method === 'POST' && requestPath === '/api/save-generated-image') {
     try {
       const payload = await readJsonBody(request);
       const result = saveGeneratedImageFile(payload);
@@ -1376,7 +1565,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/save-export') {
+  if (request.method === 'POST' && requestPath === '/api/save-export') {
     try {
       const payload = await readJsonBody(request);
       const result = saveExportFile(payload);
@@ -1393,7 +1582,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === 'POST' && request.url === '/api/export-images-zip') {
+  if (request.method === 'POST' && requestPath === '/api/export-images-zip') {
     try {
       const payload = await readJsonBody(request);
       const result = saveImagesZipFile(payload);
@@ -1410,7 +1599,7 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method !== 'POST' || request.url !== '/api/generate-image') {
+  if (request.method !== 'POST' || requestPath !== '/api/generate-image') {
     sendJson(response, 404, { ok: false, error: 'Not found' });
     return;
   }

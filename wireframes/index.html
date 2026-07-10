@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vistamz · 信息架构线框</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="prototype-note">
+      <strong>Vistamz 结构线框</strong>
+      <span>用于确认页面分工与操作路径，不代表最终颜色和视觉样式</span>
+      <button class="text-button" data-action="reset-demo">重置演示</button>
+    </div>
+
+    <section class="login-screen" id="loginScreen" aria-labelledby="loginTitle">
+      <button class="admin-login-corner" data-role="admin">管理员入口 ↗</button>
+      <div class="login-card">
+        <div class="login-brand"><span class="brand-mark"><img src="/favicon.svg" alt="" /></span><span><strong>Vistamz</strong><small>Amazon visual workflow</small></span></div>
+        <p class="eyebrow">BETA ACCESS</p>
+        <h1 id="loginTitle">选择你的工作台</h1>
+        <p class="login-intro">身份在进入前确定。每个工作台只显示与你当前任务有关的内容。</p>
+        <div class="role-entry-grid">
+          <button class="role-entry-card" data-role="designer"><span class="role-entry-icon">◇</span><strong>设计工作台</strong><small>创建项目、确认卖点、规划方案、生成和局部修改图片。</small><em>进入设计工作台 →</em></button>
+          <button class="role-entry-card" data-role="operator"><span class="role-entry-icon">✓</span><strong>运营审核台</strong><small>查看待审核图片，确认卖点与合规性，通过或退回修改。</small><em>进入运营审核台 →</em></button>
+        </div>
+        <p class="login-help">选择身份后，将使用该身份对应的邀请码验证。</p>
+      </div>
+    </section>
+
+    <div class="app-shell" id="workspaceShell" aria-hidden="true">
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <div class="brand">
+          <span class="brand-mark"><img src="/favicon.svg" alt="" /></span>
+          <span><strong>Vistamz</strong><small>Amazon visual workflow</small></span>
+          </div>
+          <button class="sidebar-toggle" data-action="toggle-sidebar" aria-label="收起侧边栏"><span>‹</span></button>
+        </div>
+
+        <nav class="primary-nav" aria-label="主要导航">
+          <p class="nav-label work-label">工作</p>
+          <button class="nav-item active" data-page="projects"><span class="nav-icon">▦</span><span class="nav-text">项目中心</span><b>3</b></button>
+          <button class="nav-item" data-page="review-inbox"><span class="nav-icon">✓</span><span class="nav-text">运营审核</span><b>4</b></button>
+
+          <p class="nav-label resource-label">资源</p>
+          <button class="nav-item" data-page="brands"><span class="nav-icon">◇</span><span class="nav-text">品牌库</span></button>
+
+          <p class="nav-label admin-only">管理</p>
+          <button class="nav-item admin-only" data-page="system"><span class="nav-icon">⌁</span><span class="nav-text">系统与日志</span><i></i></button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="user-row"><span class="avatar">DX</span><span class="user-copy"><strong>Demo User</strong><small id="roleBadge">设计</small></span><button class="logout-button" data-action="logout" aria-label="退出当前身份">↗</button></div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div id="pageRoot"></div>
+      </main>
+    </div>
+
+    <template id="projectsTemplate">
+      <section class="page">
+        <header class="page-header">
+          <div><p class="eyebrow">PROJECTS</p><h1>项目中心</h1><p>继续手头工作，或者创建一个新的图片项目。</p></div>
+          <button class="primary-button" data-page="new-project">＋ 创建项目</button>
+        </header>
+
+        <section class="next-task-banner">
+          <div class="task-icon">→</div>
+          <div><small>建议下一步</small><strong>Cosyland Learning Tower 还有 2 张图片等待选择</strong><p>继续完成候选图选择，之后即可提交运营审核。</p></div>
+          <button class="dark-button" data-page="generate">继续处理</button>
+        </section>
+
+        <div class="toolbar">
+          <div class="segmented"><button class="selected">进行中 3</button><button>待审核 1</button><button>已完成 8</button></div>
+          <label class="search-box">⌕ <input placeholder="搜索项目或 SKU" /></label>
+        </div>
+
+        <div class="project-list">
+          <article class="project-row" data-page="generate">
+            <div class="product-thumb"><img src="/sample/final/01-main-white-background.png" alt="" /></div>
+            <div class="project-summary"><span class="status-chip orange">生成中</span><h2>Cosyland Learning Tower</h2><p>CL-LT-BAM-FOLD-001 · 主图套图</p></div>
+            <div class="stage-progress"><span>3 / 4</span><div><i style="width: 72%"></i></div><small>设计与生图</small></div>
+            <div class="project-next"><small>下一步</small><strong>选择候选图</strong><span>2 张待处理</span></div>
+            <button class="icon-button" aria-label="打开项目">›</button>
+          </article>
+          <article class="project-row" data-page="review-inbox">
+            <div class="product-thumb placeholder">产品</div>
+            <div class="project-summary"><span class="status-chip blue">待审核</span><h2>Overmont Camping Wagon</h2><p>OM-CW-2407 · 主图套图</p></div>
+            <div class="stage-progress"><span>4 / 4</span><div><i style="width: 90%"></i></div><small>审核与交付</small></div>
+            <div class="project-next"><small>当前负责人</small><strong>运营</strong><span>今日提交</span></div>
+            <button class="icon-button" aria-label="打开项目">›</button>
+          </article>
+          <article class="project-row" data-page="content">
+            <div class="product-thumb placeholder">产品</div>
+            <div class="project-summary"><span class="status-chip gray">草稿</span><h2>Kitchen Storage Rack</h2><p>无 SKU · A+ 内容</p></div>
+            <div class="stage-progress"><span>1 / 4</span><div><i style="width: 25%"></i></div><small>创建项目</small></div>
+            <div class="project-next"><small>下一步</small><strong>确认卖点</strong><span>12 条待整理</span></div>
+            <button class="icon-button" aria-label="打开项目">›</button>
+          </article>
+        </div>
+      </section>
+    </template>
+
+    <template id="newProjectTemplate">
+      <section class="page narrow-page">
+        <header class="page-header compact"><div><button class="back-button" data-page="projects">← 项目中心</button><p class="eyebrow">NEW PROJECT</p><h1>创建图片项目</h1><p>只填写生成图片真正需要的信息，后续都可以修改。</p></div></header>
+        <div class="stepper">
+          <div class="active"><b>1</b><span><strong>产品与输出</strong><small>当前步骤</small></span></div>
+          <i></i><div><b>2</b><span><strong>上传参考图</strong><small>下一步</small></span></div>
+          <i></i><div><b>3</b><span><strong>补充信息</strong><small>最后一步</small></span></div>
+        </div>
+        <section class="form-card">
+          <h2>这次要制作什么？</h2>
+          <div class="choice-grid">
+            <button class="choice-card selected"><span class="choice-icon">▣</span><strong>Amazon 主图套图</strong><small>7 张，第一张白底，其余图片用画面论证卖点</small><i>已选择</i></button>
+            <button class="choice-card"><span class="choice-icon">▤</span><strong>A+ 内容图片</strong><small>内容更丰富，可组合卖点，并继承品牌规则</small></button>
+          </div>
+          <div class="field-grid">
+            <label><span>项目名称</span><input value="Cosyland Learning Tower" /></label>
+            <label><span>SKU 模式</span><select><option>绑定 SKU</option><option>无 SKU</option></select></label>
+            <label><span>SKU</span><input value="CL-LT-BAM-FOLD-001" /></label>
+            <label><span>品牌</span><select><option>Cosyland</option><option>不使用品牌规则</option></select></label>
+          </div>
+          <div class="form-actions"><button class="secondary-button" data-page="projects">保存草稿</button><button class="primary-button" data-page="content">下一步：上传与确认内容 →</button></div>
+        </section>
+      </section>
+    </template>
+
+    <template id="contentTemplate">
+      <section class="page">
+        <header class="workspace-header">
+          <div><button class="back-button" data-page="projects">← 项目中心</button><h1>Cosyland Learning Tower</h1><p>CL-LT-BAM-FOLD-001 · 主图套图</p></div>
+          <div class="stage-nav"><button class="done">✓ 创建项目</button><button class="active">2 确认内容</button><button>3 设计与生图</button><button>4 审核与交付</button></div>
+        </header>
+
+        <div class="content-layout">
+          <aside class="content-side">
+            <h2>产品资料</h2><p>这些信息会作为整个项目的事实依据。</p>
+            <div class="upload-summary"><img src="/sample/final/01-main-white-background.png" alt="产品参考图" /><span><strong>4 张参考图</strong><small>整体、侧面、折叠、细节</small></span><button class="icon-button">›</button></div>
+            <dl class="fact-summary"><div><dt>品牌</dt><dd>Cosyland</dd></div><div><dt>材质</dt><dd>竹制</dd></div><div><dt>承重</dt><dd>150 lb</dd></div><div><dt>年龄</dt><dd>18 个月 - 6 岁</dd></div></dl>
+            <button class="secondary-button full">编辑产品资料</button>
+          </aside>
+          <section class="content-main">
+            <div class="section-title-row"><div><p class="eyebrow">CLAIMS</p><h2>确认可用于图片的内容</h2><p>AI 已合并 SKU、手动输入和竞品调研结果。请只保留准确内容。</p></div><button class="secondary-button">＋ 添加卖点</button></div>
+            <div class="claim-filter"><span>12 条内容</span><button class="selected">全部</button><button>产品卖点 8</button><button>规格 4</button><button class="quiet-link">查看来源与证据</button></div>
+            <div class="claim-table">
+              <div class="claim-row"><span class="drag">⋮⋮</span><div><strong>Folds flat for compact storage</strong><small>可折叠收纳，折叠厚度约 14 cm</small></div><span class="source-pill">SKU</span><button class="edit-button">编辑</button></div>
+              <div class="claim-row"><span class="drag">⋮⋮</span><div><strong>Supports up to 150 lb</strong><small>稳固竹制结构，最大承重 150 lb</small></div><span class="source-pill">手动</span><button class="edit-button">编辑</button></div>
+              <div class="claim-row"><span class="drag">⋮⋮</span><div><strong>Designed for ages 18 months to 6 years</strong><small>适用年龄范围</small></div><span class="source-pill">SKU</span><button class="edit-button">编辑</button></div>
+              <div class="claim-row"><span class="drag">⋮⋮</span><div><strong>Wide steps make climbing easier</strong><small>使用画面展示台阶与踩踏动作</small></div><span class="source-pill">竞品启发</span><button class="edit-button">编辑</button></div>
+            </div>
+            <footer class="sticky-actions"><span><strong>12 条内容已就绪</strong><small>下一步将据此规划 7 张图片</small></span><button class="primary-button" data-page="generate">确认内容并开始设计 →</button></footer>
+          </section>
+        </div>
+      </section>
+    </template>
+
+    <template id="generateTemplate">
+      <section class="page full-height-page">
+        <header class="workspace-header slim">
+          <div><button class="back-button" data-page="projects">← 项目中心</button><h1>设计与生图</h1><p>Cosyland Learning Tower · 主图套图</p></div>
+          <div class="stage-nav"><button class="done">✓ 创建项目</button><button class="done">✓ 确认内容</button><button class="active">3 设计与生图</button><button>4 审核与交付</button></div>
+        </header>
+
+        <div class="generation-layout">
+          <aside class="slot-panel">
+            <div class="panel-header"><span><small>图片方案</small><strong>7 个图槽</strong></span><button class="icon-button">···</button></div>
+            <div class="slot-list">
+              <button class="slot-item selected" data-slot="1"><b>01</b><span><strong>主产品图</strong><small>白底展示完整产品</small></span><em class="chosen">已选</em></button>
+              <button class="slot-item" data-slot="2"><b>02</b><span><strong>折叠收纳</strong><small>用前后对比证明省空间</small></span><em class="chosen">已选</em></button>
+              <button class="slot-item" data-slot="3"><b>03</b><span><strong>亲子使用场景</strong><small>厨房场景与真实比例</small></span><em class="pending">待选择</em></button>
+              <button class="slot-item" data-slot="4"><b>04</b><span><strong>稳固结构</strong><small>竹制结构与连接细节</small></span><em class="pending">待生成</em></button>
+              <button class="slot-item" data-slot="5"><b>05</b><span><strong>轻松登高</strong><small>宽台阶与使用动作</small></span><em class="pending">待生成</em></button>
+              <button class="slot-item" data-slot="6"><b>06</b><span><strong>尺寸信息</strong><small>展开和折叠尺寸</small></span><em class="pending">待生成</em></button>
+              <button class="slot-item" data-slot="7"><b>07</b><span><strong>包装清单</strong><small>配件与说明书</small></span><em class="pending">待生成</em></button>
+            </div>
+            <button class="secondary-button full">重新规划方案</button>
+          </aside>
+
+          <section class="canvas-panel">
+            <div class="canvas-toolbar"><span><b id="canvasSlotNumber">01</b><strong id="canvasSlotTitle">主产品图</strong></span><div><button class="icon-button">−</button><span>80%</span><button class="icon-button">＋</button></div></div>
+            <div class="image-canvas"><img id="canvasImage" src="/sample/final/01-main-white-background.png" alt="当前候选图" /></div>
+            <div class="candidate-strip">
+              <p>候选图 <b>2</b></p>
+              <button class="candidate selected"><img src="/sample/final/01-main-white-background.png" alt="候选 1" /><span>候选 1</span><i>已选择</i></button>
+              <button class="candidate"><img src="/sample/final/02-core-features.png" alt="候选 2" /><span>候选 2</span></button>
+            </div>
+          </section>
+
+          <aside class="action-panel">
+            <div class="panel-section"><p class="eyebrow">THIS IMAGE</p><h2 id="actionSlotTitle">主产品图</h2><p>目标：完整、真实地展示产品，产品占画面约 85%，纯白背景。</p></div>
+            <div class="panel-section"><h3>要论证的内容</h3><div class="claim-card"><strong>完整产品外观</strong><small>竹制材质 · 展开状态 · 产品结构不变</small></div></div>
+            <div class="panel-section"><h3>生成方式</h3><div class="segmented full"><button class="selected" data-generation-mode="current">当前图多张</button><button data-generation-mode="suite">整套各一张</button></div><button class="primary-button full" data-action="generate-images">再生成当前图（3 张）</button><p class="generation-rule" id="generationRule">当前图槽固定生成 3 张候选图，用于比较后选定一张。</p></div>
+            <div class="panel-section review-summary"><h3>AI 预审</h3><span class="risk low">低风险</span><ul><li>产品结构与参考图一致</li><li>白底与画布尺寸符合要求</li><li>建议检查顶部横杆细节</li></ul><button class="quiet-link">查看完整预审依据</button></div>
+            <div class="panel-section candidate-tools"><h3>当前候选图</h3><p>局部修改会保留原图，只基于选定区域生成新的候选版本。</p><button class="secondary-button full" data-action="open-local-edit">⌖ 局部修改</button></div>
+          </aside>
+        </div>
+        <footer class="generation-submit-bar">
+          <div class="submit-status"><strong><span id="chosenSlotCount">2</span> / <span id="totalSlotCount">7</span> 张已选</strong><small id="submitHelper">还差 5 张图片，选定后可一键提交运营审核。</small></div>
+          <p>每个图槽只需选定 1 张候选图；原候选和局部修正版都会保留在项目记录中。</p>
+          <button class="dark-button" data-action="submit-all-review" disabled>还需选择 5 张</button>
+        </footer>
+      </section>
+    </template>
+
+    <template id="reviewInboxTemplate">
+      <section class="page">
+        <header class="page-header"><div><p class="eyebrow">REVIEW INBOX</p><h1>运营审核</h1><p>只显示等待当前身份处理的项目。</p></div><div class="summary-number"><strong>4</strong><span>待我审核</span></div></header>
+        <div class="toolbar"><div class="segmented"><button class="selected">待我处理 4</button><button>已退回 2</button><button>已通过 18</button></div><label class="search-box">⌕ <input placeholder="搜索项目或提交人" /></label></div>
+        <div class="review-queue">
+          <article class="review-queue-row" data-page="review-detail"><span class="priority-dot"></span><div class="queue-thumb"><img src="/sample/final/01-main-white-background.png" alt="" /></div><div><h2>Cosyland Learning Tower</h2><p>主图套图 · 7 张 · 设计师 Mia 提交</p></div><span class="submitted-time">18 分钟前</span><span class="risk medium">2 项需关注</span><button class="dark-button">开始审核</button></article>
+          <article class="review-queue-row" data-page="review-detail"><span class="priority-dot normal"></span><div class="queue-thumb placeholder">产品</div><div><h2>Overmont Camping Wagon</h2><p>A+ 内容 · 6 张 · 设计师 Leo 提交</p></div><span class="submitted-time">1 小时前</span><span class="risk low">低风险</span><button class="secondary-button">开始审核</button></article>
+        </div>
+      </section>
+    </template>
+
+    <template id="reviewDetailTemplate">
+      <section class="page review-detail-page">
+        <header class="workspace-header slim"><div><button class="back-button" data-page="review-inbox">← 返回审核列表</button><h1>审核图片</h1><p>Cosyland Learning Tower · 设计师 Mia 提交</p></div><div class="review-progress"><strong>1 / 7</strong><span>已完成</span></div></header>
+        <div class="review-detail-layout">
+          <aside class="review-slot-list">
+            <button class="active"><b>01</b><span><strong>主产品图</strong><small>当前审核</small></span><em class="pending">待审核</em></button>
+            <button><b>02</b><span><strong>折叠收纳</strong><small>等待处理</small></span><em class="pending">待审核</em></button>
+            <button><b>03</b><span><strong>亲子场景</strong><small>等待处理</small></span><em class="pending">待审核</em></button>
+            <button class="done"><b>04</b><span><strong>稳固结构</strong><small>已确认</small></span><em class="approved">通过</em></button>
+          </aside>
+          <section class="review-image-area"><div class="image-canvas review"><img src="/sample/final/01-main-white-background.png" alt="待审核图片" /></div><div class="reference-toggle"><button class="selected">生成结果</button><button>对照原始产品图</button></div></section>
+          <aside class="review-action-area">
+            <div><p class="eyebrow">01 · MAIN IMAGE</p><h2>主产品图</h2><p>目标：完整展示产品外观，产品占画面约 85%，纯白背景。</p></div>
+            <section class="ai-review-box"><div><h3>AI 预审结果</h3><span class="risk medium">需人工关注</span></div><ul><li class="pass">产品整体结构一致</li><li class="pass">背景与尺寸符合要求</li><li class="warn">顶部横杆角度可能有轻微偏差</li></ul></section>
+            <section><h3>运营判断</h3><label class="reason-option"><input type="checkbox" /> 产品结构或颜色不一致</label><label class="reason-option"><input type="checkbox" /> 文案或卖点不准确</label><label class="reason-option"><input type="checkbox" /> 场景、比例或物理逻辑问题</label><label class="reason-option"><input type="checkbox" /> 排版或品牌规范问题</label><textarea placeholder="补充修改说明（退回时必填）"></textarea></section>
+            <div class="review-buttons"><button class="danger-button">退回修改</button><button class="success-button" data-action="approve-image">通过并看下一张 →</button></div>
+          </aside>
+        </div>
+      </section>
+    </template>
+
+    <template id="brandsTemplate">
+      <section class="page">
+        <header class="page-header"><div><p class="eyebrow">BRAND ASSETS</p><h1>品牌库</h1><p>品牌规则作为项目资源存在，不占用生产步骤。</p></div><button class="primary-button">＋ 新增品牌</button></header>
+        <div class="brand-grid">
+          <article class="brand-card"><div class="brand-card-head"><span class="brand-logo-placeholder">C</span><span><h2>Cosyland</h2><p>12 个项目正在使用</p></span><button class="icon-button">···</button></div><div class="color-strip"><i style="background:#ff7a1a;width:50%"></i><i style="background:#2f3432;width:30%"></i><i style="background:#f2eadc;width:20%"></i></div><dl><div><dt>图片风格</dt><dd>温暖、自然、家庭感</dd></div><div><dt>标题颜色</dt><dd><span class="color-dot" style="background:#2f3432"></span>#2F3432</dd></div><div><dt>箭头样式</dt><dd>圆角实线箭头</dd></div><div><dt>Logo 规则</dt><dd>仅用于 A+</dd></div></dl><button class="secondary-button full">编辑品牌规则</button></article>
+          <article class="brand-card add-brand"><b>＋</b><h2>新增品牌</h2><p>添加 Logo、颜色、字体与图形规则</p></article>
+        </div>
+      </section>
+    </template>
+
+    <template id="systemTemplate">
+      <section class="page">
+        <header class="page-header"><div><p class="eyebrow">SYSTEM HEALTH</p><h1>系统与日志</h1><p>管理员专用。用于定位失败、观察使用路径和支持后续升级。</p></div><span class="health-chip">● 服务正常</span></header>
+        <div class="metric-grid"><article><small>今日生成</small><strong>86</strong><span>图片</span></article><article><small>生成成功率</small><strong>92%</strong><span>↑ 3%</span></article><article><small>AI 预审失败</small><strong>4</strong><span>需关注</span></article><article><small>活跃测试用户</small><strong>5 / 6</strong><span>本周</span></article></div>
+        <div class="system-layout">
+          <section class="log-panel"><div class="section-title-row"><div><h2>最近问题</h2><p>按影响用户程度排序</p></div><button class="secondary-button">导出诊断记录</button></div><div class="log-table"><div class="log-row head"><span>时间</span><span>项目 / 用户</span><span>阶段</span><span>问题</span><span>状态</span></div><div class="log-row"><span>10:42</span><span>Cosyland / Mia</span><span>AI 预审</span><strong>Gemini 未返回图片</strong><em class="status-chip orange">待处理</em></div><div class="log-row"><span>09:18</span><span>Overmont / Leo</span><span>生成图片</span><strong>候选图请求超时</strong><em class="status-chip blue">已重试</em></div><div class="log-row"><span>昨天</span><span>Kitchen Rack / Amy</span><span>导出</span><strong>ZIP 打包失败</strong><em class="status-chip gray">已解决</em></div></div></section>
+          <aside class="funnel-panel"><h2>本周流程使用</h2><p>查看用户最容易卡在哪一步。</p><div class="funnel-row"><span>创建项目</span><div><i style="width:100%"></i></div><b>28</b></div><div class="funnel-row"><span>确认内容</span><div><i style="width:82%"></i></div><b>23</b></div><div class="funnel-row"><span>设计与生图</span><div><i style="width:57%"></i></div><b>16</b></div><div class="funnel-row"><span>提交审核</span><div><i style="width:36%"></i></div><b>10</b></div><div class="funnel-row"><span>成功导出</span><div><i style="width:25%"></i></div><b>7</b></div><div class="insight-box"><strong>主要流失点</strong><p>确认内容 → 设计与生图，建议优先检查方案生成反馈与新手引导。</p></div></aside>
+        </div>
+      </section>
+    </template>
+
+    <section class="local-edit-modal" id="localEditModal" aria-hidden="true" aria-labelledby="localEditTitle">
+      <div class="modal-backdrop" data-action="close-local-edit"></div>
+      <div class="local-edit-dialog" role="dialog" aria-modal="true">
+        <header class="modal-header">
+          <div><p class="eyebrow">LOCAL EDIT</p><h2 id="localEditTitle">局部修改候选图</h2><p>只修改选中的位置，未选区域必须保持当前候选图的产品、构图和风格。</p></div>
+          <button class="icon-button" data-action="close-local-edit" aria-label="关闭局部修改">×</button>
+        </header>
+        <div class="local-edit-layout">
+          <section class="edit-canvas-section">
+            <div class="edit-canvas-toolbar"><span>选择工具</span><div class="selection-tools"><button class="selected" data-selection-tool="smart">✦ 智能选择</button><button data-selection-tool="brush">● 画笔</button><button data-selection-tool="lasso">⌁ 套索</button><button data-selection-tool="rectangle">□ 矩形</button></div></div>
+            <div class="selection-controls">
+              <div class="mask-mode"><button class="selected" data-mask-mode="add">添加选区</button><button data-mask-mode="subtract">减去选区</button></div>
+              <label class="brush-size-control" hidden><span>画笔大小</span><input type="range" min="8" max="80" value="32" /><b>32 px</b></label>
+            </div>
+            <div class="edit-canvas">
+              <img src="/sample/final/01-main-white-background.png" alt="用于局部修改的候选图" />
+              <div class="selection-box smart" aria-label="当前选中的局部区域"><i></i><i></i><i></i><i></i><span id="selectionLabel">智能识别选区</span></div>
+            </div>
+            <p class="selection-hint" id="selectionToolHint">已根据产品结构生成初始选区；可切换画笔或套索进一步修正边缘。</p>
+          </section>
+          <aside class="edit-instructions">
+            <div class="lock-note"><b>▣</b><span><strong>已锁定不变的内容</strong><small>产品整体结构、竹制材质、产品比例、背景、标题样式</small></span></div>
+            <label><span>这里要改什么？</span><textarea>调整顶部横杆的角度，使其与原始参考图一致。</textarea></label>
+            <label><span>补充限制</span><textarea placeholder="例如：不要改变产品颜色、不要新增文字、不要改动人物或场景"></textarea></label>
+            <div class="local-edit-summary"><strong>本次修改</strong><p>仅处理当前选区，不会覆盖原候选图。生成后以“局部修正版”加入候选列表。</p></div>
+            <div class="modal-actions"><button class="secondary-button" data-action="close-local-edit">取消</button><button class="primary-button" data-action="generate-local-edit">生成局部修正版</button></div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

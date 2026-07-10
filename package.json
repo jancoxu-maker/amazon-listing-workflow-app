@@ -3,17 +3,19 @@
     "dev": "vite --host 0.0.0.0",
     "api": "node api-server.mjs",
     "start": "node api-server.mjs",
+    "db:migrate": "node server/migrate.mjs",
+    "db:seed-invites": "node server/seed-invites.mjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node --check api-server.mjs && vite build"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
-    "vite": "^7.0.0",
-    "typescript": "^5.8.0",
+    "lucide-react": "^0.468.0",
+    "pg": "^8.22.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "lucide-react": "^0.468.0"
-  },
-  "devDependencies": {}
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
 }

@@ -30,6 +30,7 @@ import {
   Upload,
   X
 } from 'lucide-react';
+import { appLogger, installGlobalErrorLogging } from './eventLogger.js';
 import './styles.css';
 
 const PROJECTS_STORAGE_KEY = 'listingflow.projects.v1';
@@ -507,6 +508,7 @@ async function hashInviteCode(value) {
 }
 
 async function claimInviteCode(hash) {
+  const startedAt = performance.now();
   const response = await fetch(`${IMAGE_API_BASE_URL}/api/claim-invite`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -514,8 +516,19 @@ async function claimInviteCode(hash) {
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.ok) {
+    appLogger.log('auth.invite.claim_failed', {
+      status: response.status,
+      message: result.error || '邀请码验证服务暂不可用，请稍后再试。',
+      durationMs: Math.round(performance.now() - startedAt)
+    }, { level: 'warn' });
     throw new Error(result.error || '邀请码验证服务暂不可用，请稍后再试。');
   }
+  appLogger.log('auth.invite.claim_success', {
+    role: result.role,
+    label: result.label,
+    reusable: Boolean(result.reusable),
+    durationMs: Math.round(performance.now() - startedAt)
+  });
   return result;
 }
 
@@ -553,6 +566,7 @@ function InviteGate({ children }) {
       const hash = await hashInviteCode(code);
       const match = inviteAccessCodes.find((item) => item.hash === hash);
       if (!match) {
+        appLogger.log('auth.invite.invalid_code', {}, { level: 'warn' });
         setError('邀请码不正确，请检查后重试');
         return;
       }
@@ -567,8 +581,14 @@ function InviteGate({ children }) {
         unlockedAt: claim.claimedAt || new Date().toISOString()
       };
       window.localStorage.setItem(INVITE_ACCESS_STORAGE_KEY, JSON.stringify(nextAccess));
+      appLogger.log('auth.invite.unlocked', {
+        role: nextAccess.role,
+        label: nextAccess.label,
+        reusable: nextAccess.reusable
+      });
       setAccess(nextAccess);
     } catch (error) {
+      appLogger.error('auth.invite.error', error);
       setError(error instanceof Error ? error.message : '邀请码验证失败，请稍后再试');
     } finally {
       setIsChecking(false);
@@ -5360,6 +5380,7 @@ function QualityConsolePage({
 }
 
 function GenerationPage({
+  activeProjectId,
   projectForm,
   storyboardBriefs,
   selectedSlot,
@@ -5664,6 +5685,17 @@ function GenerationPage({
       promptOverride: promptOverrides?.[slot.id] || '',
       brandLibrary
     });
+    const runId = createGenerationRunId();
+    const startedAt = performance.now();
+    appLogger.log('pipeline.generation.request_started', {
+      runId,
+      slotId: slot.id,
+      slotTitle: brief.title || slot.title,
+      outputPresetId: runOutputPreset.id,
+      baselineMode: runBaselineMode,
+      referenceCount: generationReferenceItems.length,
+      hasPromptOverride: Boolean(promptOverrides?.[slot.id])
+    }, { projectId: activeProjectId, step: 'generation', traceId: runId });
     const sourceImages = await Promise.all(generationReferenceItems.map(async (reference) => ({
         id: reference.id,
         label: reference.label,
@@ -5671,7 +5703,6 @@ function GenerationPage({
         dataUrl: await imageSourceToDataUrl(reference.preview)
       })));
       const sourceImageDataUrl = sourceImages[0]?.dataUrl || await imageSourceToDataUrl(getReferenceImage(projectForm));
-      const runId = createGenerationRunId();
       const response = await fetch(`${IMAGE_API_BASE_URL}/api/generate-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -5687,8 +5718,22 @@ function GenerationPage({
       });
       const result = await response.json();
       if (!response.ok || !result.ok) {
+        appLogger.log('pipeline.generation.request_failed', {
+          runId,
+          slotId: slot.id,
+          status: response.status,
+          message: result.error || '生图接口返回失败。',
+          durationMs: Math.round(performance.now() - startedAt)
+        }, { level: 'error', projectId: activeProjectId, step: 'generation', traceId: runId });
         throw new Error(result.error || '生图接口返回失败。');
       }
+      appLogger.log('pipeline.generation.request_completed', {
+        runId,
+        slotId: slot.id,
+        model: result.model,
+        requestId: result.requestId,
+        durationMs: result.durationMs || Math.round(performance.now() - startedAt)
+      }, { projectId: activeProjectId, step: 'generation', traceId: runId });
       const rawImageSrc = result.imageDataUrl || result.imageUrl;
       const fittedImageSrc = await resizeImageToPreset(rawImageSrc, runOutputPreset);
       const previewImageSrc = await createImageThumbnail(fittedImageSrc);
@@ -5701,7 +5746,13 @@ function GenerationPage({
           slotId: slot.id,
           runId
         });
-      } catch {
+      } catch (error) {
+        appLogger.error('pipeline.generation.persist_failed', error, {
+          projectId: activeProjectId,
+          step: 'generation',
+          traceId: runId,
+          slotId: slot.id
+        });
         storedImage = null;
       }
       return normalizeGenerationRun({
@@ -5731,21 +5782,50 @@ function GenerationPage({
 
   const reviewCandidateRun = async (run, slot, brief, options = {}) => {
     const runOutputPreset = options.outputPreset || outputPreset;
-    const review = await reviewGeneratedImageWithApi({
-      projectForm,
-      brief,
-      run,
-      sourceImages: getGenerationReferenceItems(projectForm, slot.id, runOutputPreset.id, brief?.visualType)
-    });
-    return {
-      ...run,
-      aiReview: review,
-      aiSuggestion: deriveAiReviewSuggestion(review)
-    };
+    const startedAt = performance.now();
+    appLogger.log('pipeline.ai_review.started', {
+      runId: run.id,
+      slotId: slot.id,
+      outputPresetId: runOutputPreset.id
+    }, { projectId: activeProjectId, step: 'generation', traceId: run.id });
+    try {
+      const review = await reviewGeneratedImageWithApi({
+        projectForm,
+        brief,
+        run,
+        sourceImages: getGenerationReferenceItems(projectForm, slot.id, runOutputPreset.id, brief?.visualType)
+      });
+      appLogger.log('pipeline.ai_review.completed', {
+        runId: run.id,
+        slotId: slot.id,
+        verdict: review.verdict,
+        score: review.score,
+        model: review.model,
+        requestId: review.requestId,
+        durationMs: review.durationMs || Math.round(performance.now() - startedAt)
+      }, { projectId: activeProjectId, step: 'generation', traceId: run.id });
+      return {
+        ...run,
+        aiReview: review,
+        aiSuggestion: deriveAiReviewSuggestion(review)
+      };
+    } catch (error) {
+      appLogger.error('pipeline.ai_review.failed', error, {
+        projectId: activeProjectId,
+        step: 'generation',
+        traceId: run.id,
+        slotId: slot.id,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
+      throw error;
+    }
   };
 
   const runGeneration = async () => {
     if (!selectedBrief) {
+      appLogger.log('pipeline.generation.blocked', {
+        reason: 'missing_storyboard_brief'
+      }, { level: 'warn', projectId: activeProjectId, step: 'generation' });
       setGenerationStatus('请先生成 7 图方案，再进入生图验证。');
       return;
     }
@@ -5755,9 +5835,24 @@ function GenerationPage({
         .filter((task) => task.brief)
       : Array.from({ length: singleBatchCount }, () => ({ slot: selectedSlot, brief: selectedBrief })).filter((task) => task.brief);
     if (!tasks.length) {
+      appLogger.log('pipeline.generation.blocked', {
+        reason: 'empty_generation_tasks',
+        generationMode
+      }, { level: 'warn', projectId: activeProjectId, step: 'generation' });
       setGenerationStatus('当前没有可生成的图片方案。');
       return;
     }
+
+    const generationSessionId = `generation_${Date.now().toString(36)}`;
+    const startedAt = performance.now();
+    appLogger.log('pipeline.generation.batch_started', {
+      generationSessionId,
+      generationMode,
+      taskCount: tasks.length,
+      outputPresetId: outputPreset.id,
+      baselineMode,
+      slotIds: tasks.map((task) => task.slot.id)
+    }, { projectId: activeProjectId, step: 'generation', traceId: generationSessionId });
 
     if (tasks.length > 1) {
       setIsBatchRunning(true);
@@ -5827,6 +5922,13 @@ function GenerationPage({
         }
       }
       setIsBatchRunning(false);
+      appLogger.log('pipeline.generation.batch_completed', {
+        generationSessionId,
+        completedCount: completedRuns.length,
+        taskCount: tasks.length,
+        failedCount: failedMessages.length,
+        durationMs: Math.round(performance.now() - startedAt)
+      }, { projectId: activeProjectId, step: 'generation', traceId: generationSessionId });
       setGenerationStatus(summarizeBatchGenerationResult(completedRuns.length, tasks.length, failedMessages, '生成'));
       return;
     }
@@ -5851,7 +5953,21 @@ function GenerationPage({
           ? `候选图已生成，但 AI 预审失败：${reviewError.message}。请人工判断是否可用。`
           : '候选图已生成，但 AI 预审失败。请人工判断是否可用。');
       }
+      appLogger.log('pipeline.generation.batch_completed', {
+        generationSessionId,
+        completedCount: 1,
+        taskCount: 1,
+        failedCount: 0,
+        durationMs: Math.round(performance.now() - startedAt)
+      }, { projectId: activeProjectId, step: 'generation', traceId: generationSessionId });
     } catch (error) {
+      appLogger.error('pipeline.generation.batch_failed', error, {
+        projectId: activeProjectId,
+        step: 'generation',
+        traceId: generationSessionId,
+        generationMode,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
       setGenerationStatus(getGenerationErrorMessage(error));
     } finally {
       setIsGenerating(false);
@@ -5867,18 +5983,21 @@ function GenerationPage({
     setIsAiReviewing(true);
     setGenerationStatus('AI 正在对照原始参考图预审候选图...');
     try {
-      const review = await reviewGeneratedImageWithApi({
-        projectForm,
-        brief: activeCandidateBrief,
-        run: activeCandidate,
-        sourceImages: getGenerationReferenceItems(projectForm, activeCandidateSlot.id, runOutputPreset.id, activeCandidateBrief?.visualType)
+      const reviewedRun = await reviewCandidateRun(activeCandidate, activeCandidateSlot, activeCandidateBrief, {
+        outputPreset: runOutputPreset
       });
+      const review = reviewedRun.aiReview;
       onUpdateGenerationRun(activeCandidate.id, {
         aiReview: review,
         aiSuggestion: deriveAiReviewSuggestion(review)
       });
       setGenerationStatus(`AI 预审完成：${aiReviewVerdicts[review.verdict]?.label || '需复核'}，请结合人工判断。`);
     } catch (error) {
+      appLogger.error('pipeline.ai_review.manual_failed', error, {
+        projectId: activeProjectId,
+        step: 'generation',
+        traceId: activeCandidate.id
+      });
       setGenerationStatus(error instanceof Error ? error.message : 'AI 预审失败。');
     } finally {
       setIsAiReviewing(false);
@@ -6652,6 +6771,7 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
 }
 
 function ExportPage({
+  activeProjectId,
   projectForm,
   storyboardBriefs,
   reviewDecisions,
@@ -6710,14 +6830,26 @@ function ExportPage({
     : `还缺 ${Math.max(0, slotTotal - selectedImageCount)} 张最终图。`;
   const exportImagesZip = async () => {
     if (!storyboardBriefs.length) {
+      appLogger.log('pipeline.export.blocked', {
+        reason: 'missing_storyboard'
+      }, { level: 'warn', projectId: activeProjectId, step: 'export' });
       setExportStatus('请先生成 7 图方案，再导出图片 ZIP。');
       return;
     }
     if (!readyForZip) {
+      appLogger.log('pipeline.export.blocked', {
+        reason: 'missing_final_images',
+        selectedImageCount,
+        slotTotal
+      }, { level: 'warn', projectId: activeProjectId, step: 'export' });
       setExportStatus(`最终图还没选齐：当前 ${selectedImageCount}/${slotTotal} 张。请先生成或导入候选图。`);
       return;
     }
     if (!reviewReady) {
+      appLogger.log('pipeline.export.blocked', {
+        reason: 'review_not_complete',
+        firstMissingSlotId: firstMissingReview?.slotId || ''
+      }, { level: 'warn', projectId: activeProjectId, step: 'export' });
       setExportStatus(firstMissingReview
         ? `还不能导出：第 ${String(firstMissingReview.slotId).padStart(2, '0')} 张需要完成 ${getDualReviewMissingText(firstMissingReview)}。`
         : '还不能导出：所有图片都需要人工审核通过。');
@@ -6726,6 +6858,14 @@ function ExportPage({
     setIsExporting(true);
     setSavedZip(null);
     setExportStatus('正在打包生成图片...');
+    const startedAt = performance.now();
+    const traceId = `export_${Date.now().toString(36)}`;
+    appLogger.log('pipeline.export.started', {
+      traceId,
+      selectedImageCount,
+      slotTotal,
+      projectName: projectForm.projectName || projectForm.productName || projectForm.sku || ''
+    }, { projectId: activeProjectId, step: 'export', traceId });
     try {
       const zip = await saveImagesZipToApi({
         projectForm,
@@ -6734,8 +6874,20 @@ function ExportPage({
         exportSelections
       });
       setSavedZip(zip);
+      appLogger.log('pipeline.export.completed', {
+        traceId,
+        filename: zip.filename,
+        count: zip.count,
+        durationMs: Math.round(performance.now() - startedAt)
+      }, { projectId: activeProjectId, step: 'export', traceId });
       setExportStatus(`图片 ZIP 已保存到 exports/，共 ${zip.count} 张图。`);
     } catch (error) {
+      appLogger.error('pipeline.export.failed', error, {
+        projectId: activeProjectId,
+        step: 'export',
+        traceId,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
       setExportStatus(error instanceof Error ? `图片 ZIP 导出失败：${error.message}` : '图片 ZIP 导出失败。');
     } finally {
       setIsExporting(false);
@@ -6869,6 +7021,28 @@ function WorkspaceApp() {
   const [focusRequest, setFocusRequest] = useState(null);
   const [isPlanningStoryboard, setIsPlanningStoryboard] = useState(false);
   const [regeneratingSlotId, setRegeneratingSlotId] = useState(null);
+  const previousSectionRef = useRef(activeSection);
+
+  useEffect(() => {
+    appLogger.log('app.session.started', {
+      projectCount: initialProjects.length,
+      hasStoredProjects
+    }, { projectId: activeProjectId, step: activeSection });
+  }, []);
+
+  useEffect(() => {
+    const previousSection = previousSectionRef.current;
+    previousSectionRef.current = activeSection;
+    appLogger.log('behavior.step.viewed', {
+      from: previousSection === activeSection ? '' : previousSection,
+      to: activeSection,
+      projectName: projectForm.projectName || projectForm.productName || projectForm.sku || '',
+      hasReferenceImage: Boolean(projectForm.sourceImageName || projectForm.sourceImagePreview),
+      ledgerCount: ledgerFacts.length,
+      storyboardCount: storyboardBriefs.length,
+      generationRunCount: generationRuns.length
+    }, { projectId: activeProjectId, step: activeSection });
+  }, [activeSection]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -7008,6 +7182,10 @@ function WorkspaceApp() {
     const normalized = normalizeBrandLibrary(nextBrands);
     setBrandLibrary(normalized);
     storeBrands(normalized);
+    appLogger.log('audit.brand_library.updated', {
+      brandCount: normalized.length,
+      brandNames: normalized.map((brand) => brand.name)
+    }, { projectId: activeProjectId, step: 'brands' });
     setSaveStatus('品牌库已保存');
   };
   const changePlanOutputPreset = (presetId) => {
@@ -7031,10 +7209,19 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === nextProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.project.output_preset_changed', {
+      outputPresetId: nextPreset.id,
+      outputPresetLabel: nextPreset.label
+    }, { projectId: nextProjectId, step: 'storyboard' });
     setSaveStatus(`已切换为 ${nextPreset.label} 方案类型。旧方案和候选图已清空，请重新生成 7 图方案。`);
     navigateTo('storyboard', 'storyboard');
   };
   const navigateTo = (section, anchor) => {
+    appLogger.log('behavior.navigation.requested', {
+      from: activeSection,
+      to: section,
+      anchor
+    }, { projectId: activeProjectId, step: section });
     setActiveSection(section);
     setFocusRequest({ section, anchor, id: Date.now() });
   };
@@ -7045,6 +7232,12 @@ function WorkspaceApp() {
       : [nextProject, ...projects];
     persistProjects(nextProjects);
     setActiveProjectId(nextProject.id);
+    appLogger.log('audit.project.saved', {
+      projectName: nextProject.form?.projectName || nextProject.form?.productName || nextProject.form?.sku || '',
+      ledgerCount: nextProject.ledgerFacts?.length || 0,
+      storyboardCount: nextProject.storyboardBriefs?.length || 0,
+      generationRunCount: nextProject.generationRuns?.length || 0
+    }, { projectId: nextProject.id, step: activeSection });
     setSaveStatus(`已保存 ${formatProjectTime(nextProject.updatedAt)}`);
   };
   const selectProject = (projectId) => {
@@ -7059,6 +7252,12 @@ function WorkspaceApp() {
     setPromptOverrides(selectedProject.promptOverrides || {});
     setExportSelections(selectedProject.exportSelections || {});
     setSaveStatus('');
+    appLogger.log('audit.project.opened', {
+      projectName: selectedProject.form?.projectName || selectedProject.form?.productName || selectedProject.form?.sku || '',
+      ledgerCount: selectedProject.ledgerFacts?.length || 0,
+      storyboardCount: selectedProject.storyboardBriefs?.length || 0,
+      generationRunCount: selectedProject.generationRuns?.length || 0
+    }, { projectId, step: 'project' });
     setActiveSection('project');
   };
   const createNewProject = () => {
@@ -7074,6 +7273,7 @@ function WorkspaceApp() {
     setPromptOverrides({});
     setExportSelections({});
     setSaveStatus('已创建新草稿');
+    appLogger.log('audit.project.created', {}, { projectId: nextProject.id, step: 'project' });
     setActiveSection('project');
   };
   const deleteProject = (projectId) => {
@@ -7104,6 +7304,10 @@ function WorkspaceApp() {
       setActiveSection('project');
     }
     setSaveStatus(remainingProjects.length ? '草稿已删除' : '草稿已全部删除，当前工作区已清空');
+    appLogger.log('audit.project.deleted', {
+      deletedProjectId: projectId,
+      remainingProjectCount: remainingProjects.length
+    }, { projectId: activeProjectId, step: 'project' });
   };
   const generateLedgerDraft = (form, intakeMode) => {
     const draft = buildLedgerDraft(form, intakeMode);
@@ -7122,6 +7326,12 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.ledger.generated', {
+      intakeMode,
+      claimCount: draft.length,
+      lockMatches,
+      preservedGenerationRunCount: preservedGenerationRuns.length
+    }, { projectId: nextProject.id, step: 'ledger' });
     setSaveStatus(!lockMatches
       ? '检测到产品已变化：已生成新卖点草稿，并清空旧方案与旧生图记录，避免混入其他产品。'
       : preservedGenerationRuns.length
@@ -7147,16 +7357,28 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.ledger.claim_edited', {
+      index,
+      claim: nextClaim,
+      state: nextLedgerFacts[index]?.state || '',
+      owner: nextLedgerFacts[index]?.owner || ''
+    }, { projectId: activeProjectId, step: 'ledger' });
     setSaveStatus('卖点已更新，后续生成方案会使用最新卖点。');
   };
   const generateStoryboardBriefs = async () => {
     if (isPlanningStoryboard || regeneratingSlotId) return;
     if (!ledgerFacts.length) {
+      appLogger.log('pipeline.storyboard.blocked', {
+        reason: 'missing_ledger'
+      }, { level: 'warn', projectId: activeProjectId, step: 'storyboard' });
       setSaveStatus('请先填写卖点并生成卖点草稿');
       navigateTo('project', 'claims');
       return;
     }
     if (!getReferenceImage(projectForm)) {
+      appLogger.log('pipeline.storyboard.blocked', {
+        reason: 'missing_reference_image'
+      }, { level: 'warn', projectId: activeProjectId, step: 'storyboard' });
       setSaveStatus('请先上传产品参考图');
       navigateTo('project', 'image-upload');
       return;
@@ -7168,6 +7390,13 @@ function WorkspaceApp() {
     };
     setIsPlanningStoryboard(true);
     setSaveStatus(`正在根据产品图、卖点和品牌生成 ${getProjectPlanOutputPreset(planningForm).label} 方案...`);
+    const startedAt = performance.now();
+    let planProvider = 'ai';
+    appLogger.log('pipeline.storyboard.started', {
+      outputPresetId: planningForm.planOutputPresetId,
+      ledgerCount: refreshedLedgerFacts.length,
+      brandId: getProjectBrandId(planningForm, brandLibrary)
+    }, { projectId: activeProjectId, step: 'storyboard' });
     try {
       let briefs;
       let plannerMessage = 'AI 已根据产品图、卖点和品牌生成 7 图方案';
@@ -7177,6 +7406,11 @@ function WorkspaceApp() {
         briefs = aiPlan.briefs;
         plannerMessage = `AI 已生成 ${getProjectPlanOutputPreset(planningForm).label} 方案：${aiPlan.productType || '已识别产品类型'} · ${aiPlan.model || 'planner'}`;
       } catch (error) {
+        planProvider = 'local_fallback';
+        appLogger.error('pipeline.storyboard.ai_failed', error, {
+          projectId: activeProjectId,
+          step: 'storyboard'
+        });
         briefs = buildStoryboardBriefs(refreshedLedgerFacts, planningForm, brandLibrary);
         plannerMessage = `AI 方案暂不可用，已使用本地兜底方案。${error instanceof Error ? error.message : ''}`.trim();
       }
@@ -7199,10 +7433,24 @@ function WorkspaceApp() {
         ? projects.map((project) => (project.id === nextProject.id ? nextProject : project))
         : [nextProject, ...projects];
       persistProjects(nextProjects);
+      appLogger.log('pipeline.storyboard.completed', {
+        provider: planProvider,
+        briefCount: briefs.length,
+        outputPresetId: planningForm.planOutputPresetId,
+        lockMatches,
+        durationMs: Math.round(performance.now() - startedAt)
+      }, { projectId: nextProject.id, step: 'storyboard' });
       setSaveStatus(lockMatches
         ? `${plannerMessage}，并已保留 ${preservedGenerationRuns.length} 条生图验证记录。下一步可以进入生图任务`
         : `${plannerMessage}。检测到产品锁变化，旧生图记录已清空，避免混入其他产品。`);
       navigateTo('storyboard', 'storyboard');
+    } catch (error) {
+      appLogger.error('pipeline.storyboard.failed', error, {
+        projectId: activeProjectId,
+        step: 'storyboard',
+        durationMs: Math.round(performance.now() - startedAt)
+      });
+      throw error;
     } finally {
       setIsPlanningStoryboard(false);
     }
@@ -7224,6 +7472,12 @@ function WorkspaceApp() {
     const refreshedLedgerFacts = refreshMachineDraftLedger(ledgerFacts, 'sku');
     setRegeneratingSlotId(numericSlotId);
     setSaveStatus(`正在重生成第 ${String(numericSlotId).padStart(2, '0')} 张图方案...`);
+    const startedAt = performance.now();
+    let planProvider = 'ai';
+    appLogger.log('pipeline.storyboard.slot_regenerate_started', {
+      slotId: numericSlotId,
+      role
+    }, { projectId: activeProjectId, step: 'storyboard' });
     try {
       let nextBrief;
       let plannerMessage = 'AI 已重生成当前图槽方案';
@@ -7232,6 +7486,12 @@ function WorkspaceApp() {
         nextBrief = aiPlan.briefs.find((brief) => Number(brief.id) === numericSlotId);
         plannerMessage = `AI 已重生成第 ${String(numericSlotId).padStart(2, '0')} 张方案：${aiPlan.model || 'planner'}`;
       } catch (error) {
+        planProvider = 'local_fallback';
+        appLogger.error('pipeline.storyboard.slot_ai_failed', error, {
+          projectId: activeProjectId,
+          step: 'storyboard',
+          slotId: numericSlotId
+        });
         const fallbackBriefs = buildStoryboardBriefs(refreshedLedgerFacts, projectForm, brandLibrary);
         nextBrief = fallbackBriefs.find((brief) => Number(brief.id) === numericSlotId);
         plannerMessage = `AI 局部方案暂不可用，已用本地兜底重生成当前图槽。${error instanceof Error ? error.message : ''}`.trim();
@@ -7271,9 +7531,20 @@ function WorkspaceApp() {
         ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
         : [nextProject, ...projects];
       persistProjects(nextProjects);
+      appLogger.log('pipeline.storyboard.slot_regenerate_completed', {
+        slotId: numericSlotId,
+        provider: planProvider,
+        durationMs: Math.round(performance.now() - startedAt)
+      }, { projectId: activeProjectId, step: 'storyboard' });
       setSaveStatus(`${plannerMessage}。其他图槽和已有生图记录已保留。`);
       navigateTo('storyboard', 'storyboard');
     } catch (error) {
+      appLogger.error('pipeline.storyboard.slot_regenerate_failed', error, {
+        projectId: activeProjectId,
+        step: 'storyboard',
+        slotId: numericSlotId,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
       setSaveStatus(error instanceof Error ? `当前图槽重生成失败：${error.message}` : '当前图槽重生成失败，请稍后再试。');
     } finally {
       setRegeneratingSlotId(null);
@@ -7292,6 +7563,12 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.review.decision_changed', {
+      slotId,
+      role,
+      status,
+      slotTitle: slot?.title || ''
+    }, { projectId: activeProjectId, step: 'review' });
     setSaveStatus(`${slot?.title || '图槽'} 已由${reviewerRoles[role]?.label || '审核人'}标记为${reviewStatusMeta[status]?.text || '待审核'}，已自动保存`);
   };
   const saveGenerationRun = (run) => {
@@ -7302,6 +7579,17 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('pipeline.generation.run_saved', {
+      runId: run.id,
+      slotId: run.slotId,
+      slotTitle: run.slotTitle,
+      model: run.model,
+      requestId: run.requestId,
+      aiReviewVerdict: run.aiReview?.verdict || '',
+      verdict: run.verdict,
+      outputPresetId: run.outputPresetId,
+      durationMs: run.durationMs || 0
+    }, { projectId: activeProjectId, step: 'generation', traceId: run.id });
     setSaveStatus('候选图已记录，请标记可用性');
   };
   const saveGenerationRuns = (runs) => {
@@ -7317,6 +7605,11 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('pipeline.generation.batch_saved', {
+      runCount: normalizedRuns.length,
+      slotIds: normalizedRuns.map((run) => run.slotId),
+      aiReviewVerdicts: normalizedRuns.map((run) => run.aiReview?.verdict || '')
+    }, { projectId: activeProjectId, step: 'generation' });
     setSaveStatus(`批量验证已保存 ${normalizedRuns.length} 张候选图`);
   };
   const updateGenerationRun = (runId, patch) => {
@@ -7329,6 +7622,11 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.generation.run_updated', {
+      runId,
+      patchKeys: Object.keys(patch || {}),
+      verdict: patch?.verdict || ''
+    }, { projectId: activeProjectId, step: 'generation', traceId: runId });
     setSaveStatus('质量判断已自动保存');
   };
   const updatePromptOverride = (slotId, value) => {
@@ -7343,6 +7641,10 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.prompt_override.updated', {
+      slotId,
+      hasOverride: Boolean(value)
+    }, { projectId: activeProjectId, step: 'generation' });
     setSaveStatus(value ? '图槽调优规则已保存' : '图槽调优规则已清空');
   };
   const updateExportSelection = (slotId, runId) => {
@@ -7358,6 +7660,11 @@ function WorkspaceApp() {
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
     persistProjects(nextProjects);
+    appLogger.log('audit.export.selection_changed', {
+      slotId,
+      runId,
+      slotTitle: slot?.title || ''
+    }, { projectId: activeProjectId, step: 'export', traceId: runId || '' });
     setSaveStatus(runId ? `${slot?.title || '图槽'} 最终图已指定` : `${slot?.title || '图槽'} 已恢复自动选择`);
   };
   const continueToStoryboard = () => {
@@ -7432,6 +7739,7 @@ function WorkspaceApp() {
     ),
     generation: (
       <GenerationPage
+        activeProjectId={activeProjectId}
         projectForm={projectForm}
         storyboardBriefs={storyboardBriefs}
         selectedSlot={selectedSlot}
@@ -7460,6 +7768,7 @@ function WorkspaceApp() {
     ),
     export: (
       <ExportPage
+        activeProjectId={activeProjectId}
         projectForm={projectForm}
         storyboardBriefs={storyboardBriefs}
         reviewDecisions={reviewDecisions}
@@ -7596,4 +7905,5 @@ function App() {
   );
 }
 
+installGlobalErrorLogging();
 createRoot(document.getElementById('root')).render(<App />);
