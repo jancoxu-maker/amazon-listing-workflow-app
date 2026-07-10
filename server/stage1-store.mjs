@@ -218,6 +218,65 @@ export function createStage1Store(database) {
     return { id: projectId, projectName, outputType, status: 'draft' };
   }
 
+  async function updateProject(user, projectId, payload = {}) {
+    assertConfigured();
+    const id = String(projectId || '').trim();
+    const project = await database.query(
+      `SELECT p.id, p.created_by,
+        EXISTS(
+          SELECT 1 FROM project_assignments a
+          WHERE a.project_id = p.id AND a.user_id = $2
+        ) AS is_assigned
+       FROM projects p
+       WHERE p.id = $1
+       LIMIT 1`,
+      [id, user.id]
+    );
+    if (!project.rowCount) throw new Stage1Error('项目不存在。', 404, 'PROJECT_NOT_FOUND');
+    if (user.role !== 'admin' && !project.rows[0].is_assigned && project.rows[0].created_by !== user.id) {
+      throw new Stage1Error('你没有编辑这个项目的权限。', 403, 'PROJECT_UPDATE_FORBIDDEN');
+    }
+
+    const projectName = normalizeName(payload.projectName);
+    if (projectName.length < 2) throw new Stage1Error('请输入项目名称。', 400, 'PROJECT_NAME_REQUIRED');
+    const outputType = payload.outputType === 'a-plus' ? 'a-plus' : 'main-image';
+    const status = ['draft', 'content', 'planning', 'design', 'review', 'rework', 'approved', 'exported', 'archived'].includes(payload.status)
+      ? payload.status
+      : 'draft';
+
+    await database.transaction(async (client) => {
+      await client.query(
+        `UPDATE projects
+         SET project_name = $2,
+             product_name = $3,
+             sku = $4,
+             output_type = $5,
+             status = $6,
+             brand_snapshot = $7::jsonb,
+             project_data = $8::jsonb,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          id,
+          projectName,
+          normalizeName(payload.productName),
+          String(payload.sku || '').trim().slice(0, 120),
+          outputType,
+          status,
+          JSON.stringify(safeObject(payload.brandSnapshot)),
+          JSON.stringify(safeObject(payload.projectData))
+        ]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
+         VALUES ($1, $2, $3, 'project.updated', $4::jsonb)`,
+        [createId('audit'), user.id, id, JSON.stringify({ status, outputType })]
+      );
+    });
+
+    return { id, projectName, outputType, status };
+  }
+
   async function assignProject(user, projectId, { userId, assignmentRole }) {
     assertConfigured();
     if (user.role !== 'admin') throw new Stage1Error('只有管理员可以分配项目。', 403, 'PROJECT_ASSIGN_FORBIDDEN');
@@ -277,6 +336,7 @@ export function createStage1Store(database) {
     revokeSession,
     listProjects,
     createProject,
+    updateProject,
     assignProject,
     appendAuditEvents
   };

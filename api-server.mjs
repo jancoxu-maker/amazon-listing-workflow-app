@@ -1483,6 +1483,19 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  const projectUpdateMatch = /^\/api\/projects\/([^/]+)$/.exec(requestPath);
+  if (request.method === 'PATCH' && projectUpdateMatch) {
+    try {
+      const session = await requireStage1Actor(request);
+      const payload = await readJsonBody(request);
+      const project = await stage1Store.updateProject(session.user, decodeURIComponent(projectUpdateMatch[1]), payload);
+      sendJson(response, 200, { ok: true, project });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
   const assignmentMatch = /^\/api\/projects\/([^/]+)\/assignments$/.exec(requestPath);
   if (request.method === 'POST' && assignmentMatch) {
     try {

@@ -31,6 +31,14 @@ import {
   X
 } from 'lucide-react';
 import { appLogger, installGlobalErrorLogging } from './eventLogger.js';
+import {
+  activateTeamInvite,
+  createTeamProject,
+  listTeamProjects,
+  logoutTeamSession,
+  restoreTeamSession,
+  updateTeamProject
+} from './teamApi.js';
 import './styles.css';
 
 const PROJECTS_STORAGE_KEY = 'listingflow.projects.v1';
@@ -543,12 +551,30 @@ function loadInviteAccess() {
   }
 }
 
-function InviteGate({ children }) {
-  const [access, setAccess] = useState(() => loadInviteAccess());
+function TeamAccessGate({ children }) {
+  const [session, setSession] = useState(null);
+  const [isRestoring, setIsRestoring] = useState(true);
   const [showCodeEntry, setShowCodeEntry] = useState(false);
+  const [requestedRole, setRequestedRole] = useState('designer');
+  const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    restoreTeamSession()
+      .then((nextSession) => {
+        if (mounted && nextSession) setSession(nextSession);
+      })
+      .finally(() => {
+        if (mounted) setIsRestoring(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -563,30 +589,22 @@ function InviteGate({ children }) {
     setIsChecking(true);
     setError('');
     try {
-      const hash = await hashInviteCode(code);
-      const match = inviteAccessCodes.find((item) => item.hash === hash);
-      if (!match) {
-        appLogger.log('auth.invite.invalid_code', {}, { level: 'warn' });
-        setError('邀请码不正确，请检查后重试');
+      if (displayName.trim().length < 2) {
+        setError('请输入至少两个字的姓名或昵称');
         return;
       }
-      const claim = match.role === 'admin'
-        ? { role: match.role, label: match.label, reusable: true, claimedAt: new Date().toISOString() }
-        : await claimInviteCode(hash);
-      const nextAccess = {
-        hash,
-        role: claim.role || match.role,
-        label: claim.label || match.label,
-        reusable: Boolean(claim.reusable),
-        unlockedAt: claim.claimedAt || new Date().toISOString()
-      };
-      window.localStorage.setItem(INVITE_ACCESS_STORAGE_KEY, JSON.stringify(nextAccess));
-      appLogger.log('auth.invite.unlocked', {
-        role: nextAccess.role,
-        label: nextAccess.label,
-        reusable: nextAccess.reusable
+      const hash = await hashInviteCode(code);
+      const nextSession = await activateTeamInvite({
+        inviteHash: hash,
+        displayName,
+        email,
+        requestedRole
       });
-      setAccess(nextAccess);
+      appLogger.log('auth.invite.unlocked', {
+        role: nextSession.user.role,
+        userId: nextSession.user.id
+      });
+      setSession(nextSession);
     } catch (error) {
       appLogger.error('auth.invite.error', error);
       setError(error instanceof Error ? error.message : '邀请码验证失败，请稍后再试');
@@ -595,8 +613,15 @@ function InviteGate({ children }) {
     }
   };
 
-  if (access) {
-    return children;
+  if (isRestoring) {
+    return <main className="auth-screen"><div className="auth-panel"><BrandLogoMark size={96} /><p className="auth-loading">正在确认登录状态...</p></div></main>;
+  }
+
+  if (session) {
+    return children({ session, onLogout: async () => {
+      await logoutTeamSession();
+      setSession(null);
+    } });
   }
 
   return (
@@ -625,19 +650,24 @@ function InviteGate({ children }) {
         </div>
         <form className={showCodeEntry ? 'auth-form visible' : 'auth-form'} onSubmit={handleSubmit}>
           {showCodeEntry && (
-            <label>
-              <span>输入邀请码</span>
-              <input
-                autoFocus
-                value={code}
-                onChange={(event) => {
-                  setCode(event.target.value);
-                  setError('');
-                }}
-                placeholder="VMZ-XXXX-0000"
-                autoComplete="one-time-code"
-              />
-            </label>
+            <>
+              <div className="auth-role-choice" role="group" aria-label="选择身份">
+                <button type="button" className={requestedRole === 'designer' ? 'active' : ''} onClick={() => setRequestedRole('designer')}>设计</button>
+                <button type="button" className={requestedRole === 'operator' ? 'active' : ''} onClick={() => setRequestedRole('operator')}>运营</button>
+              </div>
+              <label>
+                <span>姓名或昵称</span>
+                <input autoFocus value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} placeholder="例如：Ava" autoComplete="name" />
+              </label>
+              <label>
+                <span>邮箱（选填）</span>
+                <input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@company.com" autoComplete="email" />
+              </label>
+              <label>
+                <span>输入邀请码</span>
+                <input value={code} onChange={(event) => { setCode(event.target.value); setError(''); }} placeholder="VMZ-XXXX-0000" autoComplete="one-time-code" />
+              </label>
+            </>
           )}
           {error && <p className="auth-error">{error}</p>}
           <button type="submit" className="auth-enter-button" disabled={isChecking}>
@@ -2650,6 +2680,57 @@ function loadStoredProjects() {
   }
 }
 
+function mapTeamProjectToWorkspaceProject(remoteProject = {}) {
+  const stored = remoteProject.projectData && typeof remoteProject.projectData === 'object'
+    ? remoteProject.projectData
+    : {};
+  const form = {
+    ...blankProjectForm,
+    ...(stored.form || {}),
+    projectName: stored.form?.projectName || remoteProject.projectName || '',
+    productName: stored.form?.productName || remoteProject.productName || '',
+    sku: stored.form?.sku || remoteProject.sku || '',
+    planOutputPresetId: stored.form?.planOutputPresetId || (remoteProject.outputType === 'a-plus' ? 'a-plus' : 'main-image')
+  };
+  const storyboardBriefs = Array.isArray(stored.storyboardBriefs) ? stored.storyboardBriefs : [];
+  return {
+    ...createProjectRecord(
+      form,
+      Array.isArray(stored.ledgerFacts) ? stored.ledgerFacts : [],
+      remoteProject.id,
+      storyboardBriefs,
+      Array.isArray(stored.reviewDecisions) ? stored.reviewDecisions : createReviewDecisions(storyboardBriefs),
+      Array.isArray(stored.generationRuns) ? stored.generationRuns : [],
+      stored.promptOverrides || {},
+      stored.exportSelections || {}
+    ),
+    cloud: {
+      remote: true,
+      status: remoteProject.status || 'draft',
+      assignments: remoteProject.assignments || [],
+      createdBy: remoteProject.createdBy || null
+    },
+    updatedAt: remoteProject.updatedAt || stored.updatedAt || new Date().toISOString()
+  };
+}
+
+function makeTeamProjectPayload(project = {}) {
+  const compact = compactProjectForStorage(project);
+  const form = compact.form || {};
+  return {
+    projectName: getProjectTitle(form),
+    productName: form.productName || '',
+    sku: form.sku || '',
+    outputType: getProjectPlanOutputPresetId(form) === 'a-plus' ? 'a-plus' : 'main-image',
+    status: project.cloud?.status || 'draft',
+    brandSnapshot: {
+      brandId: getProjectBrandId(form),
+      outputPresetId: getProjectPlanOutputPresetId(form)
+    },
+    projectData: compact
+  };
+}
+
 function storeProjects(projects) {
   if (typeof window === 'undefined') return;
   const compactProjects = projects.map(compactProjectForStorage);
@@ -3564,17 +3645,15 @@ function WorkflowGuide({ steps, activeSection, onNavigate }) {
   );
 }
 
-function ProjectList({ projects, activeProjectId, onSelectProject, onCreateProject, onDeleteProject }) {
+function ProjectList({ projects, activeProjectId, onSelectProject, onCreateProject, onDeleteProject, canCreate }) {
   return (
     <div className="project-list-card">
       <div className="project-list-header">
         <div>
           <p className="eyebrow">项目列表</p>
-          <h2>本地草稿</h2>
+          <h2>团队项目</h2>
         </div>
-        <button className="mini-icon-button" aria-label="创建新项目" onClick={onCreateProject}>
-          <Plus size={16} />
-        </button>
+        {canCreate && <button className="mini-icon-button" aria-label="创建新项目" onClick={onCreateProject}><Plus size={16} /></button>}
       </div>
       <div className="project-list">
         {projects.length ? projects.map((project) => (
@@ -3586,15 +3665,13 @@ function ProjectList({ projects, activeProjectId, onSelectProject, onCreateProje
                 <small>{project.form.sku || '无 SKU'} · {formatProjectTime(project.updatedAt)}</small>
               </span>
             </button>
-            <button className="project-delete-button" aria-label={`删除 ${getProjectTitle(project.form)}`} onClick={() => onDeleteProject(project.id)}>
-              <Trash2 size={14} />
-            </button>
+            {!project.cloud?.remote && <button className="project-delete-button" aria-label={`删除 ${getProjectTitle(project.form)}`} onClick={() => onDeleteProject(project.id)}><Trash2 size={14} /></button>}
           </div>
         )) : (
           <div className="project-list-empty">
             <FolderOpen size={18} />
-            <strong>暂无本地草稿</strong>
-            <small>点击右上角 + 创建新项目。</small>
+            <strong>暂无团队项目</strong>
+            <small>{canCreate ? '点击右上角 + 创建新项目。' : '等待管理员将项目分配给你。'}</small>
           </div>
         )}
       </div>
@@ -6998,7 +7075,7 @@ function ExportPage({
   );
 }
 
-function WorkspaceApp() {
+function WorkspaceApp({ session, onLogout }) {
   const initialProjects = useMemo(() => loadStoredProjects(), []);
   const hasStoredProjects = initialProjects.length > 0;
   const initialProject = initialProjects[0] || createProjectRecord(blankProjectForm, [], createProjectId());
@@ -7016,8 +7093,9 @@ function WorkspaceApp() {
   const [generationRuns, setGenerationRuns] = useState(normalizeGenerationRuns(initialProject.generationRuns));
   const [promptOverrides, setPromptOverrides] = useState(initialProject.promptOverrides || {});
   const [exportSelections, setExportSelections] = useState(initialProject.exportSelections || {});
-  const [activeRole, setActiveRole] = useState('human');
+  const [activeRole] = useState(session.user.role === 'operator' ? 'ops' : 'design');
   const [saveStatus, setSaveStatus] = useState('');
+  const [isLoadingTeamProjects, setIsLoadingTeamProjects] = useState(true);
   const [focusRequest, setFocusRequest] = useState(null);
   const [isPlanningStoryboard, setIsPlanningStoryboard] = useState(false);
   const [regeneratingSlotId, setRegeneratingSlotId] = useState(null);
@@ -7029,6 +7107,44 @@ function WorkspaceApp() {
       hasStoredProjects
     }, { projectId: activeProjectId, step: activeSection });
   }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    setIsLoadingTeamProjects(true);
+    listTeamProjects()
+      .then((remoteProjects) => {
+        if (!mounted) return;
+        const nextProjects = remoteProjects.map(mapTeamProjectToWorkspaceProject);
+        if (!nextProjects.length) {
+          setSaveStatus(session.user.role === 'operator' ? '暂无分配给你的项目。' : '暂无云端项目，可以创建一个新项目开始。');
+          return;
+        }
+        const nextActive = nextProjects[0];
+        setProjects(nextProjects);
+        storeProjects(nextProjects);
+        setActiveProjectId(nextActive.id);
+        setProjectForm(nextActive.form);
+        setLedgerFacts(nextActive.ledgerFacts);
+        setStoryboardBriefs(nextActive.storyboardBriefs || []);
+        setReviewDecisions(nextActive.reviewDecisions || createReviewDecisions(nextActive.storyboardBriefs || []));
+        setGenerationRuns(normalizeGenerationRuns(nextActive.generationRuns));
+        setPromptOverrides(nextActive.promptOverrides || {});
+        setExportSelections(nextActive.exportSelections || {});
+        setActiveSection('project');
+        setSaveStatus(`已载入 ${nextProjects.length} 个团队项目`);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        appLogger.error('team.projects.load_failed', error);
+        setSaveStatus('团队项目暂时无法加载，已保留本机草稿。');
+      })
+      .finally(() => {
+        if (mounted) setIsLoadingTeamProjects(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [session.user.id]);
 
   useEffect(() => {
     const previousSection = previousSectionRef.current;
@@ -7086,7 +7202,16 @@ function WorkspaceApp() {
     () => ledgerFacts.filter((fact) => fact.state === 'blocked' || (!fact.state && fact.allowed === false)).length,
     [ledgerFacts]
   );
-  const currentNav = [...navItems, ...globalNavItems].find((item) => item.id === activeSection) || navItems[1];
+  const roleWorkspaceAccess = {
+    designer: ['project', 'ledger', 'storyboard', 'generation', 'brands'],
+    operator: ['project', 'ledger', 'review', 'export'],
+    admin: [...navItems.map((item) => item.id), ...globalNavItems.map((item) => item.id)]
+  };
+  const allowedSections = roleWorkspaceAccess[session.user.role] || ['project'];
+  const visibleNavItems = navItems.filter((item) => allowedSections.includes(item.id));
+  const visibleGlobalNavItems = globalNavItems.filter((item) => allowedSections.includes(item.id));
+  const canCreateProject = ['designer', 'admin'].includes(session.user.role);
+  const currentNav = [...navItems, ...globalNavItems].find((item) => item.id === activeSection) || visibleNavItems[0] || navItems[0];
   const currentProject = projects.find((project) => project.id === activeProjectId);
   const slotTotal = activeSlots.length || STORYBOARD_SLOT_COUNT;
   const currentProductLock = getProjectProductLock(projectForm);
@@ -7169,14 +7294,33 @@ function WorkspaceApp() {
       status: exportReady ? (activeSection === 'export' ? 'current' : 'ready') : 'waiting'
     }
   ];
+  const visibleWorkflowGuideSteps = workflowGuideSteps.filter((step) => allowedSections.includes(step.target));
+  useEffect(() => {
+    if (!allowedSections.includes(activeSection)) setActiveSection(visibleNavItems[0]?.id || 'project');
+  }, [activeSection, session.user.role]);
   useEffect(() => {
     if (!activeSlots.some((slot) => slot.id === selectedSlot.id) && activeSlots[0]) {
       setSelectedSlot(activeSlots[0]);
     }
   }, [activeSlots, selectedSlot.id]);
-  const persistProjects = (nextProjects) => {
-    setProjects(nextProjects);
-    storeProjects(nextProjects);
+  const syncProjectToTeam = async (project) => {
+    if (!project?.cloud?.remote) return;
+    try {
+      await updateTeamProject(project.id, makeTeamProjectPayload(project));
+    } catch (error) {
+      appLogger.error('team.project.sync_failed', error, { projectId: project.id, step: activeSection });
+      setSaveStatus('已保存在本机，但团队同步暂时失败。');
+    }
+  };
+  const persistProjects = (nextProjects, remoteProjectId = activeProjectId) => {
+    const normalizedProjects = nextProjects.map((project) => {
+      const previous = projects.find((item) => item.id === project.id);
+      return project.cloud ? project : { ...project, cloud: previous?.cloud };
+    });
+    setProjects(normalizedProjects);
+    storeProjects(normalizedProjects);
+    const remoteProject = normalizedProjects.find((project) => project.id === remoteProjectId);
+    if (remoteProject?.cloud?.remote) void syncProjectToTeam(remoteProject);
   };
   const updateBrandLibrary = (nextBrands) => {
     const normalized = normalizeBrandLibrary(nextBrands);
@@ -7217,6 +7361,10 @@ function WorkspaceApp() {
     navigateTo('storyboard', 'storyboard');
   };
   const navigateTo = (section, anchor) => {
+    if (!allowedSections.includes(section)) {
+      setSaveStatus('当前身份不具备进入该工作区的权限。');
+      return;
+    }
     appLogger.log('behavior.navigation.requested', {
       from: activeSection,
       to: section,
@@ -7225,12 +7373,29 @@ function WorkspaceApp() {
     setActiveSection(section);
     setFocusRequest({ section, anchor, id: Date.now() });
   };
-  const saveCurrentProject = () => {
-    const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+  const saveCurrentProject = async () => {
+    let nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    const currentCloud = currentProject?.cloud;
+    if (!currentCloud?.remote) {
+      if (!['designer', 'admin'].includes(session.user.role)) {
+        setSaveStatus('当前身份只能处理已分配项目。');
+        return;
+      }
+      try {
+        const remote = await createTeamProject(makeTeamProjectPayload(nextProject));
+        nextProject = { ...nextProject, id: remote.id, cloud: { remote: true, status: remote.status || 'draft', assignments: [], createdBy: session.user } };
+      } catch (error) {
+        appLogger.error('team.project.create_failed', error);
+        setSaveStatus(error instanceof Error ? error.message : '团队项目创建失败，请稍后重试。');
+        return;
+      }
+    } else {
+      nextProject = { ...nextProject, cloud: currentCloud };
+    }
     const nextProjects = projects.some((project) => project.id === activeProjectId)
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
-    persistProjects(nextProjects);
+    persistProjects(nextProjects, nextProject.id);
     setActiveProjectId(nextProject.id);
     appLogger.log('audit.project.saved', {
       projectName: nextProject.form?.projectName || nextProject.form?.productName || nextProject.form?.sku || '',
@@ -7238,7 +7403,7 @@ function WorkspaceApp() {
       storyboardCount: nextProject.storyboardBriefs?.length || 0,
       generationRunCount: nextProject.generationRuns?.length || 0
     }, { projectId: nextProject.id, step: activeSection });
-    setSaveStatus(`已保存 ${formatProjectTime(nextProject.updatedAt)}`);
+    setSaveStatus(`已同步保存 ${formatProjectTime(nextProject.updatedAt)}`);
   };
   const selectProject = (projectId) => {
     const selectedProject = projects.find((project) => project.id === projectId);
@@ -7260,11 +7425,24 @@ function WorkspaceApp() {
     }, { projectId, step: 'project' });
     setActiveSection('project');
   };
-  const createNewProject = () => {
+  const createNewProject = async () => {
+    if (!['designer', 'admin'].includes(session.user.role)) {
+      setSaveStatus('当前身份不能创建项目。');
+      return;
+    }
     const nextProject = createProjectRecord(blankProjectForm, [], createProjectId());
-    const nextProjects = [nextProject, ...projects];
-    persistProjects(nextProjects);
-    setActiveProjectId(nextProject.id);
+    let remote;
+    try {
+      remote = await createTeamProject(makeTeamProjectPayload(nextProject));
+    } catch (error) {
+      appLogger.error('team.project.create_failed', error);
+      setSaveStatus(error instanceof Error ? error.message : '团队项目创建失败，请稍后重试。');
+      return;
+    }
+    const cloudProject = { ...nextProject, id: remote.id, cloud: { remote: true, status: remote.status || 'draft', assignments: [], createdBy: session.user } };
+    const nextProjects = [cloudProject, ...projects];
+    persistProjects(nextProjects, cloudProject.id);
+    setActiveProjectId(cloudProject.id);
     setProjectForm(blankProjectForm);
     setLedgerFacts([]);
     setStoryboardBriefs([]);
@@ -7795,7 +7973,8 @@ function WorkspaceApp() {
         </div>
 
         <nav className="nav-list" aria-label="Workflow">
-          {navItems.map(({ id, label }, index) => {
+          {visibleNavItems.map(({ id, label }) => {
+            const index = navItems.findIndex((item) => item.id === id);
             const stepStatus = workflowGuideSteps[index]?.status || 'waiting';
             const isActive = activeSection === id;
             return (
@@ -7819,10 +7998,11 @@ function WorkspaceApp() {
           onSelectProject={selectProject}
           onCreateProject={createNewProject}
           onDeleteProject={deleteProject}
+          canCreate={canCreateProject}
         />
 
         <div className="sidebar-bottom">
-          {globalNavItems.map(({ id, label, icon: Icon, subtitle }) => (
+          {visibleGlobalNavItems.map(({ id, label, icon: Icon, subtitle }) => (
             <button
               className={activeSection === id ? 'global-nav-button active' : 'global-nav-button'}
               key={id}
@@ -7837,12 +8017,13 @@ function WorkspaceApp() {
           ))}
 
           <div className="sidebar-card">
-            <p className="eyebrow">当前项目</p>
+            <p className="eyebrow">当前身份 · {session.user.role === 'operator' ? '运营' : session.user.role === 'designer' ? '设计' : '管理员'}</p>
             <h2>{getProjectTitle(projectForm)}</h2>
             <div className="small-row">
               <LockKeyhole size={14} />
               {projectForm.sourceImageName || currentProject?.form?.sourceImageName || '等待上传白底图'}
             </div>
+            <button className="sidebar-logout" type="button" onClick={onLogout}>退出登录</button>
           </div>
         </div>
       </aside>
@@ -7866,7 +8047,7 @@ function WorkspaceApp() {
           </div>
         </header>
 
-        <WorkflowGuide steps={workflowGuideSteps} activeSection={activeSection} onNavigate={navigateTo} />
+        {!isLoadingTeamProjects && <WorkflowGuide steps={visibleWorkflowGuideSteps} activeSection={activeSection} onNavigate={navigateTo} />}
 
         <section className="status-strip" aria-label="项目状态">
           <span><strong>{approvedCount}/{slotTotal}</strong> 人工通过</span>
@@ -7878,7 +8059,8 @@ function WorkspaceApp() {
       </section>
 
       <nav className="mobile-tabbar" aria-label="工作流">
-        {navItems.map(({ id, icon: Icon }, index) => {
+        {visibleNavItems.map(({ id, icon: Icon }) => {
+          const index = navItems.findIndex((item) => item.id === id);
           const stepStatus = workflowGuideSteps[index]?.status || 'waiting';
           const isActive = activeSection === id;
           return (
@@ -7899,9 +8081,9 @@ function WorkspaceApp() {
 
 function App() {
   return (
-    <InviteGate>
-      <WorkspaceApp />
-    </InviteGate>
+    <TeamAccessGate>
+      {({ session, onLogout }) => <WorkspaceApp session={session} onLogout={onLogout} />}
+    </TeamAccessGate>
   );
 }
 

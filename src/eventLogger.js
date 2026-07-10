@@ -1,6 +1,6 @@
 const EVENT_QUEUE_STORAGE_KEY = 'vistamz.eventQueue.v1';
 const SESSION_STORAGE_KEY = 'vistamz.sessionId.v1';
-const INVITE_ACCESS_STORAGE_KEY = 'vistamz.inviteAccess.v1';
+const TEAM_SESSION_STORAGE_KEY = 'vistamz.teamSession.v1';
 const IMAGE_API_BASE_URL = import.meta.env.VITE_IMAGE_API_BASE_URL || 'http://localhost:5174';
 const APP_VERSION = import.meta.env.VITE_APP_VERSION || '0.1-beta';
 const FLUSH_INTERVAL_MS = 5000;
@@ -45,9 +45,9 @@ export function getAppSessionId() {
 
 function getUserHint() {
   if (typeof window === 'undefined') return '';
-  const access = safeJsonParse(window.localStorage.getItem(INVITE_ACCESS_STORAGE_KEY) || 'null', null);
-  if (!access) return 'anonymous';
-  return `${access.role || 'tester'}:${access.label || access.hash || 'unknown'}`;
+  const session = safeJsonParse(window.localStorage.getItem(TEAM_SESSION_STORAGE_KEY) || 'null', null);
+  if (!session?.user) return 'anonymous';
+  return `${session.user.role || 'member'}:${session.user.id || session.user.displayName || 'unknown'}`;
 }
 
 function cleanPayload(value, depth = 0) {
@@ -91,9 +91,13 @@ export async function flushEvents() {
   isFlushing = true;
   const batch = queue.slice(0, MAX_BATCH_SIZE);
   try {
+    const session = safeJsonParse(window.localStorage.getItem(TEAM_SESSION_STORAGE_KEY) || 'null', null);
     const response = await fetch(`${IMAGE_API_BASE_URL}/api/events`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.accessToken ? { Authorization: `Bearer ${session.accessToken}` } : {})
+      },
       body: JSON.stringify({ events: batch })
     });
     if (!response.ok) throw new Error('Event API unavailable');

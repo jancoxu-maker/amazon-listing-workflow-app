@@ -229,6 +229,36 @@ textarea {
   outline: 3px solid rgba(255, 255, 255, 0.24);
 }
 
+.auth-role-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.auth-role-choice button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  font-weight: 800;
+}
+
+.auth-role-choice button.active {
+  background: #ffffff;
+  color: #f2661d;
+}
+
+.auth-loading {
+  margin: 24px 0 0;
+  color: rgba(255, 255, 255, 0.82);
+  font-weight: 700;
+}
+
 .auth-error {
   color: #fff7f2;
   font-size: 14px;
@@ -424,6 +454,23 @@ textarea:focus {
   border: 1px solid #33403d;
   border-radius: 8px;
   background: #1e2a27;
+}
+
+.sidebar-logout {
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid #42514b;
+  border-radius: 6px;
+  background: transparent;
+  color: #b9c4bc;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sidebar-logout:hover {
+  border-color: #ff8a3d;
+  color: #ffffff;
 }
 
 .project-list-card {
