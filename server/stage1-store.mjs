@@ -98,7 +98,8 @@ export function createStage1Store(database) {
     return database.transaction(async (client) => {
       const inviteResult = await client.query('SELECT * FROM invite_codes WHERE code_hash = $1 FOR UPDATE', [codeHash]);
       const invite = inviteResult.rows[0];
-      if (!invite || invite.status !== 'active' || invite.uses >= invite.max_uses || (invite.expires_at && new Date(invite.expires_at) <= new Date())) {
+      const reusableAdminInvite = invite?.role_scope === 'admin';
+      if (!invite || invite.status !== 'active' || (!reusableAdminInvite && invite.uses >= invite.max_uses) || (invite.expires_at && new Date(invite.expires_at) <= new Date())) {
         throw new Stage1Error('邀请码无效、已被使用或已过期。', 403, 'INVITE_UNAVAILABLE');
       }
 
@@ -119,7 +120,9 @@ export function createStage1Store(database) {
         'INSERT INTO app_users (id, email, display_name, role) VALUES ($1, $2, $3, $4)',
         [userId, normalizedEmail || null, name, allowedRole]
       );
-      await client.query('UPDATE invite_codes SET uses = uses + 1, updated_at = NOW() WHERE id = $1', [invite.id]);
+      if (!reusableAdminInvite) {
+        await client.query('UPDATE invite_codes SET uses = uses + 1, updated_at = NOW() WHERE id = $1', [invite.id]);
+      }
       await client.query(
         'INSERT INTO auth_sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, $4)',
         [sessionId, userId, hashToken(token), expiresAt]
