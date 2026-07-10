@@ -28,12 +28,15 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  UsersRound,
   X
 } from 'lucide-react';
 import { appLogger, installGlobalErrorLogging } from './eventLogger.js';
 import {
   activateTeamInvite,
+  assignTeamProject,
   createTeamProject,
+  listTeamUsers,
   listTeamProjects,
   loginTeamAccount,
   logoutTeamSession,
@@ -706,6 +709,14 @@ function TeamAccessGate({ children }) {
 }
 
 const globalNavItems = [
+  {
+    id: 'team',
+    label: '团队协作',
+    icon: UsersRound,
+    eyebrow: 'Team',
+    title: '项目分配',
+    subtitle: '为每个项目指定设计与运营负责人。'
+  },
   {
     id: 'quality',
     label: '质量 Console',
@@ -3702,6 +3713,112 @@ function ProjectList({ projects, activeProjectId, onSelectProject, onCreateProje
         )}
       </div>
     </div>
+  );
+}
+
+function TeamManagementPage({ projects, onAssignProject, focusRequest }) {
+  const [users, setUsers] = useState([]);
+  const [drafts, setDrafts] = useState({});
+  const [message, setMessage] = useState('');
+  const [savingProjectId, setSavingProjectId] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    listTeamUsers()
+      .then((nextUsers) => {
+        if (mounted) setUsers(nextUsers);
+      })
+      .catch((error) => {
+        if (mounted) setMessage(error instanceof Error ? error.message : '账号列表暂时无法加载。');
+      })
+      .finally(() => {
+        if (mounted) setIsLoading(false);
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  const designers = users.filter((user) => user.role === 'designer');
+  const operators = users.filter((user) => user.role === 'operator');
+  const readAssignment = (project, role) => drafts[`${project.id}:${role}`]
+    ?? project.cloud?.assignments?.find((assignment) => assignment.role === role)?.userId
+    ?? '';
+  const updateDraft = (projectId, role, userId) => {
+    setDrafts((current) => ({ ...current, [`${projectId}:${role}`]: userId }));
+  };
+  const saveAssignments = async (project) => {
+    setSavingProjectId(project.id);
+    setMessage('');
+    try {
+      const designerId = readAssignment(project, 'designer');
+      const operatorId = readAssignment(project, 'operator');
+      const designer = designers.find((user) => user.id === designerId) || null;
+      const operator = operators.find((user) => user.id === operatorId) || null;
+      await onAssignProject(project.id, 'designer', designer);
+      await onAssignProject(project.id, 'operator', operator);
+      setMessage(`已更新「${getProjectTitle(project.form)}」的负责人。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '项目分配失败，请稍后重试。');
+    } finally {
+      setSavingProjectId('');
+    }
+  };
+
+  return (
+    <section className="page team-page">
+      <FocusFrame active={getFocusSignal(focusRequest, 'team')} className="panel team-overview">
+        <div>
+          <p className="eyebrow">TEAM ROUTING</p>
+          <h3>项目负责人</h3>
+          <p>每个项目指定一位设计师和一位运营。设计师负责资料、方案与生图；运营负责卖点确认、审核与导出。</p>
+        </div>
+        <div className="team-overview-stats">
+          <span><strong>{designers.length}</strong> 设计</span>
+          <span><strong>{operators.length}</strong> 运营</span>
+          <span><strong>{projects.length}</strong> 项目</span>
+        </div>
+      </FocusFrame>
+
+      <section className="panel team-projects-panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">ASSIGNMENTS</p>
+            <h3>分配项目</h3>
+          </div>
+          {message && <small className="team-message">{message}</small>}
+        </div>
+        {isLoading ? <p className="empty-state">正在加载已激活账号...</p> : projects.length ? (
+          <div className="team-project-list">
+            {projects.map((project) => (
+              <article className="team-project-row" key={project.id}>
+                <div className="team-project-title">
+                  <strong>{getProjectTitle(project.form)}</strong>
+                  <small>{project.form.sku || '无 SKU'} · {project.cloud?.status || 'draft'}</small>
+                </div>
+                <label>
+                  <span>设计负责人</span>
+                  <select value={readAssignment(project, 'designer')} onChange={(event) => updateDraft(project.id, 'designer', event.target.value)}>
+                    <option value="">暂不分配</option>
+                    {designers.map((user) => <option value={user.id} key={user.id}>{user.displayName}{user.email ? ` · ${user.email}` : ''}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span>运营负责人</span>
+                  <select value={readAssignment(project, 'operator')} onChange={(event) => updateDraft(project.id, 'operator', event.target.value)}>
+                    <option value="">暂不分配</option>
+                    {operators.map((user) => <option value={user.id} key={user.id}>{user.displayName}{user.email ? ` · ${user.email}` : ''}</option>)}
+                  </select>
+                </label>
+                <button className="secondary-button" type="button" disabled={savingProjectId === project.id} onClick={() => saveAssignments(project)}>
+                  <Save size={16} />
+                  {savingProjectId === project.id ? '保存中...' : '保存分配'}
+                </button>
+              </article>
+            ))}
+          </div>
+        ) : <p className="empty-state">还没有团队项目，先由设计或管理员创建项目。</p>}
+      </section>
+    </section>
   );
 }
 
@@ -7358,6 +7475,32 @@ function WorkspaceApp({ session, onLogout }) {
     }, { projectId: activeProjectId, step: 'brands' });
     setSaveStatus('品牌库已保存');
   };
+  const assignProjectMember = async (projectId, assignmentRole, assignee) => {
+    await assignTeamProject(projectId, { userId: assignee?.id || '', assignmentRole });
+    const nextProjects = projects.map((project) => {
+      if (project.id !== projectId) return project;
+      const existingAssignments = project.cloud?.assignments || [];
+      const nextAssignments = existingAssignments.filter((assignment) => assignment.role !== assignmentRole);
+      if (assignee) {
+        nextAssignments.push({ userId: assignee.id, role: assignmentRole, name: assignee.displayName });
+      }
+      return {
+        ...project,
+        cloud: {
+          ...project.cloud,
+          assignments: nextAssignments
+        }
+      };
+    });
+    setProjects(nextProjects);
+    storeProjects(nextProjects);
+    appLogger.log('team.project.assigned', {
+      assignmentRole,
+      assigneeId: assignee?.id || '',
+      assigneeName: assignee?.displayName || ''
+    }, { projectId, step: 'team' });
+    setSaveStatus('项目负责人已更新。');
+  };
   const changePlanOutputPreset = (presetId) => {
     const nextPreset = getOutputPresetById(presetId);
     if (nextPreset.id === getProjectPlanOutputPresetId(projectForm)) return;
@@ -7904,6 +8047,13 @@ function WorkspaceApp({ session, onLogout }) {
       <BrandLibraryPage
         brandLibrary={brandLibrary}
         onUpdateBrands={updateBrandLibrary}
+        focusRequest={focusRequest}
+      />
+    ),
+    team: (
+      <TeamManagementPage
+        projects={projects.filter((project) => project.cloud?.remote)}
+        onAssignProject={assignProjectMember}
         focusRequest={focusRequest}
       />
     ),

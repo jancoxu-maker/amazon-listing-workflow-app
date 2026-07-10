@@ -286,7 +286,7 @@ export function createStage1Store(database) {
     assertConfigured();
     const id = String(projectId || '').trim();
     const project = await database.query(
-      `SELECT p.id, p.created_by,
+      `SELECT p.id,
         EXISTS(
           SELECT 1 FROM project_assignments a
           WHERE a.project_id = p.id AND a.user_id = $2
@@ -297,7 +297,7 @@ export function createStage1Store(database) {
       [id, user.id]
     );
     if (!project.rowCount) throw new Stage1Error('项目不存在。', 404, 'PROJECT_NOT_FOUND');
-    if (user.role !== 'admin' && !project.rows[0].is_assigned && project.rows[0].created_by !== user.id) {
+    if (user.role !== 'admin' && !project.rows[0].is_assigned) {
       throw new Stage1Error('你没有编辑这个项目的权限。', 403, 'PROJECT_UPDATE_FORBIDDEN');
     }
 
@@ -345,25 +345,52 @@ export function createStage1Store(database) {
     assertConfigured();
     if (user.role !== 'admin') throw new Stage1Error('只有管理员可以分配项目。', 403, 'PROJECT_ASSIGN_FORBIDDEN');
     if (!MEMBER_ROLES.has(assignmentRole)) throw new Stage1Error('分配身份必须是设计师或运营。', 400, 'INVALID_ASSIGNMENT_ROLE');
-    const targetUser = await database.query('SELECT id, role, status FROM app_users WHERE id = $1 LIMIT 1', [String(userId || '')]);
-    if (!targetUser.rowCount || targetUser.rows[0].status !== 'active' || targetUser.rows[0].role !== assignmentRole) {
-      throw new Stage1Error('无法分配给该用户，请确认身份和账号状态。', 400, 'INVALID_ASSIGNEE');
-    }
     const project = await database.query('SELECT id FROM projects WHERE id = $1 LIMIT 1', [projectId]);
     if (!project.rowCount) throw new Stage1Error('项目不存在。', 404, 'PROJECT_NOT_FOUND');
+    const targetId = String(userId || '').trim();
+    if (targetId) {
+      const targetUser = await database.query('SELECT id, role, status FROM app_users WHERE id = $1 LIMIT 1', [targetId]);
+      if (!targetUser.rowCount || targetUser.rows[0].status !== 'active' || targetUser.rows[0].role !== assignmentRole) {
+        throw new Stage1Error('无法分配给该用户，请确认身份和账号状态。', 400, 'INVALID_ASSIGNEE');
+      }
+    }
     await database.transaction(async (client) => {
       await client.query(
-        `INSERT INTO project_assignments (project_id, user_id, assignment_role, assigned_by)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (project_id, user_id, assignment_role) DO UPDATE SET assigned_by = EXCLUDED.assigned_by, assigned_at = NOW()`,
-        [projectId, userId, assignmentRole, user.id]
+        'DELETE FROM project_assignments WHERE project_id = $1 AND assignment_role = $2',
+        [projectId, assignmentRole]
       );
+      if (targetId) {
+      await client.query(
+          `INSERT INTO project_assignments (project_id, user_id, assignment_role, assigned_by)
+           VALUES ($1, $2, $3, $4)`,
+          [projectId, targetId, assignmentRole, user.id]
+        );
+      }
       await client.query(
         `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
          VALUES ($1, $2, $3, 'project.assigned', $4::jsonb)`,
-        [createId('audit'), user.id, projectId, JSON.stringify({ userId, assignmentRole })]
+        [createId('audit'), user.id, projectId, JSON.stringify({ userId: targetId || null, assignmentRole })]
       );
     });
+  }
+
+  async function listActiveUsers(user) {
+    assertConfigured();
+    if (user.role !== 'admin') throw new Stage1Error('只有管理员可以查看账号列表。', 403, 'USER_LIST_FORBIDDEN');
+    const result = await database.query(
+      `SELECT id, display_name, email, role, status, created_at
+       FROM app_users
+       WHERE status = 'active'
+       ORDER BY role, display_name, created_at`
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      displayName: row.display_name,
+      email: row.email || '',
+      role: row.role,
+      status: row.status,
+      createdAt: row.created_at
+    }));
   }
 
   async function appendAuditEvents(events, actor = null) {
@@ -403,6 +430,7 @@ export function createStage1Store(database) {
     createProject,
     updateProject,
     assignProject,
+    listActiveUsers,
     appendAuditEvents
   };
 }

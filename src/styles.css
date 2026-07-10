@@ -485,6 +485,141 @@ textarea:focus {
   color: #ffffff;
 }
 
+.team-page {
+  display: grid;
+  gap: 18px;
+}
+
+.team-overview,
+.team-projects-panel {
+  padding: 24px;
+}
+
+.team-overview {
+  display: flex;
+  gap: 28px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.team-overview h3,
+.team-projects-panel h3 {
+  margin: 4px 0 8px;
+  font-size: 22px;
+}
+
+.team-overview p:not(.eyebrow) {
+  max-width: 620px;
+  margin: 0;
+  color: #64746d;
+  line-height: 1.65;
+}
+
+.team-overview-stats {
+  display: flex;
+  gap: 18px;
+  flex: 0 0 auto;
+}
+
+.team-overview-stats span {
+  display: grid;
+  gap: 3px;
+  min-width: 62px;
+  color: #697871;
+  font-size: 12px;
+  text-align: center;
+}
+
+.team-overview-stats strong {
+  color: #17211f;
+  font-size: 24px;
+}
+
+.team-projects-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.team-projects-panel .section-heading {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.team-message {
+  color: #467c60;
+  font-weight: 700;
+}
+
+.team-project-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid #d8e1dc;
+  border-radius: 8px;
+}
+
+.team-project-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  padding: 16px;
+  border-bottom: 1px solid #e5ebe7;
+}
+
+.team-project-row:last-child {
+  border-bottom: 0;
+}
+
+.team-project-title {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.team-project-title strong {
+  overflow: hidden;
+  color: #17211f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-project-title small {
+  color: #718078;
+}
+
+.team-project-row label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.team-project-row label span {
+  color: #708078;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.team-project-row select {
+  max-width: 100%;
+}
+
+@media (max-width: 900px) {
+  .team-overview,
+  .team-project-row {
+    grid-template-columns: 1fr;
+  }
+
+  .team-overview {
+    display: grid;
+  }
+
+  .team-overview-stats {
+    justify-content: flex-start;
+  }
+}
+
 .project-list-card {
   display: grid;
   gap: 12px;

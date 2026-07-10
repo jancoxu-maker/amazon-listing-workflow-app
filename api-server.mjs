@@ -1494,6 +1494,17 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && requestPath === '/api/admin/users') {
+    try {
+      const session = await requireStage1Actor(request);
+      const users = await stage1Store.listActiveUsers(session.user);
+      sendJson(response, 200, { ok: true, users });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
   const projectUpdateMatch = /^\/api\/projects\/([^/]+)$/.exec(requestPath);
   if (request.method === 'PATCH' && projectUpdateMatch) {
     try {

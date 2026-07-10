@@ -120,6 +120,18 @@ export async function updateTeamProject(projectId, payload) {
   return result.project;
 }
 
+export async function listTeamUsers() {
+  const result = await request('/api/admin/users');
+  return result.users || [];
+}
+
+export async function assignTeamProject(projectId, { userId, assignmentRole }) {
+  await request(`/api/projects/${encodeURIComponent(projectId)}/assignments`, {
+    method: 'POST',
+    body: JSON.stringify({ userId, assignmentRole })
+  });
+}
+
 export function getTeamApiBaseUrl() {
   return API_BASE_URL;
 }
