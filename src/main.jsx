@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   Archive,
+  ArrowLeft,
+  ArrowRight,
   BarChart3,
   Check,
   ChevronRight,
@@ -10,6 +12,7 @@ import {
   Database,
   Download,
   Eye,
+  EyeOff,
   FileImage,
   FolderOpen,
   ImagePlus,
@@ -22,6 +25,7 @@ import {
   PencilLine,
   Plus,
   RefreshCcw,
+  RotateCcw,
   Save,
   Settings,
   ShieldCheck,
@@ -29,26 +33,53 @@ import {
   Trash2,
   Upload,
   UsersRound,
-  X
+  X,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react';
 import { appLogger, installGlobalErrorLogging } from './eventLogger.js';
 import {
   activateTeamInvite,
   assignTeamProject,
+  cancelGenerationTask,
+  createTeamBrand,
   createTeamProject,
+  deleteTeamBrand,
+  getAccessToken,
+  listAdminGenerationTasks,
+  listGenerationTasks,
+  listTeamBrands,
   listTeamUsers,
   listTeamProjects,
+  listTrashedTeamProjects,
   loginTeamAccount,
   logoutTeamSession,
   restoreTeamSession,
+  signProjectAssets,
+  restoreTrashedTeamProject,
+  trashTeamProject,
+  uploadTeamBrandLogo,
+  uploadTeamProjectAsset,
+  updateTeamBrand,
   updateTeamProject
 } from './teamApi.js';
 import './styles.css';
+import './vistamz-ui.css';
+import './vistamz-bridge.css';
+import './vistamz-conformance.css';
 
 const PROJECTS_STORAGE_KEY = 'listingflow.projects.v1';
 const BRAND_LIBRARY_STORAGE_KEY = 'listingflow.brands.v1';
 const INVITE_ACCESS_STORAGE_KEY = 'vistamz.inviteAccess.v1';
 const IMAGE_API_BASE_URL = import.meta.env.VITE_IMAGE_API_BASE_URL || 'http://localhost:5174';
+
+function authenticatedJsonHeaders() {
+  const token = getAccessToken();
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+}
 const inviteAccessCodes = [
   { label: '内测邀请码 01', role: 'tester', hash: '48f3e317987ea2d51b3ca8dfd17c95eddbeb5f186715be4cf2d0f8709f0519db' },
   { label: '内测邀请码 02', role: 'tester', hash: 'fc59c6c106d2378251a1873a68652192541fa07477f69f44af7b8ccb57d8edb3' },
@@ -238,7 +269,7 @@ const reviewerRoles = {
   admin: {
     label: '管理员',
     title: '最终放行',
-    helper: '可同时放行设计和运营，也可禁止导出。',
+    helper: '确认运营审核已完成后，进行最终放行、退回或禁止导出。',
     passText: '最终通过',
     reworkText: '退回重审'
   }
@@ -488,6 +519,16 @@ function BrandLogo({ size = 26 }) {
   );
 }
 
+function BrandLockup({ inverse = false, className = '', source = '' }) {
+  return (
+    <img
+      className={className}
+      src={source || (inverse ? '/vistamz-lockup-white.svg' : '/vistamz-lockup-ink.svg')}
+      alt="Vistamz"
+    />
+  );
+}
+
 function BrandLogoMark({ size = 96 }) {
   return (
     <svg
@@ -504,6 +545,38 @@ function BrandLogoMark({ size = 96 }) {
       <path d="M226,86.81a7.83,7.83,0,0,1-.64-1.25c-.35-1.26-.58-2.55-1-3.79-2.21-7-7.26-10.81-14.25-12.36a11.47,11.47,0,0,1-2.06-.85,9.57,9.57,0,0,1,2-1.09c5.13-1.33,9.76-3.49,12.32-8.41,1.24-2.4,1.84-5.14,2.77-7.71a7.84,7.84,0,0,1,.88-1.38,6.36,6.36,0,0,1,.78,1.32c.53,1.69.9,3.43,1.51,5.09,2.3,6.25,7.21,9.37,13.35,11,.59.16,1.2.23,1.76.43.27.09.46.4.69.61-.24.24-.44.58-.73.7a12.59,12.59,0,0,1-1.64.37c-8.12,1.75-12.95,6.76-14.68,14.84a12.54,12.54,0,0,1-.34,1.5A5.67,5.67,0,0,1,226,86.81Z" />
       <path d="M246,120.56c.78,2.93,1.43,5.91,3.7,8.12a14.68,14.68,0,0,0,7.91,3.69l0,.7c-2.92.57-5.75,1.3-7.89,3.47s-3,5-3.62,7.86h-.52c-.23-.69-.49-1.37-.68-2.07-.92-3.51-2.78-6.3-6.16-7.86a28.86,28.86,0,0,0-3.18-1c-.46-.15-.92-.32-1.38-.49l0-.37a7.13,7.13,0,0,1,1.26-.52c5.49-1.21,8.67-4.62,9.7-10.1a12.59,12.59,0,0,1,.42-1.36Z" />
     </svg>
+  );
+}
+
+// Vistamz mark drawn once via stroke animation (no loop). Plays on mount.
+function BrandLogoDraw({ className = '' }) {
+  return (
+    <svg
+      className={`brand-draw ${className}`.trim()}
+      viewBox="0 0 200.83 201.03"
+      aria-hidden="true"
+    >
+      <path className="brand-draw-tri" pathLength="1" d="M 100.42,5.2 L 192.74,5.2 L 100.42,189.85 L 8.09,5.2 Z" />
+      <path className="brand-draw-tri" pathLength="1" d="M 100.42,195.83 L 8.09,195.83 L 100.42,11.18 L 192.74,195.83 Z" />
+      <line className="brand-draw-diag" pathLength="1" x1="74.08" y1="63.84" x2="140.08" y2="195.83" />
+    </svg>
+  );
+}
+
+function VistamzLoader({ size = 24, label = '正在处理', className = '' }) {
+  return (
+    <span
+      className={`vz-logo-loader ${className}`.trim()}
+      role="status"
+      aria-label={label}
+      style={{ '--vz-loader-size': `${size}px` }}
+    >
+      <svg className="vz-logo-loader__mark" viewBox="0 0 200.83 201.03" aria-hidden="true">
+        <path className="vz-logo-loader__stroke vz-logo-loader__tri" pathLength="1" d="M 100.42,5.2 L 192.74,5.2 L 100.42,189.85 L 8.09,5.2 Z" />
+        <path className="vz-logo-loader__stroke vz-logo-loader__tri" pathLength="1" d="M 100.42,195.83 L 8.09,195.83 L 100.42,11.18 L 192.74,195.83 Z" />
+        <line className="vz-logo-loader__stroke vz-logo-loader__diag" pathLength="1" x1="74.08" y1="63.84" x2="140.08" y2="195.83" />
+      </svg>
+    </span>
   );
 }
 
@@ -555,6 +628,24 @@ function loadInviteAccess() {
   }
 }
 
+function AuthVisualPanel() {
+  return (
+    <section className="auth-concept-visual" aria-label="Vistamz generative visual workspace">
+      <div className="auth-concept-draw" aria-hidden="true">
+        <svg viewBox="0 0 200.83 201.03" role="presentation">
+          <path className="auth-concept-draw-line auth-concept-draw-triangle" pathLength="1" d="M 100.42,5.2 L 192.74,5.2 L 100.42,189.85 L 8.09,5.2 Z" />
+          <path className="auth-concept-draw-line auth-concept-draw-triangle" pathLength="1" d="M 100.42,195.83 L 8.09,195.83 L 100.42,11.18 L 192.74,195.83 Z" />
+          <line className="auth-concept-draw-line auth-concept-draw-diagonal" pathLength="1" x1="74.08" y1="63.84" x2="140.08" y2="195.83" />
+        </svg>
+      </div>
+      <div className="auth-concept-brand-group">
+        <BrandLockup inverse source="/vistamz-lockup-h-white.svg" className="auth-concept-brand" />
+        <p>Make Value Visible.</p>
+      </div>
+    </section>
+  );
+}
+
 function TeamAccessGate({ children }) {
   const [session, setSession] = useState(null);
   const [isRestoring, setIsRestoring] = useState(true);
@@ -567,6 +658,7 @@ function TeamAccessGate({ children }) {
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [isChecking, setIsChecking] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -626,8 +718,31 @@ function TeamAccessGate({ children }) {
     }
   };
 
+  const beginActivation = (role) => {
+    setRequestedRole(role);
+    setAuthMode('activate');
+    setShowCodeEntry(true);
+    setError('');
+  };
+
+  const beginLogin = () => {
+    setAuthMode('login');
+    setShowCodeEntry(true);
+    setError('');
+  };
+
   if (isRestoring) {
-    return <main className="auth-screen"><div className="auth-panel"><BrandLogoMark size={96} /><p className="auth-loading">正在确认登录状态...</p></div></main>;
+    return (
+      <main className="auth-screen auth-concept-screen">
+        <AuthVisualPanel />
+        <section className="auth-concept-login-zone">
+          <div className="auth-panel auth-concept-card auth-concept-loading vz-card">
+            <VistamzLoader size={32} label="正在确认登录状态" />
+            <p className="auth-loading">正在确认登录状态...</p>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   if (session) {
@@ -638,56 +753,72 @@ function TeamAccessGate({ children }) {
   }
 
   return (
-    <main className="auth-screen">
-      <div className="hello-field" aria-hidden="true">
-        {helloCloud.map((item, index) => (
-          <span
-            key={`${item.text}-${index}`}
-            style={{
-              '--top': item.top,
-              '--left': item.left,
-              '--size': item.size,
-              '--delay': item.delay,
-              '--duration': item.duration
-            }}
-          >
-            {item.text}
-          </span>
-        ))}
-      </div>
-      <section className="auth-panel" aria-label="Vistamz 内测入口">
-        <BrandLogoMark size={116} />
-        <div className="auth-title">
-          <h1>Vistamz</h1>
-          <p>Claim-based Amazon visuals</p>
-        </div>
-        <form className={showCodeEntry ? 'auth-form visible' : 'auth-form'} onSubmit={handleSubmit}>
-          {showCodeEntry && (
+    <main className="auth-screen auth-concept-screen">
+      <AuthVisualPanel />
+      <section className="auth-concept-login-zone">
+        {!showCodeEntry && (
+          <button className="auth-admin-corner vz-btn vz-btn--ghost" type="button" onClick={() => beginActivation('admin')}>
+            <ShieldCheck size={16} />
+            管理员入口
+          </button>
+        )}
+        <section className="auth-panel auth-concept-card vz-card" aria-label="Vistamz 内测入口">
+          <div className="auth-title auth-concept-title">
+            <p className="auth-concept-card-eyebrow">Vistamz workspace</p>
+            <h1>{!showCodeEntry ? '欢迎使用 Vistamz' : authMode === 'login' ? '欢迎回来' : '激活你的账号'}</h1>
+            <p>{!showCodeEntry ? '选择你的身份，进入对应的工作空间。' : authMode === 'login' ? '使用已激活的公司账号继续工作。' : '填写账号信息并使用内测邀请码完成激活。'}</p>
+          </div>
+        {!showCodeEntry ? (
+          <div className="auth-entry-options">
+            <p className="auth-entry-label">你的工作身份</p>
+            <div className="auth-entry-role-grid">
+              <button className="vz-btn" type="button" onClick={() => beginActivation('designer')}>
+                <PencilLine size={19} />
+                <span><strong>设计</strong><small>项目资料、图片方案与生图</small></span>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+              <button className="vz-btn" type="button" onClick={() => beginActivation('operator')}>
+                <ClipboardCheck size={19} />
+                <span><strong>运营</strong><small>卖点确认与最终图片审核</small></span>
+                <ChevronRight size={18} aria-hidden="true" />
+              </button>
+            </div>
+            <button className="auth-existing-account vz-btn vz-btn--primary" type="button" onClick={beginLogin}>已有账号，直接登录</button>
+          </div>
+        ) : (
+          <form className="auth-form visible" onSubmit={handleSubmit}>
+            <button className="auth-back-link vz-btn vz-btn--ghost" type="button" onClick={() => { setShowCodeEntry(false); setError(''); setShowPassword(false); }}>返回身份选择</button>
             <>
               {authMode === 'activate' && <>
-                <div className="auth-role-choice" role="group" aria-label="选择身份">
-                  <button type="button" className={requestedRole === 'designer' ? 'active' : ''} onClick={() => setRequestedRole('designer')}>设计</button>
-                  <button type="button" className={requestedRole === 'operator' ? 'active' : ''} onClick={() => setRequestedRole('operator')}>运营</button>
-                </div>
+                {requestedRole !== 'admin' && <div className="auth-role-choice" role="group" aria-label="选择身份">
+                  <button type="button" className={`vz-btn ${requestedRole === 'designer' ? 'active' : ''}`} onClick={() => setRequestedRole('designer')}>设计</button>
+                  <button type="button" className={`vz-btn ${requestedRole === 'operator' ? 'active' : ''}`} onClick={() => setRequestedRole('operator')}>运营</button>
+                </div>}
+                {requestedRole === 'admin' && <p className="auth-admin-label">管理员激活</p>}
                 <label>
                   <span>姓名或昵称</span>
-                  <input autoFocus value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} placeholder="例如：Ava" autoComplete="name" />
+                  <input className="vz-input" autoFocus value={displayName} onChange={(event) => { setDisplayName(event.target.value); setError(''); }} placeholder="例如：Ava" autoComplete="name" />
                 </label>
               </>}
               <label>
                 <span>公司邮箱</span>
-                <input value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="name@company.com" autoComplete="email" inputMode="email" />
+                <input className="vz-input" value={email} onChange={(event) => { setEmail(event.target.value); setError(''); }} placeholder="name@company.com" autoComplete="email" inputMode="email" />
               </label>
               <label>
                 <span>密码</span>
-                <input type="password" value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} placeholder={authMode === 'activate' ? '至少 10 位' : '输入账户密码'} autoComplete={authMode === 'activate' ? 'new-password' : 'current-password'} />
+                <span className="auth-password-field">
+                  <input className="vz-input" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => { setPassword(event.target.value); setError(''); }} placeholder={authMode === 'activate' ? '至少 10 位' : '输入账户密码'} autoComplete={authMode === 'activate' ? 'new-password' : 'current-password'} />
+                  <button className="auth-password-toggle vz-btn vz-btn--ghost" type="button" onClick={() => setShowPassword((visible) => !visible)} title={showPassword ? '隐藏密码' : '显示密码'} aria-label={showPassword ? '隐藏密码' : '显示密码'}>
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </span>
               </label>
               {authMode === 'activate' && <label>
                 <span>输入邀请码</span>
-                <input value={code} onChange={(event) => { setCode(event.target.value); setError(''); }} placeholder="VMZ-XXXX-0000" autoComplete="one-time-code" />
+                <input className="vz-input" value={code} onChange={(event) => { setCode(event.target.value); setError(''); }} placeholder="VMZ-XXXX-0000" autoComplete="one-time-code" />
               </label>}
               <button
-                className="auth-mode-link"
+                className="auth-mode-link vz-btn vz-btn--ghost"
                 type="button"
                 onClick={() => {
                   setAuthMode(authMode === 'activate' ? 'login' : 'activate');
@@ -697,12 +828,14 @@ function TeamAccessGate({ children }) {
                 {authMode === 'activate' ? '已有账号？登录' : '首次使用？用邀请码激活'}
               </button>
             </>
-          )}
           {error && <p className="auth-error">{error}</p>}
-          <button type="submit" className="auth-enter-button" disabled={isChecking}>
-            {isChecking ? '正在验证...' : !showCodeEntry ? '进入 Vistamz' : authMode === 'login' ? '登录 Vistamz' : '激活并进入'}
+          <button type="submit" className="auth-enter-button vz-btn vz-btn--primary" disabled={isChecking}>
+            {isChecking ? '正在验证...' : authMode === 'login' ? '登录 Vistamz' : '激活并进入'}
           </button>
-        </form>
+          </form>
+        )}
+        </section>
+        <p className="auth-concept-version">Vistamz · Internal preview</p>
       </section>
     </main>
   );
@@ -914,6 +1047,8 @@ function normalizeBrandProfile(brand = {}) {
   return {
     id: brand.id || `brand-${Date.now()}`,
     name: brand.name || '未命名品牌',
+    version: Number(brand.version || 0),
+    updatedAt: brand.updatedAt || null,
     tone: brand.tone || '清晰、真实、产品优先的 Amazon 电商风格',
     colors: normalizeBrandColors(brand.colors),
     backgroundPolicy: brand.backgroundPolicy || '02-07 可使用干净背景、品牌色块或真实场景；01 白底主图不使用。',
@@ -971,7 +1106,32 @@ function inferBrandId(form = {}, brands = defaultBrandLibrary) {
 }
 
 function getProjectBrandId(form = {}, brands = defaultBrandLibrary) {
-  return form.brandId && form.brandId !== 'none' ? form.brandId : inferBrandId(form, brands);
+  if (Object.prototype.hasOwnProperty.call(form, 'brandId')) {
+    return String(form.brandId || 'none');
+  }
+  return inferBrandId(form, brands);
+}
+
+function getProjectScopedBrandLibrary(form = {}, project = {}, brands = defaultBrandLibrary) {
+  const normalized = normalizeBrandLibrary(brands);
+  const selectedBrandId = getProjectBrandId(form, normalized);
+  const snapshot = project?.brandSnapshot;
+  if (
+    !snapshot?.rules
+    || snapshot.brandId !== selectedBrandId
+    || selectedBrandId === 'none'
+  ) return normalized;
+
+  const frozenBrand = normalizeBrandProfile({
+    ...snapshot.rules,
+    id: snapshot.brandId,
+    name: snapshot.brandName || snapshot.rules.name,
+    version: snapshot.brandVersion
+  });
+  return normalizeBrandLibrary([
+    ...normalized.filter((brand) => brand.id !== selectedBrandId),
+    frozenBrand
+  ]);
 }
 
 const initialProjectForm = {
@@ -1097,13 +1257,17 @@ const QUALITY_MAX_STORED_RUNS = QUALITY_SAMPLE_TARGET_PER_SLOT * 8;
 const IMAGE_CLAIM_POOL_LIMIT = 12;
 const CLAIMS_PER_IMAGE_LIMIT = 3;
 const STORYBOARD_SLOT_COUNT = 7;
+const MAIN_MIN_SLOT_COUNT = 1;
+const MAIN_MAX_SLOT_COUNT = 9;
+const APLUS_MIN_MODULE_COUNT = 4;
+const APLUS_MAX_MODULE_COUNT = 7;
 
 function getOutputPresetById(presetId) {
   return outputPresets.find((preset) => preset.id === presetId) || outputPresets[0];
 }
 
 function getProjectPlanOutputPresetId(form = {}) {
-  return form.planOutputPresetId === 'aplus' ? 'aplus' : 'main-image';
+  return form.planOutputPresetId === 'aplus' || form.planOutputPresetId === 'a-plus' ? 'aplus' : 'main-image';
 }
 
 function getProjectPlanOutputPreset(form = {}) {
@@ -1112,6 +1276,35 @@ function getProjectPlanOutputPreset(form = {}) {
 
 function isAPlusPlan(form = {}) {
   return getProjectPlanOutputPresetId(form) === 'aplus';
+}
+
+function getStoryboardTargetSlotCount(form = {}, ledgerFacts = []) {
+  const override = Number(form.storyboardSlotCountOverride || 0);
+  if (!isAPlusPlan(form)) {
+    return override
+      ? Math.min(MAIN_MAX_SLOT_COUNT, Math.max(MAIN_MIN_SLOT_COUNT, override))
+      : STORYBOARD_SLOT_COUNT;
+  }
+  if (override) {
+    return Math.min(APLUS_MAX_MODULE_COUNT, Math.max(APLUS_MIN_MODULE_COUNT, override));
+  }
+  const usableFactCount = ledgerFacts.filter((fact) => (
+    fact.state === 'allowed' || fact.state === 'evidence' || fact.state === 'review'
+  )).length;
+  return Math.min(
+    APLUS_MAX_MODULE_COUNT,
+    Math.max(APLUS_MIN_MODULE_COUNT, Math.ceil(usableFactCount / 2) + 2)
+  );
+}
+
+function isStoryboardPlanReady(storyboardBriefs = [], form = {}) {
+  if (!Array.isArray(storyboardBriefs) || !storyboardBriefs.length) return false;
+  const aPlus = isAPlusPlan(form) || storyboardBriefs[0]?.outputPresetId === 'aplus';
+  const countValid = aPlus
+    ? storyboardBriefs.length >= APLUS_MIN_MODULE_COUNT && storyboardBriefs.length <= APLUS_MAX_MODULE_COUNT
+    : storyboardBriefs.length >= MAIN_MIN_SLOT_COUNT && storyboardBriefs.length <= MAIN_MAX_SLOT_COUNT;
+  const uniqueIds = new Set(storyboardBriefs.map((brief) => Number(brief.id))).size === storyboardBriefs.length;
+  return countValid && uniqueIds;
 }
 
 const generationVerdicts = {
@@ -1163,7 +1356,7 @@ const listingImageStrategyRules = [
   'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short English title or a few short labels over paragraphs.',
   'Blocked or forbidden claims must not be stated, suggested, implied, staged, symbolized, or visually hinted as a benefit. You may show neutral factual product appearance or ordinary use only when it does not communicate the blocked claim.',
   'For standard listing images, if an image includes a title, place the title consistently at the top of the image. A+ content is an exception: title placement may follow the module layout and does not have to be at the top.',
-  'Across all seven standard listing images, maintain a unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and overall ecommerce art direction.',
+  'Across the full standard listing image set, maintain a unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and overall ecommerce art direction.',
   'A+ modules may use richer and more varied section layouts, but the full A+ set must still share one brand visual system: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
 ];
 
@@ -1647,7 +1840,9 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
     .filter((fact) => fact.state === 'blocked' || (!fact.state && fact.allowed === false))
     .map((fact) => fact.claim);
 
-  return getStoryboardTemplates(form, ledgerFacts).map((template) => {
+  return getStoryboardTemplates(form, ledgerFacts)
+    .slice(0, getStoryboardTargetSlotCount(form, ledgerFacts))
+    .map((template) => {
     const claimLimit = aPlusMode ? CLAIMS_PER_IMAGE_LIMIT : template.visualType === 'main' ? 1 : CLAIMS_PER_IMAGE_LIMIT;
     const usableClaims = pickClaimsByTemplate(allowedClaims, template, claimLimit);
     const needsEvidence = pickClaimsByTemplate(evidenceClaims, template, template.evidenceLimit);
@@ -1693,29 +1888,84 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
         template.guardrails.join('; ')
       ].filter(Boolean).join(' ')
     };
-  });
+    });
+}
+
+function createOptionalStoryboardBrief({ id, form, ledgerFacts = [], existingBriefs = [], brands = defaultBrandLibrary }) {
+  const outputPreset = getProjectPlanOutputPreset(form);
+  const brandProfile = getBrandProfile(getProjectBrandId(form, brands), brands);
+  const usedClaims = new Set(existingBriefs.map((brief) => brief.primaryClaim).filter(Boolean));
+  const usableFact = ledgerFacts.find((fact) => (
+    (fact.state === 'allowed' || fact.state === 'evidence') && !usedClaims.has(fact.claim)
+  )) || ledgerFacts.find((fact) => fact.state === 'allowed' || fact.state === 'evidence');
+  const primaryClaim = String(usableFact?.claim || '').trim();
+  const aPlusMode = isAPlusPlan(form);
+  const blockedClaims = ledgerFacts
+    .filter((fact) => fact.state === 'blocked' || (!fact.state && fact.allowed === false))
+    .map((fact) => fact.claim)
+    .slice(0, 12);
+  const title = aPlusMode ? 'Supporting Content Module' : 'Supporting Benefit';
+  const goal = primaryClaim ? `补充展示：${primaryClaim}` : '补充一个尚未覆盖的产品卖点';
+  const visualProof = primaryClaim
+    ? `Use a product detail, realistic action, physical state, scale reference, or supported scene to visibly demonstrate: ${primaryClaim}.`
+    : 'Use a conservative product-led composition. Add a confirmed claim before final generation.';
+  return {
+    id,
+    title,
+    goal,
+    visualType: 'benefits',
+    roleType: aPlusMode ? 'benefit_story' : 'feature_callout',
+    composition: aPlusMode
+      ? 'Create a clean supporting A+ module with one clear visual hierarchy and product-led evidence.'
+      : 'Create a distinct secondary listing image that proves one supported product benefit without duplicating another slot.',
+    outputPresetId: outputPreset.id,
+    outputPresetLabel: outputPreset.label,
+    productType: detectProductType(form, ledgerFacts),
+    brandId: brandProfile.id,
+    brandName: brandProfile.name,
+    productName: form.productName || form.projectName || form.sku || 'Current product',
+    usableClaims: primaryClaim && usableFact?.state === 'allowed' ? [primaryClaim] : [],
+    needsEvidence: primaryClaim && usableFact?.state === 'evidence' ? [primaryClaim] : [],
+    primaryClaim,
+    visualProof,
+    reviewClaims: [],
+    blockedClaims,
+    status: primaryClaim ? (usableFact?.state === 'evidence' ? 'needs_review' : 'ready') : 'needs_claims',
+    guardrails: [
+      'Do not duplicate another slot role.',
+      'Use only uploaded product references and confirmed Ledger facts.',
+      'Do not invent parts, functions, dimensions, certifications, or accessories.'
+    ],
+    promptBrief: [
+      `Use the locked original product reference for ${form.productName || form.projectName || 'the product'}.`,
+      aPlusMode ? 'Output type: Amazon A+ module.' : 'Output type: secondary Amazon listing image.',
+      `Listing image strategy rules: ${getListingImageStrategyText()}`,
+      visualProof,
+      primaryClaim ? `Primary claim to prove visually: ${primaryClaim}.` : 'No confirmed primary claim is assigned yet.',
+      blockedClaims.length ? `Do not mention or imply: ${blockedClaims.join('; ')}.` : ''
+    ].filter(Boolean).join(' ')
+  };
+}
+
+function normalizeStoryboardSequence(briefs = []) {
+  return briefs.map((brief, index) => ({ ...brief, id: index + 1 }));
 }
 
 function deriveReviewStatus(decision = {}) {
-  if (decision.manualStatus === 'blocked') return 'blocked';
-  if (decision.manualStatus === 'rework') return 'rework';
-  if (decision.manualStatus === 'approved') return 'approved';
-  if (decision.manualStatus === 'review') return 'review';
-  if (decision.opsStatus === 'blocked' || decision.designStatus === 'blocked') return 'blocked';
-  if (decision.designStatus === 'rework' || decision.opsStatus === 'rework') return 'rework';
-  if (decision.designStatus === 'approved' && decision.opsStatus === 'approved') return 'approved';
+  if (decision.finalStatus === 'blocked' || decision.opsStatus === 'blocked') return 'blocked';
+  if (decision.finalStatus === 'rework' || decision.opsStatus === 'rework') return 'rework';
+  if (decision.finalStatus === 'approved' && decision.opsStatus === 'approved') return 'approved';
   return 'review';
 }
 
 function getDefaultReviewNote(status, brief, decision = {}) {
-  if (status === 'approved') return '人工审核已通过，可以进入导出。';
+  if (status === 'approved') return '运营审核和管理员最终放行已完成，可以进入导出。';
   if (status === 'rework') {
-    if (decision.manualStatus === 'rework') return '人工退回：需要修改图片后重新提交审核。';
-    if (decision.designStatus === 'rework') return '设计退回：需要修改产品比例、画面或物理逻辑。';
     if (decision.opsStatus === 'rework') return '运营退回：需要修改卖点、证据或图片文案。';
+    if (decision.finalStatus === 'rework') return '管理员退回：需要修改图片后重新提交审核。';
     return '需要修改后重新提交审核。';
   }
-  if (status === 'blocked') return '人工审核已禁止该图进入最终导出。';
+  if (status === 'blocked') return '运营或管理员已禁止该图进入最终导出。';
   if (brief?.needsEvidence?.length) return `需要先确认：${brief.needsEvidence.join('、')}`;
   if (brief?.status === 'needs_claims') return '缺少可用卖点，建议回到 Ledger 补充或调整。';
   return '等待人工检查产品、比例、物理逻辑、卖点证据和合规表达。';
@@ -1724,16 +1974,17 @@ function getDefaultReviewNote(status, brief, decision = {}) {
 function normalizeReviewDecision(decision, slot, brief) {
   const validManualStatuses = ['review', 'approved', 'rework', 'blocked'];
   const manualStatus = validManualStatuses.includes(decision?.manualStatus) ? decision.manualStatus : 'review';
-  const designStatus = decision?.designStatus
-    || (manualStatus === 'approved' ? 'approved' : manualStatus === 'rework' ? 'rework' : 'review');
   const opsStatus = decision?.opsStatus
-    || (manualStatus === 'approved' ? 'approved' : manualStatus === 'blocked' ? 'blocked' : 'review');
+    || (manualStatus === 'approved' ? 'approved' : manualStatus === 'blocked' ? 'blocked' : manualStatus === 'rework' ? 'rework' : 'review');
+  const finalStatus = decision?.finalStatus
+    || (manualStatus === 'approved' ? 'approved' : manualStatus === 'blocked' ? 'blocked' : manualStatus === 'rework' ? 'rework' : 'review');
   const normalized = {
     slotId: slot.id,
     title: brief?.title || slot.title,
     manualStatus,
-    designStatus,
     opsStatus,
+    finalStatus,
+    planStatus: validManualStatuses.includes(decision?.planStatus) ? decision.planStatus : 'review',
     updatedAt: decision?.updatedAt || new Date().toISOString()
   };
   const status = deriveReviewStatus(normalized);
@@ -1760,9 +2011,7 @@ function getReviewDecision(reviewDecisions, slotId, storyboardBriefs = []) {
 }
 
 function isDecisionFullyApproved(decision = {}) {
-  if (decision.manualStatus) return decision.manualStatus === 'approved';
-  if (decision.status === 'approved') return true;
-  return decision.designStatus === 'approved' && decision.opsStatus === 'approved';
+  return decision.opsStatus === 'approved' && decision.finalStatus === 'approved';
 }
 
 function getRoleStatusText(status) {
@@ -1770,13 +2019,14 @@ function getRoleStatusText(status) {
 }
 
 function getDualReviewSummary(decision = {}) {
-  if (isDecisionFullyApproved(decision)) return '人工已通过';
-  return reviewStatusMeta[decision.status]?.text || '待人工审核';
+  if (isDecisionFullyApproved(decision)) return '运营与管理员已通过';
+  return getDualReviewMissingText(decision);
 }
 
 function getDualReviewMissingText(decision = {}) {
-  if (isDecisionFullyApproved(decision)) return '人工审核通过';
-  return reviewStatusMeta[decision.status]?.text || '待人工审核';
+  if (isDecisionFullyApproved(decision)) return '运营审核与管理员放行完成';
+  if (decision.opsStatus !== 'approved') return `运营审核：${reviewStatusMeta[decision.opsStatus]?.shortText || '待审'}`;
+  return `管理员最终放行：${reviewStatusMeta[decision.finalStatus]?.shortText || '待审'}`;
 }
 
 function createGenerationRunId() {
@@ -2307,6 +2557,7 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
         outputSize: run.outputPresetSize,
         imageFilePath: run.imageFilePath || '',
         imageFilename: run.imageFilename || '',
+        storageKey: run.storageKey || '',
         imageUrl: run.imageSrc || '',
         createdAt: run.createdAt
       } : null
@@ -2352,6 +2603,7 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
       outputSize: run.outputPresetSize,
       imageFilePath: run.imageFilePath || '',
       imageFilename: run.imageFilename || '',
+      storageKey: run.storageKey || '',
       imageUrl: run.imageSrc || '',
       aiReview: run.aiReview || null,
       createdAt: run.createdAt
@@ -2359,7 +2611,7 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
   };
 }
 
-async function saveProjectDeliveryPackage({ projectForm, ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns }) {
+async function saveProjectDeliveryPackage({ projectId, projectForm, ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns }) {
   const baseName = slugifyExportName(projectForm.projectName || projectForm.productName || projectForm.sku || 'listingflow');
   const exportedAt = new Date().toISOString().replace(/[:.]/g, '-');
   const prefix = `${baseName}-delivery-${exportedAt}`;
@@ -2393,12 +2645,12 @@ async function saveProjectDeliveryPackage({ projectForm, ledgerFacts, storyboard
   ];
   const saved = [];
   for (const file of files) {
-    saved.push(await saveTextExportToApi(file));
+    saved.push(await saveTextExportToApi({ ...file, projectId }));
   }
   return saved;
 }
 
-async function saveImagesZipToApi({ projectForm, storyboardBriefs, generationRuns, exportSelections = {} }) {
+async function saveImagesZipToApi({ projectId, projectForm, storyboardBriefs, generationRuns, exportSelections = {} }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
   const images = activeSlots
     .map((slot) => {
@@ -2411,14 +2663,16 @@ async function saveImagesZipToApi({ projectForm, storyboardBriefs, generationRun
         slotTitle: run.slotTitle,
         imageFilePath: run.imageFilePath || '',
         imageFilename: run.imageFilename || '',
+        storageKey: run.storageKey || '',
         imageUrl: run.imageSrc || ''
       };
     })
     .filter(Boolean);
   const response = await fetch(`${IMAGE_API_BASE_URL}/api/export-images-zip`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authenticatedJsonHeaders(),
     body: JSON.stringify({
+      projectId,
       projectName: projectForm.projectName || projectForm.productName || projectForm.sku || 'listingflow',
       images
     })
@@ -2442,11 +2696,11 @@ function downloadTextFile(filename, text, mimeType = 'text/csv;charset=utf-8') {
   URL.revokeObjectURL(url);
 }
 
-async function saveTextExportToApi({ filename, content, mimeType = 'text/csv;charset=utf-8' }) {
+async function saveTextExportToApi({ projectId, filename, content, mimeType = 'text/csv;charset=utf-8' }) {
   const response = await fetch(`${IMAGE_API_BASE_URL}/api/save-export`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ filename, content, mimeType })
+    headers: authenticatedJsonHeaders(),
+    body: JSON.stringify({ projectId, filename, content, mimeType })
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.ok) {
@@ -2504,24 +2758,26 @@ function mergePromptOverride(current = '', ruleText = '') {
   return [current, trimmedRule].filter(Boolean).join('\n');
 }
 
-function updateDecisionByRole(decision, slot, brief, role, status) {
+function updateDecisionByRole(decision, slot, brief, role, status, context = 'review') {
   const next = {
     ...decision,
     title: brief?.title || slot?.title || decision.title,
     updatedAt: new Date().toISOString()
   };
 
-  if (role === 'human') {
+  if (context === 'plan') {
+    next.planStatus = status;
+  } else if (role === 'human') {
     next.manualStatus = status;
-    next.designStatus = status === 'blocked' ? decision.designStatus : status;
     next.opsStatus = status;
+    next.finalStatus = status;
   } else if (role === 'design') {
-    next.designStatus = status;
+    next.planStatus = status;
   } else if (role === 'ops') {
     next.opsStatus = status;
+    if (status !== 'approved') next.finalStatus = 'review';
   } else {
-    next.designStatus = status === 'blocked' ? decision.designStatus : status;
-    next.opsStatus = status;
+    next.finalStatus = status;
   }
 
   next.status = deriveReviewStatus(next);
@@ -2554,6 +2810,56 @@ function getProjectProductLock(form = {}) {
     mainReference.audit?.height
   ].map(normalizeLockText).filter(Boolean);
   return lockParts.length ? lockParts.join('|') : 'unlocked';
+}
+
+function buildStructuredProductLock(form = {}, ledgerFacts = []) {
+  const confirmedClaims = ledgerFacts
+    .filter((fact) => fact?.state === 'allowed' || fact?.state === 'evidence')
+    .map((fact) => String(fact.claim || '').trim())
+    .filter(Boolean);
+  const pick = (pattern) => confirmedClaims.filter((claim) => pattern.test(claim)).slice(0, 8);
+  const references = getReferenceItems(form)
+    .filter((item) => item.preview)
+    .map((item) => ({
+      type: item.id,
+      name: item.name,
+      width: Number(item.audit?.width || 0),
+      height: Number(item.audit?.height || 0),
+      checkedAt: item.audit?.checkedAt || null
+    }));
+  return {
+    version: 1,
+    fingerprint: getProjectProductLock(form),
+    identity: {
+      sku: String(form.sku || '').trim(),
+      productName: String(form.productName || form.projectName || '').trim(),
+      category: String(form.category || '').trim()
+    },
+    attributes: {
+      materials: pick(/material|材质|bamboo|wood|steel|iron|cotton|fabric|plastic|竹|木|钢|铁|棉|布|塑料/i),
+      colors: pick(/colou?r|颜色|色|black|white|green|blue|red|pink|beige|gray|grey|黑|白|绿|蓝|红|粉|米|灰/i),
+      structures: pick(/fold|adjust|frame|structure|handle|lid|wheel|step|rail|结构|折叠|调节|框架|把手|锅盖|轮|台阶|护栏/i),
+      dimensionsAndCounts: pick(/\d|size|dimension|capacity|weight|尺寸|承重|容量|数量/i)
+    },
+    referenceEvidence: references,
+    immutableRules: [
+      'Preserve the exact product silhouette, proportions, material finish, color family, hardware placement, and part count shown in the references.',
+      'Do not add, remove, duplicate, reshape, or relocate product parts, accessories, labels, controls, fasteners, or packaging.',
+      'Only show functional states supported by uploaded references or confirmed project facts.'
+    ]
+  };
+}
+
+function formatProductLockForPrompt(lock = {}) {
+  const attributes = lock.attributes || {};
+  const lines = [
+    `Product identity: ${lock.identity?.productName || 'current referenced product'}${lock.identity?.sku ? `; SKU ${lock.identity.sku}` : ''}.`,
+    attributes.materials?.length ? `Locked material facts: ${attributes.materials.join('; ')}.` : '',
+    attributes.colors?.length ? `Locked color facts: ${attributes.colors.join('; ')}.` : '',
+    attributes.structures?.length ? `Locked structure facts: ${attributes.structures.join('; ')}.` : '',
+    ...(Array.isArray(lock.immutableRules) ? lock.immutableRules : [])
+  ];
+  return lines.filter(Boolean).join(' ');
 }
 
 function isSameProductLock(project, form = {}) {
@@ -2612,6 +2918,7 @@ function createProjectRecord(
     id,
     form,
     productLock: getProjectProductLock(form),
+    productIdentity: buildStructuredProductLock(form, ledgerFacts),
     ledgerFacts,
     storyboardBriefs,
     reviewDecisions,
@@ -2632,6 +2939,14 @@ function compactGenerationRunForStorage(run = {}) {
   };
 }
 
+function hasUsableReferenceAudit(audit) {
+  return Boolean(
+    audit
+    && Number(audit.width || 0) > 0
+    && Number(audit.height || 0) > 0
+  );
+}
+
 function compactProjectFormForStorage(form = {}, keepPreview = true) {
   const nextForm = { ...form };
   if (!keepPreview) {
@@ -2639,19 +2954,22 @@ function compactProjectFormForStorage(form = {}, keepPreview = true) {
     nextForm.sourceImageDisplayPreview = '';
   }
   if (nextForm.referenceImages && typeof nextForm.referenceImages === 'object') {
-    nextForm.referenceImages = Object.fromEntries(Object.entries(nextForm.referenceImages).map(([key, reference]) => ([
-      key,
-      {
-        ...reference,
-        preview: keepPreview && key === 'main' ? reference?.preview || '' : '',
-        displayPreview: reference?.displayPreview || '',
-        audit: reference?.audit ? {
-          kind: reference.audit.kind,
-          confidence: reference.audit.confidence,
-          summary: reference.audit.summary
-        } : undefined
-      }
-    ])));
+    nextForm.referenceImages = Object.fromEntries(Object.entries(nextForm.referenceImages).map(([key, reference]) => {
+      const audit = hasUsableReferenceAudit(reference?.audit)
+        ? reference.audit
+        : key === 'main' && hasUsableReferenceAudit(nextForm.sourceImageAudit)
+          ? nextForm.sourceImageAudit
+          : reference?.audit;
+      return [
+        key,
+        {
+          ...reference,
+          preview: keepPreview && key === 'main' ? reference?.preview || '' : '',
+          displayPreview: keepPreview ? reference?.displayPreview || '' : '',
+          audit: audit ? { ...audit } : undefined
+        }
+      ];
+    }));
   }
   return nextForm;
 }
@@ -2727,7 +3045,8 @@ function mapTeamProjectToWorkspaceProject(remoteProject = {}) {
     projectName: stored.form?.projectName || remoteProject.projectName || '',
     productName: stored.form?.productName || remoteProject.productName || '',
     sku: stored.form?.sku || remoteProject.sku || '',
-    planOutputPresetId: stored.form?.planOutputPresetId || (remoteProject.outputType === 'a-plus' ? 'a-plus' : 'main-image')
+    brandId: stored.form?.brandId || remoteProject.brandSnapshot?.brandId || 'none',
+    planOutputPresetId: stored.form?.planOutputPresetId || (remoteProject.outputType === 'a-plus' ? 'aplus' : 'main-image')
   };
   const storyboardBriefs = Array.isArray(stored.storyboardBriefs) ? stored.storyboardBriefs : [];
   return {
@@ -2747,12 +3066,52 @@ function mapTeamProjectToWorkspaceProject(remoteProject = {}) {
       assignments: remoteProject.assignments || [],
       createdBy: remoteProject.createdBy || null
     },
+    brandSnapshot: remoteProject.brandSnapshot || stored.brandSnapshot || null,
     updatedAt: remoteProject.updatedAt || stored.updatedAt || new Date().toISOString()
   };
 }
 
+async function refreshWorkspaceProjectAssetUrls(project = {}) {
+  const referenceStorageKeys = Object.values(project.form?.referenceImages || {})
+    .map((reference) => String(reference?.storageKey || '').trim())
+    .filter(Boolean);
+  if (project.form?.sourceImageStorageKey) referenceStorageKeys.push(String(project.form.sourceImageStorageKey));
+  const storageKeys = Array.from(new Set([
+    ...normalizeGenerationRuns(project.generationRuns).map((run) => String(run.storageKey || '').trim()),
+    ...referenceStorageKeys
+  ].filter(Boolean)));
+  if (!project.id || !storageKeys.length) return project;
+  try {
+    const assets = await signProjectAssets(project.id, storageKeys);
+    const urlByKey = new Map(assets.map((asset) => [asset.storageKey, asset.url]));
+    const nextReferences = Object.fromEntries(Object.entries(project.form?.referenceImages || {}).map(([key, reference]) => {
+      const url = urlByKey.get(reference?.storageKey);
+      return [key, url ? { ...reference, preview: url, displayPreview: url } : reference];
+    }));
+    const mainStorageKey = nextReferences.main?.storageKey || project.form?.sourceImageStorageKey;
+    const mainUrl = urlByKey.get(mainStorageKey);
+    return {
+      ...project,
+      form: {
+        ...project.form,
+        referenceImages: nextReferences,
+        sourceImagePreview: mainUrl || project.form?.sourceImagePreview || '',
+        sourceImageDisplayPreview: mainUrl || project.form?.sourceImageDisplayPreview || '',
+        sourceImageStorageKey: mainStorageKey || ''
+      },
+      generationRuns: normalizeGenerationRuns(project.generationRuns).map((run) => ({
+        ...run,
+        imageSrc: urlByKey.get(run.storageKey) || run.imageSrc
+      }))
+    };
+  } catch (error) {
+    appLogger.error('storage.assets.refresh_failed', error, { projectId: project.id });
+    return project;
+  }
+}
+
 function makeTeamProjectPayload(project = {}) {
-  const compact = compactProjectForStorage(project);
+  const compact = compactProjectForStorage(project, { keepPreview: false });
   const form = compact.form || {};
   return {
     projectName: getProjectTitle(form),
@@ -2766,6 +3125,47 @@ function makeTeamProjectPayload(project = {}) {
     },
     projectData: compact
   };
+}
+
+function isInlineImageSource(value = '') {
+  return /^data:image\//i.test(String(value || ''));
+}
+
+async function uploadInlineProjectReferences(project = {}) {
+  if (!project.id) return project;
+  const form = { ...(project.form || {}) };
+  const references = { ...(form.referenceImages || {}) };
+  if (!references.main && isInlineImageSource(form.sourceImagePreview)) {
+    references.main = {
+      name: form.sourceImageName || 'main-reference',
+      preview: form.sourceImagePreview,
+      displayPreview: form.sourceImageDisplayPreview || form.sourceImagePreview,
+      audit: form.sourceImageAudit || null
+    };
+  }
+  let changed = false;
+  for (const [referenceId, reference] of Object.entries(references)) {
+    if (!isInlineImageSource(reference?.preview)) continue;
+    const asset = await uploadTeamProjectAsset({
+      projectId: project.id,
+      referenceId,
+      assetId: `${Date.now()}-${referenceId}`,
+      imageDataUrl: reference.preview
+    });
+    references[referenceId] = {
+      ...reference,
+      storageKey: asset.storageKey,
+      preview: asset.url,
+      displayPreview: asset.url
+    };
+    if (referenceId === 'main') {
+      form.sourceImagePreview = asset.url;
+      form.sourceImageDisplayPreview = asset.url;
+      form.sourceImageStorageKey = asset.storageKey;
+    }
+    changed = true;
+  }
+  return changed ? { ...project, form: { ...form, referenceImages: references } } : project;
 }
 
 function storeProjects(projects) {
@@ -2835,10 +3235,37 @@ function getReferenceItems(form) {
       name: item?.name || '',
       preview: item?.preview || '',
       displayPreview: item?.displayPreview || item?.preview || '',
-      audit: item?.audit || null,
+      audit: hasUsableReferenceAudit(item?.audit)
+        ? item.audit
+        : type.id === 'main' && hasUsableReferenceAudit(form?.sourceImageAudit)
+          ? form.sourceImageAudit
+          : null,
       fallback: false
     };
   });
+}
+
+function getReferenceReadiness(form = {}) {
+  const main = getReferenceItems(form).find((item) => item.id === 'main');
+  const blockers = [];
+  const warnings = [];
+  if (!main?.preview) {
+    blockers.push('缺少主参考图');
+    return { ready: false, blockers, warnings, main: null };
+  }
+  const audit = main.audit;
+  if (!audit) {
+    warnings.push('主参考图尚未完成质量检测，建议重新上传后再生成');
+    return { ready: true, blockers, warnings, main };
+  }
+  const longestSide = Math.max(Number(audit.width || 0), Number(audit.height || 0));
+  if (longestSide < 600) blockers.push('主参考图分辨率低于 600px，无法可靠锁定产品结构');
+  else if (longestSide < 1000) warnings.push('主参考图分辨率偏低，细节一致性可能下降');
+  if (Number(audit.subjectCoverage || 0) < 0.02) blockers.push('未识别到足够清晰的产品主体');
+  else if (Number(audit.subjectCoverage || 0) < 0.08) warnings.push('产品主体占比过小，建议裁掉多余留白');
+  if (audit.touchesEdge) warnings.push('产品主体贴近画布边缘，可能存在裁切风险');
+  if (Number(audit.transparentRatio || 0) > 0.98) blockers.push('图片几乎完全透明，无法作为产品参考');
+  return { ready: blockers.length === 0, blockers, warnings, main };
 }
 
 function getGenerationReferenceItems(form, slotId, outputPresetId, visualType = '') {
@@ -2862,7 +3289,7 @@ function getGenerationReferenceItems(form, slotId, outputPresetId, visualType = 
     6: ['main', 'side', 'dimension'],
     7: ['main', 'dimension', 'state']
   };
-  const preferredIds = outputPresetId === 'main-image'
+  const preferredIds = outputPresetId === 'main-image' && Number(slotId) === 1
     ? ['main']
     : visualReferenceMap[visualType] || slotReferenceMap[slotId] || ['main', 'side'];
   return preferredIds
@@ -2882,37 +3309,63 @@ function blobToDataUrl(blob) {
 async function imageSourceToDataUrl(imageSrc) {
   if (!imageSrc) throw new Error('缺少产品参考图');
   if (imageSrc.startsWith('data:')) return imageSrc;
-  const response = await fetch(imageSrc);
+  const response = await fetchWithTimeout(
+    imageSrc,
+    {},
+    30000,
+    '图片读取超过 30 秒，请检查图片存储服务后重试。'
+  );
   if (!response.ok) throw new Error('无法读取产品参考图');
   return blobToDataUrl(await response.blob());
 }
 
-async function planStoryboardWithApi(projectForm, ledgerFacts, brands = defaultBrandLibrary) {
+async function fetchWithTimeout(url, options, timeoutMs, timeoutMessage) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(timeoutMessage);
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+async function planStoryboardWithApi(projectId, projectForm, ledgerFacts, brands = defaultBrandLibrary) {
   const sourceImageDataUrl = await imageSourceToDataUrl(getReferenceImage(projectForm));
   const brandProfile = getBrandProfile(getProjectBrandId(projectForm, brands), brands);
   const outputPreset = getProjectPlanOutputPreset(projectForm);
-  const response = await fetch(`${IMAGE_API_BASE_URL}/api/plan-storyboard`, {
+  const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/plan-storyboard`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authenticatedJsonHeaders(),
     body: JSON.stringify({
+      projectId,
       projectForm,
       ledgerFacts,
+      productLock: buildStructuredProductLock(projectForm, ledgerFacts),
       brandProfile,
       outputPresetId: outputPreset.id,
       outputPresetLabel: outputPreset.label,
       outputPresetSize: outputPreset.size,
+      targetSlotCount: getStoryboardTargetSlotCount(projectForm, ledgerFacts),
       strategyRules: listingImageStrategyRules,
       sourceImageDataUrl
     })
-  });
+  }, 60000, 'AI 方案请求超过 60 秒未返回。已停止等待并切换到本地兜底方案。');
   const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.ok || !Array.isArray(result.briefs) || result.briefs.length !== 7) {
+  if (
+    !response.ok
+    || !result.ok
+    || !Array.isArray(result.briefs)
+    || result.briefs.length !== getStoryboardTargetSlotCount(projectForm, ledgerFacts)
+  ) {
     throw new Error(result.error || 'AI 方案规划失败');
   }
   return result;
 }
 
-async function reviewGeneratedImageWithApi({ projectForm, brief, run, sourceImages }) {
+async function reviewGeneratedImageWithApi({ projectId, projectForm, productLock, brief, run, sourceImages }) {
   const generatedImageDataUrl = run.reviewImageDataUrl
     || await createAiReviewImageDataUrl(run.rawImageSrc || run.imageSrc);
   const normalizedSourceImages = sourceImages.length
@@ -2928,11 +3381,13 @@ async function reviewGeneratedImageWithApi({ projectForm, brief, run, sourceImag
       name: getReferenceImageName(projectForm),
       dataUrl: await createAiReviewImageDataUrl(getReferenceImage(projectForm))
     }];
-  const response = await fetch(`${IMAGE_API_BASE_URL}/api/review-image`, {
+  const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/review-image`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authenticatedJsonHeaders(),
     body: JSON.stringify({
+      projectId,
       projectForm,
+      productLock,
       brief,
       run,
       sourceImages: normalizedSourceImages,
@@ -2940,7 +3395,7 @@ async function reviewGeneratedImageWithApi({ projectForm, brief, run, sourceImag
       generatedImageDataUrl,
       prompt: run.prompt
     })
-  });
+  }, 45000, 'AI 预审超过 45 秒未返回，候选图已保留，可稍后重试预审或直接人工判断。');
   const result = await response.json();
   if (!response.ok || !result.ok) {
     throw new Error(result.error || 'AI 预审接口返回失败。');
@@ -2955,30 +3410,32 @@ async function reviewGeneratedImageWithApi({ projectForm, brief, run, sourceImag
   };
 }
 
-function resizeImageToPreset(imageSrc, preset) {
+async function resizeImageToPreset(imageSrc, preset) {
+  const safeImageSrc = await imageSourceToDataUrl(imageSrc);
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = preset.width;
-      canvas.height = preset.height;
-      const context = canvas.getContext('2d');
-      if (!context) {
-        reject(new Error('无法创建图片画布'));
-        return;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = preset.width;
+        canvas.height = preset.height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('无法创建图片画布');
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        const scale = Math.min(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
+        const drawWidth = image.naturalWidth * scale;
+        const drawHeight = image.naturalHeight * scale;
+        const drawX = (canvas.width - drawWidth) / 2;
+        const drawY = (canvas.height - drawHeight) / 2;
+        context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+        resolve(canvas.toDataURL('image/jpeg', 0.95));
+      } catch (error) {
+        reject(new Error(`候选图尺寸处理失败：${error?.message || '画布导出失败'}`));
       }
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      const scale = Math.min(canvas.width / image.naturalWidth, canvas.height / image.naturalHeight);
-      const drawWidth = image.naturalWidth * scale;
-      const drawHeight = image.naturalHeight * scale;
-      const drawX = (canvas.width - drawWidth) / 2;
-      const drawY = (canvas.height - drawHeight) / 2;
-      context.drawImage(image, drawX, drawY, drawWidth, drawHeight);
-      resolve(canvas.toDataURL('image/jpeg', 0.95));
     };
     image.onerror = () => reject(new Error('候选图尺寸处理失败'));
-    image.src = imageSrc;
+    image.src = safeImageSrc;
   });
 }
 
@@ -2986,21 +3443,22 @@ function createImageThumbnail(imageSrc, maxSide = 560) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = () => {
-      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
-      const width = Math.max(1, Math.round(image.naturalWidth * scale));
-      const height = Math.max(1, Math.round(image.naturalHeight * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d');
-      if (!context) {
-        reject(new Error('无法创建预览图'));
-        return;
+      try {
+        const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+        const width = Math.max(1, Math.round(image.naturalWidth * scale));
+        const height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('无法创建预览图');
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      } catch (error) {
+        reject(new Error(`候选图预览处理失败：${error?.message || '画布导出失败'}`));
       }
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, width, height);
-      context.drawImage(image, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.82));
     };
     image.onerror = () => reject(new Error('候选图预览处理失败'));
     image.src = imageSrc;
@@ -3012,94 +3470,105 @@ async function createAiReviewImageDataUrl(imageSrc, maxSide = 1200) {
   return createImageThumbnail(sourceDataUrl, maxSide);
 }
 
-function createReferenceDisplayPreview(imageSrc, maxSide = 520) {
+async function createReferenceDisplayPreview(imageSrc, maxSide = 520) {
+  let safeImageSrc = imageSrc;
+  try {
+    safeImageSrc = await imageSourceToDataUrl(imageSrc);
+  } catch {
+    return imageSrc;
+  }
   return new Promise((resolve) => {
     const image = new Image();
     image.onload = () => {
-      const width = image.naturalWidth;
-      const height = image.naturalHeight;
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext('2d', { willReadFrequently: true });
-      if (!context) {
-        resolve(imageSrc);
-        return;
-      }
-      context.drawImage(image, 0, 0);
-      const pixels = context.getImageData(0, 0, width, height).data;
-      let hasTransparency = false;
-      let minX = width;
-      let minY = height;
-      let maxX = -1;
-      let maxY = -1;
+      try {
+        const width = image.naturalWidth;
+        const height = image.naturalHeight;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) {
+          resolve(imageSrc);
+          return;
+        }
+        context.drawImage(image, 0, 0);
+        const pixels = context.getImageData(0, 0, width, height).data;
+        let hasTransparency = false;
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
 
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const alpha = pixels[(y * width + x) * 4 + 3];
-          if (alpha < 250) hasTransparency = true;
-          if (alpha > 8) {
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const alpha = pixels[(y * width + x) * 4 + 3];
+            if (alpha < 250) hasTransparency = true;
+            if (alpha > 8) {
+              minX = Math.min(minX, x);
+              minY = Math.min(minY, y);
+              maxX = Math.max(maxX, x);
+              maxY = Math.max(maxY, y);
+            }
           }
         }
-      }
 
-      if (!hasTransparency || maxX < minX || maxY < minY) {
-        resolve(imageSrc);
-        return;
-      }
+        if (!hasTransparency || maxX < minX || maxY < minY) {
+          resolve(imageSrc);
+          return;
+        }
 
-      const padding = Math.max(18, Math.round(Math.max(maxX - minX + 1, maxY - minY + 1) * 0.1));
-      const cropX = Math.max(0, minX - padding);
-      const cropY = Math.max(0, minY - padding);
-      const cropRight = Math.min(width - 1, maxX + padding);
-      const cropBottom = Math.min(height - 1, maxY + padding);
-      const cropWidth = cropRight - cropX + 1;
-      const cropHeight = cropBottom - cropY + 1;
-      const scale = Math.min(1, maxSide / Math.max(cropWidth, cropHeight));
-      const outputWidth = Math.max(1, Math.round(cropWidth * scale));
-      const outputHeight = Math.max(1, Math.round(cropHeight * scale));
-      const outputCanvas = document.createElement('canvas');
-      outputCanvas.width = outputWidth;
-      outputCanvas.height = outputHeight;
-      const outputContext = outputCanvas.getContext('2d');
-      if (!outputContext) {
+        const padding = Math.max(18, Math.round(Math.max(maxX - minX + 1, maxY - minY + 1) * 0.1));
+        const cropX = Math.max(0, minX - padding);
+        const cropY = Math.max(0, minY - padding);
+        const cropRight = Math.min(width - 1, maxX + padding);
+        const cropBottom = Math.min(height - 1, maxY + padding);
+        const cropWidth = cropRight - cropX + 1;
+        const cropHeight = cropBottom - cropY + 1;
+        const scale = Math.min(1, maxSide / Math.max(cropWidth, cropHeight));
+        const outputWidth = Math.max(1, Math.round(cropWidth * scale));
+        const outputHeight = Math.max(1, Math.round(cropHeight * scale));
+        const outputCanvas = document.createElement('canvas');
+        outputCanvas.width = outputWidth;
+        outputCanvas.height = outputHeight;
+        const outputContext = outputCanvas.getContext('2d');
+        if (!outputContext) {
+          resolve(imageSrc);
+          return;
+        }
+        outputContext.clearRect(0, 0, outputWidth, outputHeight);
+        outputContext.drawImage(
+          image,
+          cropX,
+          cropY,
+          cropWidth,
+          cropHeight,
+          0,
+          0,
+          outputWidth,
+          outputHeight
+        );
+        resolve(outputCanvas.toDataURL('image/png'));
+      } catch {
         resolve(imageSrc);
-        return;
       }
-      outputContext.clearRect(0, 0, outputWidth, outputHeight);
-      outputContext.drawImage(
-        image,
-        cropX,
-        cropY,
-        cropWidth,
-        cropHeight,
-        0,
-        0,
-        outputWidth,
-        outputHeight
-      );
-      resolve(outputCanvas.toDataURL('image/png'));
     };
     image.onerror = () => resolve(imageSrc);
-    image.src = imageSrc;
+    image.src = safeImageSrc;
   });
 }
 
-async function saveGeneratedImageToApi({ imageDataUrl, projectForm, slotId, runId }) {
-  const response = await fetch(`${IMAGE_API_BASE_URL}/api/save-generated-image`, {
+async function saveGeneratedImageToApi({ projectId, imageDataUrl, projectForm, slotId, runId }) {
+  const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/save-generated-image`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authenticatedJsonHeaders(),
     body: JSON.stringify({
+      projectId,
       imageDataUrl,
       projectName: projectForm?.projectName || projectForm?.productName || 'listingflow',
       slotId,
       runId
     })
-  });
+  }, 45000, '生成图保存超过 45 秒未返回，已保留本次会话预览。');
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.ok || !result.imageUrl) {
     throw new Error(result.error || '生成图保存到本地文件失败');
@@ -3188,6 +3657,7 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
     'Use as little explanatory text as possible while preserving clarity. The visual scene, detail, state, or layout should carry the proof.',
     'Use ecommerce-grade typography: short phrases, large readable type, clean spacing, balanced margins, and no tiny paragraphs.',
     'Use all uploaded product reference images as the locked source of truth. They are different views/details of the same product, not separate products.',
+    options.productLock ? `Structured product lock: ${formatProductLockForPrompt(options.productLock)}` : '',
     brandInstruction,
     options.promptOverride ? `Slot-specific prompt tuning rules from prior QA: ${options.promptOverride}` : '',
     'Preserve the product geometry, material, hardware, proportions, and only the functional states proven by the uploaded references or confirmed product facts.',
@@ -3330,6 +3800,7 @@ function analyzeImageDataUrl(dataUrl, file) {
       let minY = height;
       let maxX = -1;
       let maxY = -1;
+      let transparentCount = 0;
 
       const isWhite = (red, green, blue) => {
         const max = Math.max(red, green, blue);
@@ -3343,7 +3814,9 @@ function analyzeImageDataUrl(dataUrl, file) {
           const red = pixels[index];
           const green = pixels[index + 1];
           const blue = pixels[index + 2];
-          const whitePixel = isWhite(red, green, blue);
+          const alpha = pixels[index + 3];
+          if (alpha <= 12) transparentCount += 1;
+          const whitePixel = alpha <= 12 || isWhite(red, green, blue);
           const edgePixel = x < edgeSize || y < edgeSize || x >= width - edgeSize || y >= height - edgeSize;
           if (edgePixel) {
             edgeCount += 1;
@@ -3362,6 +3835,7 @@ function analyzeImageDataUrl(dataUrl, file) {
       const subjectCoverage = hasSubject
         ? ((maxX - minX + 1) * (maxY - minY + 1)) / (width * height)
         : 0;
+      const touchesEdge = hasSubject && (minX <= 1 || minY <= 1 || maxX >= width - 2 || maxY >= height - 2);
 
       resolve({
         fileName: file?.name || '',
@@ -3370,6 +3844,9 @@ function analyzeImageDataUrl(dataUrl, file) {
         height: image.naturalHeight,
         borderWhiteRatio: edgeCount ? edgeWhite / edgeCount : 0,
         subjectCoverage,
+        transparentRatio: transparentCount / (width * height),
+        touchesEdge,
+        subjectBounds: hasSubject ? { minX, minY, maxX, maxY, sampleWidth: width, sampleHeight: height } : null,
         checkedAt: new Date().toISOString()
       });
     };
@@ -3450,17 +3927,6 @@ function SlotGenerationStatusPill({ slotId, generationRuns }) {
   );
 }
 
-function AiReviewPill({ verdict }) {
-  const item = aiReviewVerdicts[verdict] || aiReviewVerdicts.warn;
-  const Icon = item.icon;
-  return (
-    <span className={`status-pill ${item.className}`}>
-      <Icon size={14} />
-      AI {item.label}
-    </span>
-  );
-}
-
 function AiReviewPanel({ review }) {
   if (!review) {
     return (
@@ -3481,10 +3947,6 @@ function AiReviewPanel({ review }) {
           <span>AI 预审</span>
           <strong>{normalized.summary}</strong>
           <p>{normalized.recommendedAction}</p>
-        </div>
-        <div className="ai-score">
-          <AiReviewPill verdict={normalized.verdict} />
-          <b>{normalized.score}</b>
         </div>
       </div>
       <div className="ai-check-grid">
@@ -3545,17 +4007,17 @@ function RoleSelector({ activeRole, setActiveRole }) {
 }
 
 function RoleChecklist({ decision }) {
-  const designDone = decision.designStatus === 'approved';
+  const finalDone = decision.finalStatus === 'approved';
   const opsDone = decision.opsStatus === 'approved';
   return (
     <div className="role-checklist">
-      <span className={designDone ? 'done' : decision.designStatus}>
-        <Check size={13} />
-        设计：{reviewStatusMeta[decision.designStatus]?.shortText || '待审'}
-      </span>
       <span className={opsDone ? 'done' : decision.opsStatus}>
         <Check size={13} />
         运营：{reviewStatusMeta[decision.opsStatus]?.shortText || '待审'}
+      </span>
+      <span className={finalDone ? 'done' : decision.finalStatus}>
+        <Check size={13} />
+        管理员：{reviewStatusMeta[decision.finalStatus]?.shortText || '待审'}
       </span>
     </div>
   );
@@ -3583,7 +4045,7 @@ function ReviewActions({
     <div className="review-actions">
       <div>
         <span>{planMode ? '方案确认' : role.title}</span>
-        {planMode && <ReviewStatusPill status={decision.status} context="plan" />}
+        {planMode && <ReviewStatusPill status={decision.planStatus || 'review'} context="plan" />}
       </div>
       <p>{planMode ? '这里只确认这张图的方向、卖点和画面证明方式；最终图片质量在生成后再判断。' : role.helper}</p>
       <div className="review-action-buttons">
@@ -3593,13 +4055,13 @@ function ReviewActions({
             disabled={isRegenerating}
             key={status}
             onClick={() => {
-              onUpdateReview(decision.slotId, roleId, status);
+              onUpdateReview(decision.slotId, roleId, status, context);
               if (planMode && status === 'rework' && onRegenerateSlot) {
                 onRegenerateSlot(decision.slotId, roleId);
               }
             }}
           >
-            {isRegenerating && status === 'rework' ? <RefreshCcw className="spin-icon" size={15} /> : <Icon size={15} />}
+            {isRegenerating && status === 'rework' ? <VistamzLoader size={16} label="正在重新生成方案" /> : <Icon size={15} />}
             {isRegenerating && status === 'rework' ? '重生成中...' : label}
           </button>
         ))}
@@ -3615,7 +4077,9 @@ function deriveRoleButtonClass(decision, activeRole, status) {
     ? decision.designStatus
     : activeRole === 'ops'
       ? decision.opsStatus
-      : decision.status;
+      : activeRole === 'admin'
+        ? decision.finalStatus
+        : decision.status;
   return roleStatus === status ? `review-action active ${status}` : `review-action ${status}`;
 }
 
@@ -3671,7 +4135,7 @@ function WorkflowGuide({ steps, activeSection, onNavigate }) {
         <small>{nextStep.helper}</small>
       </div>
       <button
-        className="primary-button"
+        className="vz-btn vz-btn--primary primary-button"
         disabled={isCurrentPageStep}
         onClick={() => onNavigate(nextStep.target, nextStep.anchor)}
       >
@@ -3713,6 +4177,184 @@ function ProjectList({ projects, activeProjectId, onSelectProject, onCreateProje
         )}
       </div>
     </div>
+  );
+}
+
+function getProjectProgress(project) {
+  const form = project?.form || {};
+  const hasReference = Boolean(form.sourceImagePreview || form.referenceImages?.main?.preview);
+  const claimCount = project?.ledgerFacts?.length || 0;
+  const briefCount = project?.storyboardBriefs?.length || 0;
+  const runs = project?.generationRuns || [];
+  const activeSlots = getActiveSlots(project?.storyboardBriefs || []);
+  const approved = activeSlots.filter((slot) => (
+    isDecisionFullyApproved(getReviewDecision(project?.reviewDecisions || [], slot.id, project?.storyboardBriefs || []))
+  )).length;
+  const steps = [hasReference, claimCount > 0, briefCount > 0, runs.length > 0, approved > 0];
+  return {
+    hasReference,
+    claimCount,
+    briefCount,
+    runs,
+    approved,
+    total: activeSlots.length || STORYBOARD_SLOT_COUNT,
+    complete: steps.filter(Boolean).length,
+    percent: Math.round((steps.filter(Boolean).length / steps.length) * 100)
+  };
+}
+
+function getProjectNextAction(project, userRole) {
+  const progress = getProjectProgress(project);
+  if (userRole === 'operator') {
+    if (!progress.runs.length) return { label: '等待候选图', detail: '设计完成生图后会进入你的审核队列', section: 'review' };
+    if (progress.approved >= progress.total) return { label: '等待管理员放行', detail: '运营审核已完成', section: 'review' };
+    return { label: '开始审核', detail: `${progress.approved}/${progress.total} 已放行`, section: 'review' };
+  }
+  if (!progress.hasReference) return { label: '补充项目资料', detail: '先上传产品参考图', section: 'project' };
+  if (!progress.claimCount) return { label: '整理卖点', detail: '生成并编辑可上图卖点', section: 'project' };
+  if (!progress.briefCount) return { label: '生成图片方案', detail: '先为每张图确认要证明的卖点', section: 'storyboard' };
+  if (!progress.runs.length) return { label: '生成候选图', detail: '按已确认方案开始出图', section: 'generation' };
+  return { label: '继续处理项目', detail: `${progress.approved}/${progress.total} 张已最终放行`, section: userRole === 'admin' ? 'review' : 'generation' };
+}
+
+function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProject, onTrashProject, onRestoreProject, isLoading }) {
+  const [query, setQuery] = useState('');
+  const [showTrash, setShowTrash] = useState(false);
+  const [trashedProjects, setTrashedProjects] = useState([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashMessage, setTrashMessage] = useState('');
+  const userRole = currentUser.role;
+  const filteredProjects = projects.filter((project) => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return true;
+    const form = project.form || {};
+    return [form.projectName, form.productName, form.sku].some((value) => String(value || '').toLowerCase().includes(keyword));
+  });
+  const canCreate = userRole === 'designer' || userRole === 'admin';
+  const roleLabel = userRole === 'designer' ? '设计工作台' : userRole === 'operator' ? '运营审核队列' : '管理员工作台';
+  const openTrash = async () => {
+    const next = !showTrash;
+    setShowTrash(next);
+    if (!next) return;
+    setTrashLoading(true);
+    setTrashMessage('');
+    try {
+      setTrashedProjects(await listTrashedTeamProjects());
+    } catch (error) {
+      setTrashMessage(error instanceof Error ? error.message : '回收站暂时无法加载。');
+    } finally {
+      setTrashLoading(false);
+    }
+  };
+  const restoreProject = async (project) => {
+    try {
+      await onRestoreProject(project);
+      setTrashedProjects((current) => current.filter((item) => item.id !== project.id));
+      setTrashMessage(`已恢复「${project.projectName}」。`);
+    } catch (error) {
+      setTrashMessage(error instanceof Error ? error.message : '项目恢复失败。');
+    }
+  };
+
+  return (
+    <section className="project-center-page">
+      <header className="project-center-header">
+        <div>
+          <p className="eyebrow">{roleLabel}</p>
+          <h2>{userRole === 'operator' ? '待我审核的项目' : '项目中心'}</h2>
+          <p>{userRole === 'operator' ? '这里只显示分配给你的项目，审核完成后自动进入管理员放行。' : '从一个项目开始，依次完成资料、卖点、图片方案和审核。'}</p>
+        </div>
+        <div className="project-center-header-actions">
+          {canCreate && <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={openTrash}><Archive size={17} />回收站</button>}
+          {canCreate && <button className="vz-btn vz-btn--primary primary-button" type="button" onClick={onCreateProject}><Plus size={17} />创建项目</button>}
+        </div>
+      </header>
+
+      {showTrash && (
+        <section className="project-trash-panel">
+          <div className="section-heading">
+            <div><p className="eyebrow">RECYCLE BIN</p><h3>回收站</h3></div>
+            <small>项目保留 30 天，可在此恢复。</small>
+          </div>
+          {trashMessage && <p className="project-trash-message">{trashMessage}</p>}
+          {trashLoading ? <p>正在加载...</p> : trashedProjects.length ? (
+            <div className="project-trash-list">
+              {trashedProjects.map((project) => (
+                <div className="project-trash-row" key={project.id}>
+                  <div><strong>{project.projectName}</strong><small>{project.sku || '无 SKU'} · {project.purgeAfter ? `保留至 ${formatProjectTime(project.purgeAfter)}` : '保留 30 天'}</small></div>
+                  <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => restoreProject(project)}><RotateCcw size={16} />恢复</button>
+                </div>
+              ))}
+            </div>
+          ) : <p className="empty-state">回收站为空。</p>}
+        </section>
+      )}
+
+      {!isLoading && projects.length > 0 && (
+        <section className="project-center-next">
+          <div className="project-center-next-icon"><Sparkles size={20} /></div>
+          <div>
+            <small>建议从这里继续</small>
+            <strong>{getProjectTitle(projects[0].form)} · {getProjectNextAction(projects[0], userRole).label}</strong>
+            <p>{getProjectNextAction(projects[0], userRole).detail}</p>
+          </div>
+          <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(projects[0].id, getProjectNextAction(projects[0], userRole).section)}>继续</button>
+        </section>
+      )}
+
+      <div className="project-center-toolbar">
+        <strong>{isLoading ? '正在加载项目...' : `${filteredProjects.length} 个项目`}</strong>
+        <label className="project-search">
+          <span className="sr-only">搜索项目</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索项目或 SKU" />
+        </label>
+      </div>
+
+      <div className="project-center-list">
+        {!isLoading && !filteredProjects.length && (
+          <div className="project-center-empty">
+            <FolderOpen size={25} />
+            <strong>{projects.length ? '没有匹配的项目' : userRole === 'operator' ? '还没有分配给你的项目' : '还没有项目'}</strong>
+            <p>{canCreate ? '创建第一个项目后，就可以开始上传产品资料。' : '管理员分配项目后，它会出现在这里。'}</p>
+          </div>
+        )}
+        {filteredProjects.map((project) => {
+          const progress = getProjectProgress(project);
+          const nextAction = getProjectNextAction(project, userRole);
+          const preview = project.form?.referenceImages?.main?.displayPreview || project.form?.sourceImageDisplayPreview || project.form?.referenceImages?.main?.preview || project.form?.sourceImagePreview;
+          return (
+            <article className="project-center-row" key={project.id}>
+              <div className="project-center-thumb">
+                {preview ? <img src={preview} alt="" /> : <FileImage size={22} />}
+              </div>
+              <div className="project-center-summary">
+                <small>{project.form?.sku || '无 SKU'}</small>
+                <h3>{getProjectTitle(project.form)}</h3>
+                <p>{project.form?.productName || '等待填写产品信息'}</p>
+              </div>
+              <div className="project-center-progress">
+                <span>{progress.complete}/5 已完成</span>
+                <div><i style={{ width: `${progress.percent}%` }} /></div>
+                <small>{progress.claimCount ? `${progress.claimCount} 个卖点` : '尚未生成卖点'}</small>
+              </div>
+              <div className="project-center-next-copy">
+                <small>下一步</small>
+                <strong>{nextAction.label}</strong>
+                <span>{nextAction.detail}</span>
+              </div>
+              <button className="project-open-button" type="button" onClick={() => onOpenProject(project.id, nextAction.section)}>
+                打开<ChevronRight size={16} />
+              </button>
+              {canCreate && project.cloud?.remote && (userRole === 'admin' || project.cloud?.createdBy?.id === currentUser.id) && (
+                <button className="project-trash-button" type="button" title="移入回收站" onClick={() => onTrashProject(project)}>
+                  <Trash2 size={17} />
+                </button>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -3766,7 +4408,7 @@ function TeamManagementPage({ projects, onAssignProject, focusRequest }) {
 
   return (
     <section className="page team-page">
-      <FocusFrame active={getFocusSignal(focusRequest, 'team')} className="panel team-overview">
+      <FocusFrame active={getFocusSignal(focusRequest, 'team')} className="vz-card panel team-overview">
         <div>
           <p className="eyebrow">TEAM ROUTING</p>
           <h3>项目负责人</h3>
@@ -3779,7 +4421,7 @@ function TeamManagementPage({ projects, onAssignProject, focusRequest }) {
         </div>
       </FocusFrame>
 
-      <section className="panel team-projects-panel">
+      <section className="vz-card panel team-projects-panel">
         <div className="section-heading">
           <div>
             <p className="eyebrow">ASSIGNMENTS</p>
@@ -3809,7 +4451,7 @@ function TeamManagementPage({ projects, onAssignProject, focusRequest }) {
                     {operators.map((user) => <option value={user.id} key={user.id}>{user.displayName}{user.email ? ` · ${user.email}` : ''}</option>)}
                   </select>
                 </label>
-                <button className="secondary-button" type="button" disabled={savingProjectId === project.id} onClick={() => saveAssignments(project)}>
+                <button className="vz-btn vz-btn--secondary secondary-button" type="button" disabled={savingProjectId === project.id} onClick={() => saveAssignments(project)}>
                   <Save size={16} />
                   {savingProjectId === project.id ? '保存中...' : '保存分配'}
                 </button>
@@ -3826,7 +4468,7 @@ function ReferencePanel({ projectForm }) {
   const referenceItems = getReferenceItems(projectForm).filter((item) => item.preview);
   const mainReference = referenceItems.find((item) => item.id === 'main') || referenceItems[0];
   return (
-    <section className="panel product-panel">
+    <section className="vz-card panel product-panel">
       <div className="panel-header">
         <div>
           <p className="eyebrow">Reference Set</p>
@@ -3915,7 +4557,7 @@ function ImageAuditPanel({ audit, nested = false }) {
   }
 
   return (
-    <section className="panel">
+    <section className="vz-card panel">
       {content}
     </section>
   );
@@ -3930,14 +4572,14 @@ function FactLedgerPanel({ compact = false, ledgerFacts = facts, onManage, showS
   };
 
   return (
-    <section className="panel">
+    <section className="vz-card panel">
       <div className="panel-header compact">
         <div>
           <p className="eyebrow">Claims</p>
           <h3>{compact ? '可上图卖点' : '卖点确认表'}</h3>
         </div>
         {onManage && (
-          <button className="text-button" type="button" aria-label="管理卖点确认表" onClick={onManage}>
+          <button className="vz-btn vz-btn--ghost text-button" type="button" aria-label="管理卖点确认表" onClick={onManage}>
             管理
             <ChevronRight size={16} />
           </button>
@@ -3992,13 +4634,13 @@ function TaskListPanel({ storyboardBriefs }) {
   const taskRows = buildTaskRows(storyboardBriefs);
 
   return (
-    <section className="panel">
+    <section className="vz-card panel">
       <div className="panel-header compact">
         <div>
           <p className="eyebrow">Generation Queue</p>
           <h3>生图与预审任务</h3>
         </div>
-        <button className="text-button">
+        <button className="vz-btn vz-btn--ghost text-button">
           全部
           <ChevronRight size={16} />
         </button>
@@ -4052,6 +4694,7 @@ function ProjectPage({
     review: ledgerFacts.filter((fact) => fact.state === 'review').length,
     blocked: ledgerFacts.filter((fact) => fact.state === 'blocked').length
   };
+  const referenceReadiness = getReferenceReadiness(projectForm);
   const updateField = (field, value) => {
     setProjectForm((current) => ({ ...current, [field]: value }));
   };
@@ -4144,359 +4787,100 @@ function ProjectPage({
   }, [focusRequest]);
 
   return (
-    <section className="page-grid">
-      <div className="left-column">
-        <section className="panel project-intake-panel">
+    <section className="new-project-page">
+      <header className="new-project-heading">
+        <div>
+          <p className="eyebrow">PROJECT SETUP</p>
+          <h2>准备项目资料</h2>
+          <p>只填写会影响图片生成的资料；低频检查会在后续需要时提示。</p>
+        </div>
+        <div className="new-project-mode" role="group" aria-label="项目创建方式">
+          {Object.entries(intakeModes).map(([id, mode]) => (
+            <button className={intakeMode === id ? 'active' : ''} key={id} onClick={() => setIntakeMode(id)} type="button">{mode.label}</button>
+          ))}
+        </div>
+      </header>
+
+      <div className="new-project-stepper" aria-label="项目创建进度">
+        <span className="active"><b>1</b>资料</span><i />
+        <span><b>2</b>卖点</span><i />
+        <span><b>3</b>图片方案</span>
+      </div>
+
+      <div className="new-project-layout">
+        <section className="vz-card panel project-intake-panel new-project-form">
           <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">New Project</p>
-              <h3>{intakeMode === 'sku' ? '绑定 SKU 创建项目' : '手动创建项目'}</h3>
-            </div>
+            <div><p className="eyebrow">REFERENCES</p><h3>产品参考图组</h3></div>
+            <small>主参考图必填，其余按产品实际情况补充</small>
           </div>
-          <div className="form-grid">
-            <div className={`form-field full ${highlightTarget === 'image-upload' ? 'focus-flash soft' : ''}`} ref={uploadRef}>
-              <span>产品参考图组</span>
-              <p className="field-help">只上传这个产品真实存在的角度、状态和细节。没有对应功能时可以留空，系统会只使用已上传参考图。</p>
-              <div className="reference-set-grid">
-                {getReferenceItems(projectForm).map((reference) => (
-                  <div className={reference.required ? 'reference-upload-card required' : 'reference-upload-card'} key={reference.id}>
-                    <div className={(reference.displayPreview || reference.preview) ? 'reference-upload-preview has-image' : 'reference-upload-preview'}>
-                      {(reference.displayPreview || reference.preview) ? (
-                        <img src={reference.displayPreview || reference.preview} alt={reference.label} />
-                      ) : (
-                        <ImagePlus size={28} />
-                      )}
-                    </div>
-                    <div>
-                      <strong>{reference.label}</strong>
-                      <p>{reference.helper}</p>
-                      {reference.name && <span>{reference.name}</span>}
-                      <div className="reference-upload-actions">
-                        <label className="secondary-button upload-button" htmlFor={`reference-upload-${reference.id}`}>
-                          <Upload size={17} />
-                          上传
-                        </label>
-                        <input
-                          accept="image/*"
-                          className="file-input"
-                          id={`reference-upload-${reference.id}`}
-                          onChange={(event) => handleReferenceImageUpload(reference.id, event)}
-                          type="file"
-                        />
-                        {(reference.displayPreview || reference.preview) && !reference.fallback && (
-                          <button className="text-button" onClick={() => removeReferenceImage(reference.id)}>
-                            移除
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              {imageAuditStatus && <span className="save-status">{imageAuditStatus}</span>}
-            </div>
-            {intakeMode === 'sku' && (
-              <label className="form-field">
-                <span>SKU</span>
-                <input
-                  value={projectForm.sku}
-                  onChange={(event) => updateField('sku', event.target.value)}
-                  placeholder="输入或粘贴 SKU"
-                />
-              </label>
-            )}
-            <label className="form-field">
-              <span>品牌</span>
-              <select
-                value={getProjectBrandId(projectForm, brandLibrary)}
-                onChange={(event) => updateField('brandId', event.target.value)}
-              >
-                {brandLibrary.map((brand) => (
-                  <option key={brand.id} value={brand.id}>{brand.name}</option>
-                ))}
-              </select>
-            </label>
-            <label className="form-field">
-              <span>{intakeMode === 'sku' ? '项目名' : '项目名'}</span>
-              <input
-                value={projectForm.projectName}
-                onChange={(event) => updateField('projectName', event.target.value)}
-                placeholder="例如 Cosyland learning tower"
-              />
-            </label>
-            <label className="form-field">
-              <span>产品名</span>
-              <input
-                value={projectForm.productName}
-                onChange={(event) => updateField('productName', event.target.value)}
-                placeholder="用于内部识别"
-              />
-            </label>
-            <label className="form-field">
-              <span>类目</span>
-              <input
-                value={projectForm.category}
-                onChange={(event) => updateField('category', event.target.value)}
-                placeholder="Amazon 类目或内部类目"
-              />
-            </label>
-            <label className="form-field">
-              <span>主参考图文件名</span>
-              <input
-                value={getReferenceImageName(projectForm)}
-                onChange={(event) => updateField('sourceImageName', event.target.value)}
-                placeholder="先记录主参考图文件名"
-              />
-            </label>
-            <label className={`form-field full ${highlightTarget === 'claims' ? 'focus-flash soft' : ''}`} ref={claimsRef}>
-              <span>卖点草稿，每行一个</span>
-              <textarea
-                value={projectForm.claimsText}
-                onChange={(event) => updateField('claimsText', event.target.value)}
-                rows={8}
-                placeholder="每行一个卖点，例如 Bamboo material"
-              />
-            </label>
-          </div>
-          <div className="form-actions">
-            <button className="primary-button" onClick={() => onGenerateLedgerDraft(projectForm, intakeMode)}>
-              <ClipboardCheck size={17} />
-              生成卖点草稿
-            </button>
-            <button className="secondary-button" onClick={onSaveProject}>
-              <Save size={17} />
-              保存当前项目
-            </button>
-            <button className="text-button strong" onClick={onContinueToStoryboard}>
-              <Layers size={17} />
-              进入 7 图方案
-            </button>
-            {saveStatus && <span className="save-status">{saveStatus}</span>}
-          </div>
-        </section>
-
-        <details className="panel disclosure-panel">
-          <summary>
-            <span>
-              <b>项目创建方式</b>
-              <small>{activeMode.title} · {activeMode.status}</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-          <div className="mode-switch compact">
-            {Object.entries(intakeModes).map(([id, mode]) => {
-              const Icon = mode.icon;
-              return (
-                <button
-                  className={intakeMode === id ? 'mode-option active' : 'mode-option'}
-                  key={id}
-                  onClick={() => setIntakeMode(id)}
-                >
-                  <Icon size={18} />
-                  <span>{mode.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <div className="mode-summary compact">
-            <div className="mode-icon">
-              <ModeIcon size={22} />
-            </div>
-            <div>
-              <strong>{activeMode.title}</strong>
-              <p>{activeMode.detail}</p>
-            </div>
-          </div>
-          <div className="field-list compact">
-            {activeMode.fields.map(([label, value]) => (
-              <div className="field-row" key={label}>
-                <span>{label}</span>
-                <strong>{value}</strong>
-              </div>
-            ))}
-          </div>
-        </details>
-
-        <details className="panel disclosure-panel">
-          <summary>
-            <span>
-              <b>参考图与标准流程</b>
-              <small>查看产品参考图组、内部标准步骤</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-          <ReferencePanel projectForm={projectForm} />
-          <div className="workflow-list compact">
-            {workflowSteps.map(([number, title, detail]) => (
-              <div className="workflow-step" key={title}>
-                <span>{number}</span>
+          <div className={`reference-set-grid ${highlightTarget === 'image-upload' ? 'focus-flash soft' : ''}`} ref={uploadRef}>
+            {getReferenceItems(projectForm).map((reference) => (
+              <div className={reference.required ? 'reference-upload-card required' : 'reference-upload-card'} key={reference.id}>
+                <div className={(reference.displayPreview || reference.preview) ? 'reference-upload-preview has-image' : 'reference-upload-preview'}>
+                  {(reference.displayPreview || reference.preview) ? <img src={reference.displayPreview || reference.preview} alt={reference.label} /> : <ImagePlus size={28} />}
+                </div>
                 <div>
-                  <strong>{title}</strong>
-                  <p>{detail}</p>
+                  <strong>{reference.label}</strong>
+                  <p>{reference.helper}</p>
+                  {reference.name && <span>{reference.name}</span>}
+                  <div className="reference-upload-actions">
+                    <label className="vz-btn vz-btn--secondary secondary-button upload-button" htmlFor={`reference-upload-${reference.id}`}><Upload size={16} />上传</label>
+                    <input accept="image/*" className="file-input" id={`reference-upload-${reference.id}`} onChange={(event) => handleReferenceImageUpload(reference.id, event)} type="file" />
+                    {(reference.displayPreview || reference.preview) && !reference.fallback && <button className="vz-btn vz-btn--ghost text-button" onClick={() => removeReferenceImage(reference.id)} type="button">移除</button>}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
-        </details>
+          {imageAuditStatus && <span className="save-status">{imageAuditStatus}</span>}
+
+          <div className="new-project-fields">
+            {intakeMode === 'sku' && <label className="form-field"><span>SKU</span><input value={projectForm.sku} onChange={(event) => updateField('sku', event.target.value)} placeholder="输入或粘贴 SKU" /></label>}
+            <label className="form-field"><span>品牌</span><select value={getProjectBrandId(projectForm, brandLibrary)} onChange={(event) => updateField('brandId', event.target.value)}>{brandLibrary.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>
+            <label className="form-field"><span>项目名</span><input value={projectForm.projectName} onChange={(event) => updateField('projectName', event.target.value)} placeholder="例如 Cosyland learning tower" /></label>
+            <label className="form-field"><span>产品名</span><input value={projectForm.productName} onChange={(event) => updateField('productName', event.target.value)} placeholder="用于内部识别" /></label>
+            <label className="form-field full"><span>类目</span><input value={projectForm.category} onChange={(event) => updateField('category', event.target.value)} placeholder="Amazon 类目或内部类目" /></label>
+            <label className={`form-field full ${highlightTarget === 'claims' ? 'focus-flash soft' : ''}`} ref={claimsRef}>
+              <span>卖点草稿，每行一个</span>
+              <textarea value={projectForm.claimsText} onChange={(event) => updateField('claimsText', event.target.value)} rows={7} placeholder="每行一个卖点，例如 Bamboo material" />
+            </label>
+          </div>
+
+          <div className="new-project-actions">
+            <button className="vz-btn vz-btn--secondary secondary-button" onClick={onSaveProject} type="button"><Save size={16} />保存草稿</button>
+            <button className="vz-btn vz-btn--primary primary-button" onClick={() => onGenerateLedgerDraft(projectForm, intakeMode)} type="button"><ClipboardCheck size={16} />生成卖点草稿</button>
+          </div>
+        </section>
+
+        <aside className="new-project-side">
+          <section className={productLockChanged ? 'vz-card panel product-lock-panel changed' : 'vz-card panel product-lock-panel'}>
+            <div className="panel-header compact"><div><p className="eyebrow">CURRENT PROJECT</p><h3>项目概览</h3></div><span className="lock-label"><LockKeyhole size={14} />{productLockChanged ? '资料有更新' : '资料已同步'}</span></div>
+            <div className="product-lock-summary"><div><span>产品</span><strong>{projectForm.productName || projectForm.projectName || '未命名产品'}</strong></div><div><span>SKU</span><strong>{projectForm.sku || '未填写'}</strong></div><div><span>主参考图</span><strong>{getReferenceImageName(projectForm) || '未上传'}</strong></div></div>
+            <div className={`reference-readiness ${referenceReadiness.ready ? 'is-ready' : 'is-blocked'}`}>
+              <strong>{referenceReadiness.ready ? '参考图可进入下一步' : '参考图暂不能用于生图'}</strong>
+              {[...referenceReadiness.blockers, ...referenceReadiness.warnings].slice(0, 3).map((message) => <span key={message}>{message}</span>)}
+            </div>
+          </section>
+          <section className={`vz-card panel new-project-ledger-summary ${highlightTarget === 'ledger-draft' ? 'focus-flash' : ''}`} ref={ledgerDraftRef}>
+            <p className="eyebrow">CLAIMS</p><h3>卖点准备情况</h3>
+            <strong>{ledgerFacts.length ? `${ledgerFacts.length} 条卖点已生成` : '还没有生成卖点'}</strong>
+            <p>{ledgerFacts.length ? `${draftCounts.allowed} 条可用于图片方案，其余会在确认表中处理。` : '填写上方卖点后，系统会先生成可编辑的卖点确认表。'}</p>
+            {ledgerFacts.length > 0 && <button className="vz-btn vz-btn--ghost text-button strong" onClick={onManageLedger} type="button">查看卖点确认表 <ChevronRight size={15} /></button>}
+          </section>
+          {productLockChanged && <div className="planning-status warning"><MessageSquareWarning size={17} /><div><strong>产品资料已变化</strong><p>重新生成卖点或方案会替换旧方案，避免混入其他产品。</p></div></div>}
+          <button className="new-project-plan-link" onClick={onContinueToStoryboard} type="button"><Layers size={16} />已有卖点？进入图片方案</button>
+        </aside>
       </div>
-
-      <div className="right-column">
-        <section className={productLockChanged ? 'panel product-lock-panel changed' : 'panel product-lock-panel'}>
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Current Product</p>
-              <h3>当前产品</h3>
-            </div>
-            <span className="lock-label">
-              <LockKeyhole size={14} />
-              {productLockChanged ? '资料已变化' : '已锁定'}
-            </span>
-          </div>
-          <div className="product-lock-summary">
-            <div>
-              <span>产品</span>
-              <strong>{projectForm.productName || projectForm.projectName || '未命名产品'}</strong>
-            </div>
-            <div>
-              <span>SKU</span>
-              <strong>{projectForm.sku || '未填写'}</strong>
-            </div>
-            <div>
-              <span>主图</span>
-              <strong>{getReferenceImageName(projectForm) || '未上传'}</strong>
-            </div>
-          </div>
-          <details className="mini-details">
-            <summary>高级识别信息</summary>
-            <small>{productLockValue}</small>
-          </details>
-          {productLockChanged && (
-            <div className="planning-status warning">
-              <MessageSquareWarning size={18} />
-              <div>
-                <strong>当前资料与已保存产品锁不同</strong>
-                <p>重新生成卖点或图片方案时会清空旧方案和旧生图记录，避免混入其他产品。</p>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <details className="panel disclosure-panel">
-          <summary>
-            <span>
-              <b>图片基础检测</b>
-              <small>白底、尺寸、透明度等低频检查</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-          <ImageAuditPanel audit={projectForm.sourceImageAudit} nested />
-        </details>
-
-        <details className={`panel disclosure-panel ${highlightTarget === 'ledger-draft' ? 'focus-flash' : ''}`} ref={ledgerDraftRef}>
-          <summary>
-            <span>
-              <b>当前卖点草稿统计</b>
-              <small>{ledgerFacts.length} 条卖点 · {draftCounts.allowed} 条可进入设计</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-          <div className="draft-summary">
-            <Metric label="可上图待确认" value={draftCounts.allowed} tone="green" />
-            <Metric label="需证据" value={draftCounts.evidence} tone="orange" />
-            <Metric label="待审核" value={draftCounts.review} />
-            <Metric label="禁用" value={draftCounts.blocked} tone="red" />
-          </div>
-        </details>
-
-        <details className="panel disclosure-panel">
-          <summary>
-            <span>
-              <b>ERP / 证据 / 产品资料详情</b>
-              <small>字段映射、内部资料和导出前证据项</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-        <section className="nested-panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">ERP Mapping</p>
-              <h3>SKU 卖点字段映射</h3>
-            </div>
-            <button className="text-button">
-              字段映射
-              <ChevronRight size={16} />
-            </button>
-          </div>
-          <div className="mapping-list">
-            {skuMappedFacts.map(([source, target, state]) => (
-              <div className="mapping-row" key={source}>
-                <span>{source}</span>
-                <ChevronRight size={15} />
-                <strong>{target}</strong>
-                <b>{state}</b>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="nested-panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Product Brief</p>
-              <h3>{intakeMode === 'sku' ? 'SKU 同步后的产品信息' : '手动录入产品信息'}</h3>
-            </div>
-            <span className="lock-label">
-              <PackageCheck size={14} />
-              {intakeMode === 'sku' ? 'erp draft' : 'manual draft'}
-            </span>
-          </div>
-          <div className="info-grid">
-            {projectFacts.map(([label, value]) => (
-              <div className="info-card" key={label}>
-                <span>{label}</span>
-                <strong>{value}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="nested-panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Evidence</p>
-              <h3>导出前需补齐</h3>
-            </div>
-          </div>
-          <div className="audit-list">
-            <div className="audit-row">
-              <div className="audit-icon warn">
-                <Clock3 size={18} />
-              </div>
-              <div>
-                <strong>CPSC Certified 证书文件</strong>
-                <p>目前文案可进入方案，但最终导出前应上传证书或检测报告编号。</p>
-              </div>
-            </div>
-            <div className="audit-row">
-              <div className="audit-icon warn">
-                <Clock3 size={18} />
-              </div>
-              <div>
-                <strong>150 lb 承重证据</strong>
-                <p>建议绑定说明书、测试报告或供应商确认记录，方便后续复盘。</p>
-              </div>
-            </div>
-          </div>
-        </section>
-        </details>
-      </div>
+      {saveStatus && <p className="new-project-save-status">{saveStatus}</p>}
     </section>
   );
 }
 
-function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact }) {
+function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact }) {
   const [editingIndex, setEditingIndex] = useState(null);
   const [draftClaim, setDraftClaim] = useState('');
+  const [isAdding, setIsAdding] = useState(false);
+  const [newClaim, setNewClaim] = useState('');
 
   const startEdit = (index, claim) => {
     setEditingIndex(index);
@@ -4515,15 +4899,36 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact }) {
     cancelEdit();
   };
 
+  const saveNewClaim = () => {
+    const claim = newClaim.trim();
+    if (!claim) return;
+    onAddFact?.(claim);
+    setNewClaim('');
+    setIsAdding(false);
+  };
+
   return (
-    <section className="panel ledger-editor-panel">
+    <section className="vz-card panel ledger-editor-panel">
       <div className="panel-header compact">
         <div>
           <p className="eyebrow">Claims</p>
-          <h3>卖点编辑表</h3>
+          <h3>可用于图片的内容</h3>
         </div>
+        {onAddFact && <button className="vz-btn vz-btn--secondary secondary-button ledger-add-button" type="button" onClick={() => setIsAdding(true)}><Plus size={15} />添加卖点</button>}
       </div>
       <div className="ledger-edit-list">
+        {isAdding && (
+          <div className="ledger-edit-row adding">
+            <label className="ledger-edit-field">
+              <span>新卖点</span>
+              <textarea autoFocus value={newClaim} onChange={(event) => setNewClaim(event.target.value)} rows={3} placeholder="输入一个将用于图片的卖点" />
+            </label>
+            <div className="ledger-edit-actions">
+              <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => { setIsAdding(false); setNewClaim(''); }}>取消</button>
+              <button className="vz-btn vz-btn--primary primary-button" type="button" disabled={!newClaim.trim()} onClick={saveNewClaim}>添加</button>
+            </div>
+          </div>
+        )}
         {ledgerFacts.length ? ledgerFacts.map((fact, index) => {
           const isEditing = editingIndex === index;
           return (
@@ -4535,8 +4940,8 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact }) {
                     <textarea value={draftClaim} onChange={(event) => setDraftClaim(event.target.value)} rows={3} />
                   </label>
                   <div className="ledger-edit-actions">
-                    <button className="secondary-button" type="button" onClick={cancelEdit}>取消</button>
-                    <button className="primary-button" type="button" disabled={!draftClaim.trim()} onClick={() => saveEdit(index)}>保存</button>
+                    <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={cancelEdit}>取消</button>
+                    <button className="vz-btn vz-btn--primary primary-button" type="button" disabled={!draftClaim.trim()} onClick={() => saveEdit(index)}>保存</button>
                   </div>
                 </>
               ) : (
@@ -4545,7 +4950,7 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact }) {
                     <strong>{fact.claim}</strong>
                     <span>{fact.source || 'manual'} · {fact.confidence || 'medium'}</span>
                   </div>
-                  <button className="secondary-button" type="button" onClick={() => startEdit(index, fact.claim)}>
+                  <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => startEdit(index, fact.claim)}>
                     <PencilLine size={16} />
                     编辑
                   </button>
@@ -4565,60 +4970,59 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact }) {
   );
 }
 
-function LedgerPage({ ledgerFacts, onUpdateFact, focusRequest }) {
+function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAddFact, onGoStoryboard, focusRequest }) {
+  const referenceItems = getReferenceItems(projectForm).filter((item) => item.preview);
+  const primaryReference = referenceItems.find((item) => item.id === 'main') || referenceItems[0];
+  const brand = getBrandProfile(getProjectBrandId(projectForm, brandLibrary), brandLibrary);
+  const visibleFacts = ledgerFacts.slice(0, 4);
+
   return (
-    <section className="page-grid ledger-page">
-      <FocusFrame active={getFocusSignal(focusRequest, 'ledger')} className="left-column">
-        <EditableFactLedgerPanel ledgerFacts={ledgerFacts} onUpdateFact={onUpdateFact} />
-      </FocusFrame>
-      <div className="right-column">
-        <section className="panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Rules</p>
-              <h3>上图文案规则</h3>
-            </div>
+    <section className="ledger-confirm-page">
+      <header className="ledger-confirm-heading">
+        <div>
+          <p className="eyebrow">CONTENT CONFIRMATION</p>
+          <h2>确认可用于图片的内容</h2>
+          <p>这里的卖点会成为图片方案和生图提示词的唯一内容来源。</p>
+        </div>
+      </header>
+      <div className="ledger-confirm-layout">
+        <aside className="ledger-project-summary">
+          <div className="ledger-summary-heading">
+            <p className="eyebrow">PROJECT FACTS</p>
+            <h3>产品资料</h3>
+            <p>这些信息会作为整个项目的事实依据。</p>
           </div>
-          <div className="rule-board">
-            <div>
-              <Check size={18} />
-              <strong>允许</strong>
-              <p>材质、折叠、承重、CPSC Certified、适用年龄、已确认尺寸和包装配件。</p>
-            </div>
-            <div>
-              <X size={18} />
-              <strong>禁止</strong>
-              <p>防跌、防倾倒、可调节高度、竞品比较第一、安全承诺和未验证认证。</p>
-            </div>
-            <div>
-              <MessageSquareWarning size={18} />
-              <strong>需人工复核</strong>
-              <p>生活场景、儿童姿势、产品比例、厨房台面关系和任何接近安全承诺的表达。</p>
-            </div>
+          <div className="ledger-reference-card">
+            {primaryReference?.preview ? <img src={primaryReference.preview} alt="产品参考图" /> : <div><FileImage size={22} /></div>}
+            <span><strong>{referenceItems.length} 张参考图</strong><small>{primaryReference?.name || '等待上传主参考图'}</small></span>
           </div>
-        </section>
-        <section className="panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Audit Trail</p>
-              <h3>后续要做成可追溯</h3>
-            </div>
-          </div>
-          <div className="timeline-list">
-            <div><span>运营</span><strong>确认基础卖点</strong><p>创建或修改 Ledger 条目。</p></div>
-            <div><span>审核</span><strong>标记 allowed / blocked</strong><p>阻止提示词绕过台账。</p></div>
-            <div><span>设计</span><strong>绑定到图槽</strong><p>每张图只读取对应卖点。</p></div>
-          </div>
-        </section>
+          <dl className="ledger-fact-summary">
+            <div><dt>品牌</dt><dd>{brand.name}</dd></div>
+            <div><dt>类目</dt><dd>{projectForm.category || '未填写'}</dd></div>
+            <div><dt>SKU</dt><dd>{projectForm.sku || '无 SKU'}</dd></div>
+            <div><dt>产品</dt><dd>{projectForm.productName || projectForm.projectName || '未命名产品'}</dd></div>
+          </dl>
+          {visibleFacts.length > 0 && <div className="ledger-source-note"><strong>{ledgerFacts.length} 条卖点已整理</strong><p>可随时编辑，图片方案会使用最新内容。</p></div>}
+        </aside>
+        <FocusFrame active={getFocusSignal(focusRequest, 'ledger')} className="ledger-main-column">
+          <EditableFactLedgerPanel ledgerFacts={ledgerFacts} onUpdateFact={onUpdateFact} onAddFact={onAddFact} />
+          <footer className="ledger-next-bar">
+            <span><strong>{ledgerFacts.length ? `${ledgerFacts.length} 条内容已就绪` : '先添加至少一个卖点'}</strong><small>下一步会依据这些内容规划每张图要证明什么。</small></span>
+            <button className="vz-btn vz-btn--primary primary-button" type="button" disabled={!ledgerFacts.length} onClick={onGoStoryboard}><Layers size={16} />确认内容并规划图片</button>
+          </footer>
+        </FocusFrame>
       </div>
     </section>
   );
 }
 
-function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
+function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteBrand, userRole, focusRequest }) {
   const [selectedBrandId, setSelectedBrandId] = useState(brandLibrary.find((brand) => brand.id !== 'none')?.id || 'none');
+  const [view, setView] = useState('library');
   const [deleteChallenge, setDeleteChallenge] = useState('');
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [saveState, setSaveState] = useState('saved');
+  const [saveError, setSaveError] = useState('');
   const selectedBrand = getBrandProfile(selectedBrandId, brandLibrary);
   const editable = selectedBrand.id !== 'none';
   const brandColorTotal = getBrandColorRatioTotal(selectedBrand.colors);
@@ -4632,10 +5036,14 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
   useEffect(() => {
     setDeleteChallenge('');
     setDeleteConfirmText('');
-  }, [selectedBrandId]);
+    setSaveError('');
+    setSaveState(selectedBrand.id === 'none' || selectedBrand.version ? 'saved' : 'dirty');
+  }, [selectedBrand.id, selectedBrand.version]);
 
   const updateBrand = (patch) => {
     if (!editable) return;
+    setSaveState('dirty');
+    setSaveError('');
     onUpdateBrands(brandLibrary.map((brand) => (
       brand.id === selectedBrand.id ? normalizeBrandProfile({ ...brand, ...patch }) : brand
     )));
@@ -4659,6 +5067,9 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
     });
     onUpdateBrands([...brandLibrary, nextBrand]);
     setSelectedBrandId(nextBrand.id);
+    setView('editor');
+    setSaveState('dirty');
+    setSaveError('');
   };
   const resetBrands = () => {
     onUpdateBrands(normalizeBrandLibrary(defaultBrandLibrary));
@@ -4699,26 +5110,46 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
     setDeleteChallenge('');
     setDeleteConfirmText('');
   };
-  const deleteSelectedBrand = () => {
+  const saveSelectedBrand = async () => {
+    if (!editable || !onSaveBrand || saveState === 'saving') return;
+    setSaveState('saving');
+    setSaveError('');
+    try {
+      const savedBrand = await onSaveBrand(selectedBrand);
+      if (savedBrand?.id) setSelectedBrandId(savedBrand.id);
+      setSaveState('saved');
+    } catch (error) {
+      setSaveState('dirty');
+      setSaveError(error instanceof Error ? error.message : '品牌规则保存失败。');
+    }
+  };
+  const deleteSelectedBrand = async () => {
     if (!editable || !deleteChallenge || deleteConfirmText !== deleteChallenge) return;
-    const nextBrands = brandLibrary.filter((brand) => brand.id !== selectedBrand.id);
-    const nextSelected = nextBrands.find((brand) => brand.id !== 'none')?.id || 'none';
-    onUpdateBrands(nextBrands);
-    setSelectedBrandId(nextSelected);
-    setDeleteChallenge('');
-    setDeleteConfirmText('');
+    try {
+      await onDeleteBrand?.(selectedBrand);
+      const nextBrands = brandLibrary.filter((brand) => brand.id !== selectedBrand.id);
+      const nextSelected = nextBrands.find((brand) => brand.id !== 'none')?.id || 'none';
+      onUpdateBrands(nextBrands);
+      setSelectedBrandId(nextSelected);
+      setDeleteChallenge('');
+      setDeleteConfirmText('');
+      setSaveState('saved');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '品牌删除失败。');
+    }
   };
 
   return (
-    <section className="page-grid">
-      <FocusFrame active={getFocusSignal(focusRequest, 'brands')} className="left-column">
-        <section className="panel brand-library-panel">
+    <section className={view === 'editor' ? 'brand-settings-page' : 'page-grid brand-library-page'}>
+      {view === 'library' && <FocusFrame active={getFocusSignal(focusRequest, 'brands')} className="left-column">
+        <section className="vz-card panel brand-library-panel">
           <div className="panel-header compact">
             <div>
-              <p className="eyebrow">Brand Library</p>
+              <p className="eyebrow">BRAND ASSETS</p>
               <h3>品牌库</h3>
+              <small>品牌规则作为项目资源存在，不占用生产步骤。</small>
             </div>
-            <button className="secondary-button" onClick={addBrand}>
+            <button className="vz-btn vz-btn--primary primary-button" onClick={addBrand}>
               <Plus size={16} />
               新增品牌
             </button>
@@ -4728,7 +5159,10 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
               <button
                 className={selectedBrand.id === brand.id ? 'brand-card active' : 'brand-card'}
                 key={brand.id}
-                onClick={() => setSelectedBrandId(brand.id)}
+                onClick={() => {
+                  setSelectedBrandId(brand.id);
+                  setView('editor');
+                }}
               >
                 <span className="brand-logo-chip">
                   {brand.logoPreview ? <img src={brand.logoPreview} alt="" /> : <Palette size={18} />}
@@ -4743,30 +5177,41 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
                       ))}
                     </em>
                   )}
+                  <em className="brand-card-rules">
+                    <span><i style={{ background: brand.titleColor }} />标题色 {brand.titleColor}</span>
+                    <span>{getBrandArrowStyle(brand.arrowStyle).label}</span>
+                    <span>{brand.id === 'none' ? '中性基线' : 'Logo 仅 A+'}</span>
+                  </em>
                 </span>
               </button>
             ))}
           </div>
         </section>
-      </FocusFrame>
+      </FocusFrame>}
 
-      <div className="right-column">
-        <section className="panel brand-editor-panel">
+      {view === 'editor' && <div className="brand-settings-content">
+        <section className="vz-card panel brand-editor-panel">
           <div className="panel-header compact">
             <div>
+              <button className="workspace-back-button" type="button" onClick={() => setView('library')}><ChevronRight size={15} />返回品牌库</button>
               <p className="eyebrow">Brand Rules</p>
               <h3>{selectedBrand.name}</h3>
             </div>
             <div className="brand-header-actions">
-              <button className="text-button" onClick={resetBrands}>恢复默认品牌库</button>
-              {editable && (
-                <button className="text-button danger" onClick={startDeleteBrand}>
+              <button className="vz-btn vz-btn--ghost text-button" onClick={resetBrands}>恢复默认品牌库</button>
+              {editable && <button className="vz-btn vz-btn--primary primary-button" disabled={saveState === 'saving'} onClick={saveSelectedBrand} type="button">
+                <Save size={15} />
+                {saveState === 'saving' ? '保存中…' : saveState === 'dirty' ? '保存品牌规则' : `已保存${selectedBrand.version ? ` · v${selectedBrand.version}` : ''}`}
+              </button>}
+              {editable && userRole === 'admin' && (
+                <button className="vz-btn vz-btn--ghost text-button danger" onClick={startDeleteBrand}>
                   <Trash2 size={15} />
                   删除品牌
                 </button>
               )}
             </div>
           </div>
+          {saveError && <div className="brand-save-error" role="alert">{saveError}</div>}
           {!editable && (
             <div className="planning-status">
               <LockKeyhole size={18} />
@@ -4850,14 +5295,14 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
                       onChange={(event) => updateBrandColor(index, { ratio: event.target.value })}
                     />
                     <span>%</span>
-                    <button className="icon-button" disabled={!editable || selectedBrand.colors.length <= 1} onClick={() => removeBrandColor(index)} type="button">
+                    <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" disabled={!editable || selectedBrand.colors.length <= 1} onClick={() => removeBrandColor(index)} type="button">
                       <X size={15} />
                     </button>
                   </div>
                 ))}
               </div>
               <div className="brand-color-actions">
-                <button className="secondary-button" disabled={!editable || selectedBrand.colors.length >= 8} onClick={addBrandColor} type="button">
+                <button className="vz-btn vz-btn--secondary secondary-button" disabled={!editable || selectedBrand.colors.length >= 8} onClick={addBrandColor} type="button">
                   <Plus size={15} />
                   添加色号
                 </button>
@@ -4903,11 +5348,11 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
                 placeholder="输入上方英文"
               />
               <div className="brand-delete-actions">
-                <button className="secondary-button" onClick={cancelDeleteBrand} type="button">
+                <button className="vz-btn vz-btn--secondary secondary-button" onClick={cancelDeleteBrand} type="button">
                   取消
                 </button>
                 <button
-                  className="secondary-button danger"
+                  className="vz-btn vz-btn--secondary secondary-button danger"
                   disabled={deleteConfirmText !== deleteChallenge}
                   onClick={deleteSelectedBrand}
                   type="button"
@@ -4920,7 +5365,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
           )}
         </section>
 
-        <section className="panel">
+        <section className="vz-card panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Logo Asset</p>
@@ -4935,7 +5380,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
               <strong>{selectedBrand.logoPreview ? 'Logo 已上传' : '尚未上传 Logo'}</strong>
               <small>Logo 只允许出现在 A+ 模式图片；主图和非 A+ 图片一律不展示。</small>
             </span>
-            <label className={editable ? 'secondary-button upload-button' : 'secondary-button upload-button disabled'} htmlFor="brand-logo-upload">
+            <label className={editable ? 'vz-btn vz-btn--secondary secondary-button upload-button' : 'vz-btn vz-btn--secondary secondary-button upload-button disabled'} htmlFor="brand-logo-upload">
               <Upload size={16} />
               上传 Logo
             </label>
@@ -4943,6 +5388,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, focusRequest }) {
           </div>
         </section>
       </div>
+      }
     </section>
   );
 }
@@ -4974,11 +5420,12 @@ function StoryboardPage({
   const selectedClaims = getStoryboardClaims(selectedSlot, selectedBrief);
   const selectedChecks = getStoryboardChecks(selectedBrief);
   const selectedPlanPreset = getProjectPlanOutputPreset(projectForm);
+  const targetSlotCount = getStoryboardTargetSlotCount(projectForm, ledgerFacts);
 
   return (
-    <section className="main-grid">
+    <section className="main-grid storyboard-workspace">
       <div className="left-column">
-        <section className="panel focus-summary-panel">
+        <section className="vz-card panel focus-summary-panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Project Focus</p>
@@ -4993,15 +5440,15 @@ function StoryboardPage({
             <img src={storyboardPreviewImage} alt="Product reference" />
             <div>
               <strong>{storyboardPreviewName}</strong>
-              <p>当前只检查 7 张图分别要表达什么；真实视觉效果在生图任务中判断。</p>
+              <p>当前只检查每个图槽要表达什么；真实视觉效果在生图任务中判断。</p>
               <div className="mini-stat-row">
                 <span>{ledgerFacts.length} 个卖点</span>
-                <span>{storyboardBriefs.length || 0}/7 图方案</span>
+                <span>{storyboardBriefs.length || 0}/{targetSlotCount} 图槽</span>
               </div>
             </div>
           </div>
         </section>
-        <details className="panel disclosure-panel">
+        <details className="vz-card panel disclosure-panel">
           <summary>
             <span>
               <b>产品参考图</b>
@@ -5011,7 +5458,7 @@ function StoryboardPage({
           </summary>
           <ReferencePanel projectForm={projectForm} />
         </details>
-        <details className="panel disclosure-panel">
+        <details className="vz-card panel disclosure-panel">
           <summary>
             <span>
               <b>卖点详情</b>
@@ -5025,42 +5472,27 @@ function StoryboardPage({
 
       <div className="right-column">
         <FocusFrame active={getFocusSignal(focusRequest, 'storyboard')}>
-        <section className="panel storyboard-panel">
+        <section className="vz-card panel storyboard-panel">
           <div className="panel-header">
             <div>
               <p className="eyebrow">Plan</p>
-              <h3>确认 7 张{selectedPlanPreset.label}方向</h3>
+              <h3>确认{selectedPlanPreset.label}图片方向</h3>
             </div>
             <button
               aria-busy={isPlanningStoryboard || Boolean(regeneratingSlotId)}
-              className="secondary-button"
+              className="vz-btn vz-btn--secondary secondary-button"
               disabled={isPlanningStoryboard || Boolean(regeneratingSlotId)}
               onClick={onGenerateStoryboardBriefs}
             >
-              {isPlanningStoryboard ? <RefreshCcw className="spin-icon" size={17} /> : <Sparkles size={17} />}
+              {isPlanningStoryboard ? <VistamzLoader size={16} label="AI 正在生成图片方案" /> : <Sparkles size={17} />}
               {isPlanningStoryboard
                 ? 'AI 生成中...'
                 : !ledgerFacts.length
                 ? '先确认卖点'
                 : storyboardBriefs.length
                   ? '重新生成整套方案'
-                  : '生成 7 图方案'}
+                  : '生成图片方案'}
             </button>
-            <div className="segmented">
-              {[
-                ['storyboard', '方案'],
-                ['audit', '确认'],
-                ['export', '导出条件']
-              ].map(([id, label]) => (
-                <button
-                  className={activeTab === id ? 'active' : ''}
-                  key={id}
-                  onClick={() => setActiveTab(id)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div className="plan-output-selector">
@@ -5089,9 +5521,9 @@ function StoryboardPage({
 
           {isPlanningStoryboard && (
             <div className="planning-status">
-              <RefreshCcw className="spin-icon" size={18} />
+              <VistamzLoader size={24} label="正在生成图片方向" />
               <div>
-                <strong>正在生成 7 张图片方案</strong>
+                <strong>正在生成 {targetSlotCount} 个图片方向</strong>
                 <p>AI 正在读取产品图、已确认卖点和品牌风格，并为这个产品选择合适的图片角色。</p>
               </div>
             </div>
@@ -5099,32 +5531,31 @@ function StoryboardPage({
 
           {regeneratingSlotId && (
             <div className="planning-status">
-              <RefreshCcw className="spin-icon" size={18} />
+              <VistamzLoader size={24} label="正在重新生成当前图方案" />
               <div>
                 <strong>正在重生成第 {String(regeneratingSlotId).padStart(2, '0')} 张图方案</strong>
-                <p>系统只替换当前图槽的图片角色、卖点和画面证明方式，其他 6 张方案保持不变。</p>
+                <p>系统只替换当前图槽的图片角色、卖点和画面证明方式，其他方案保持不变。</p>
               </div>
             </div>
           )}
 
-          {storyboardBriefs.length === STORYBOARD_SLOT_COUNT && (
+          {isStoryboardPlanReady(storyboardBriefs, projectForm) && (
             <div className="inline-next-step">
               <div>
                 <Check size={18} />
                 <span>
-                  <strong>7 张图片方向已生成</strong>
+                  <strong>{storyboardBriefs.length} 个图片方向已生成</strong>
                   <small>这里先检查每张图要表达什么，不评估最终视觉效果；确认后进入生图任务。</small>
                 </span>
               </div>
-              <button className="primary-button" onClick={onGoGeneration}>
+              <button className="vz-btn vz-btn--primary primary-button" onClick={onGoGeneration}>
                 <Sparkles size={16} />
                 下一步：生图任务
               </button>
             </div>
           )}
 
-          {activeTab === 'storyboard' && (
-            <>
+          <>
               <div className="slot-grid">
                 {activeSlots.map((slot) => {
                   const brief = storyboardBriefs.find((item) => item.id === slot.id);
@@ -5136,9 +5567,6 @@ function StoryboardPage({
                     >
                       <div className="slot-card-head">
                         <span>{String(slot.id).padStart(2, '0')}</span>
-                        {storyboardBriefs.length
-                          ? <ReviewStatusPill status={getReviewDecision(reviewDecisions, slot.id, storyboardBriefs)?.status} context="plan" />
-                          : <StatusPill status={slot.status} />}
                       </div>
                       <div>
                         <strong>{brief?.title || slot.title}</strong>
@@ -5157,7 +5585,6 @@ function StoryboardPage({
                   </div>
                   <div className="detail-title">
                     <h4>{selectedBrief?.title || selectedSlot.title}</h4>
-                    <ReviewStatusPill status={selectedDecision?.status} context="plan" />
                   </div>
                   <p>{selectedBrief?.goal || selectedSlot.goal}</p>
                   <p className="storyboard-reference-note">这是图片方案阶段：只确认每张图的方向、卖点和画面证明方式；真实视觉候选图会在生图任务中生成。</p>
@@ -5219,42 +5646,163 @@ function StoryboardPage({
                   ) : (
                     <div className="brief-empty">
                       <Sparkles size={22} />
-                      <strong>还没有 7 图方案</strong>
+                      <strong>还没有图片方案</strong>
                       <p>先根据产品和卖点生成每张图的目的、卖点、画面证明方式和禁用边界，再进入生图任务。</p>
                     </div>
                   )}
-                </>
-              )}
-
-          {activeTab === 'audit' && (
-            <div className="audit-list">
-              {activeSlots.map((slot) => {
-                const decision = getReviewDecision(reviewDecisions, slot.id, storyboardBriefs);
-                const brief = storyboardBriefs.find((item) => item.id === slot.id);
-                return (
-                <div className="audit-row actionable" key={slot.id}>
-                  <div className={decision.status === 'approved' ? 'audit-icon pass' : 'audit-icon warn'}>
-                    {decision.status === 'approved' ? <ShieldCheck size={18} /> : <MessageSquareWarning size={18} />}
-                  </div>
-                  <div>
-                    <strong>{String(slot.id).padStart(2, '0')} · {slot.title}</strong>
-                    <p>{decision.note || getDefaultReviewNote(decision.status, brief)}</p>
-                  </div>
-                  <ReviewStatusPill status={decision.status} />
-                </div>
-                );
-              })}
-            </div>
-          )}
-
-          {activeTab === 'export' && (
-            <ExportGate reviewDecisions={reviewDecisions} storyboardBriefs={storyboardBriefs} compact />
-          )}
+          </>
         </section>
         </FocusFrame>
 
         <TaskListPanel storyboardBriefs={storyboardBriefs} />
       </div>
+    </section>
+  );
+}
+
+function StoryboardPlanPage({
+  selectedSlot,
+  setSelectedSlot,
+  ledgerFacts,
+  projectForm,
+  storyboardBriefs,
+  onChangePlanOutputPreset,
+  isPlanningStoryboard,
+  regeneratingSlotId,
+  onGenerateStoryboardBriefs,
+  onRegenerateStoryboardSlot,
+  onAddStoryboardSlot,
+  onRemoveStoryboardSlot,
+  onMoveStoryboardSlot,
+  onGoGeneration,
+  focusRequest
+}) {
+  const activeSlots = useMemo(() => getActiveSlots(storyboardBriefs), [storyboardBriefs]);
+  const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
+  const selectedPreset = getProjectPlanOutputPreset(projectForm);
+  const isReady = isStoryboardPlanReady(storyboardBriefs, projectForm);
+  const isAPlus = selectedPreset.id === 'aplus';
+  const selectedIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(selectedBrief?.id));
+  const minimumSlotCount = isAPlus ? APLUS_MIN_MODULE_COUNT : MAIN_MIN_SLOT_COUNT;
+  const maximumSlotCount = isAPlus ? APLUS_MAX_MODULE_COUNT : MAIN_MAX_SLOT_COUNT;
+  const canMoveEarlier = selectedIndex > (isAPlus ? 0 : 1);
+  const canMoveLater = selectedIndex >= 0
+    && selectedIndex < storyboardBriefs.length - 1
+    && (isAPlus || Number(selectedBrief?.id) !== 1);
+  const canRemoveSelected = Boolean(selectedBrief)
+    && storyboardBriefs.length > minimumSlotCount
+    && (isAPlus || Number(selectedBrief.id) !== 1);
+
+  return (
+    <section className="storyboard-plan-page">
+      <header className="storyboard-plan-heading">
+        <div>
+          <p className="eyebrow">IMAGE PLAN</p>
+          <h2>规划图片方案</h2>
+          <p>先确认每张图要证明什么，再进入真实生图。</p>
+        </div>
+      </header>
+
+      <section className="storyboard-output-bar">
+        <div>
+          <p className="eyebrow">OUTPUT TYPE</p>
+          <h3>选择这次的图片类型</h3>
+        </div>
+        <div className="output-mode compact" role="group" aria-label="选择图片类型">
+          {outputPresets.map((preset) => (
+            <button
+              className={selectedPreset.id === preset.id ? 'active' : ''}
+              disabled={isPlanningStoryboard || Boolean(regeneratingSlotId)}
+              key={preset.id}
+              onClick={() => onChangePlanOutputPreset(preset.id)}
+              type="button"
+            >
+              <strong>{preset.label}</strong>
+              <span>{preset.size}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="storyboard-rule-summary">
+        <div>
+          <strong>{isAPlus ? 'A+ 内容规则' : '主图套图规则'}</strong>
+          <p>{isAPlus
+            ? 'A+ 不要求白底首图；可组合相关卖点，使用更丰富的场景与品牌化版式。'
+            : '第 1 张为白底主图；其余图片通过画面证明卖点，保持统一字体和画面风格。'}</p>
+        </div>
+        <span>{ledgerFacts.length} 条已确认内容</span>
+      </section>
+
+      {isPlanningStoryboard && (
+        <div className="planning-status storyboard-plan-progress">
+          <VistamzLoader size={24} label="正在生成图片方案" />
+          <div><strong>正在生成图片方案</strong><p>系统正在结合产品参考图、已确认卖点和品牌规则规划图片角色。</p></div>
+        </div>
+      )}
+
+      <FocusFrame active={getFocusSignal(focusRequest, 'storyboard')} className="storyboard-plan-grid">
+        {activeSlots.map((slot) => {
+          const brief = storyboardBriefs.find((item) => item.id === slot.id);
+          const isSelected = selectedSlot.id === slot.id;
+          return (
+            <button className={isSelected ? 'storyboard-plan-card active' : 'storyboard-plan-card'} key={slot.id} onClick={() => setSelectedSlot(slot)} type="button">
+              <span>{String(slot.id).padStart(2, '0')}</span>
+              <h3>{brief?.title || slot.title}</h3>
+              <p>{brief?.goal || '等待生成该图片的卖点与画面证明方式。'}</p>
+              <strong>主卖点：{brief?.primaryClaim || '待分配'}</strong>
+              <small>查看方案</small>
+            </button>
+          );
+        })}
+      </FocusFrame>
+
+      {selectedBrief && (
+        <section className="storyboard-plan-detail">
+          <div className="storyboard-plan-detail-head">
+            <div><p className="eyebrow">SELECTED IMAGE</p><h3>{String(selectedBrief.id).padStart(2, '0')} · {selectedBrief.title}</h3></div>
+            <div className="storyboard-plan-slot-actions">
+              <button aria-label="向前移动图槽" className="vz-btn vz-btn--secondary secondary-button icon-button" disabled={!canMoveEarlier || Boolean(regeneratingSlotId)} onClick={() => onMoveStoryboardSlot(selectedBrief.id, -1)} title="向前移动" type="button"><ArrowLeft size={16} /></button>
+              <button aria-label="向后移动图槽" className="vz-btn vz-btn--secondary secondary-button icon-button" disabled={!canMoveLater || Boolean(regeneratingSlotId)} onClick={() => onMoveStoryboardSlot(selectedBrief.id, 1)} title="向后移动" type="button"><ArrowRight size={16} /></button>
+              <button aria-label="删除可选图槽" className="vz-btn vz-btn--secondary secondary-button icon-button danger" disabled={!canRemoveSelected || Boolean(regeneratingSlotId)} onClick={() => onRemoveStoryboardSlot(selectedBrief.id)} title="删除可选图槽" type="button"><Trash2 size={16} /></button>
+              <button className="vz-btn vz-btn--secondary secondary-button" disabled={Boolean(regeneratingSlotId)} onClick={() => onRegenerateStoryboardSlot(selectedBrief.id)} type="button">
+                {regeneratingSlotId === selectedBrief.id ? <VistamzLoader size={16} label="正在重新生成当前方案" /> : <RefreshCcw size={16} />}
+                {regeneratingSlotId === selectedBrief.id ? '正在重生成...' : '重新生成当前方案'}
+              </button>
+            </div>
+          </div>
+          <div className="storyboard-plan-detail-grid">
+            <div><span>图片目标</span><strong>{selectedBrief.goal}</strong></div>
+            <div><span>画面如何证明</span><strong>{selectedBrief.visualProof || selectedBrief.composition}</strong></div>
+            <div><span>可用卖点</span><strong>{selectedBrief.usableClaims?.join(' · ') || selectedBrief.primaryClaim || '待分配'}</strong></div>
+          </div>
+        </section>
+      )}
+
+      <footer className="storyboard-plan-footer">
+        <span><strong>{isReady ? `图片方案已准备 · ${storyboardBriefs.length} 个图槽` : isAPlus ? '先生成 A+ 内容模块方案' : '先生成 7 张图片方案'}</strong><small>{isReady ? '方案阶段只确认卖点与画面证明方式，视觉质量在生图后判断。' : '每张图会自动分配一个主卖点和对应的画面证明方式。'}</small></span>
+        <div className="storyboard-plan-footer-actions">
+          <button
+            className="vz-btn vz-btn--secondary secondary-button"
+            disabled={!isReady || storyboardBriefs.length >= maximumSlotCount || isPlanningStoryboard || Boolean(regeneratingSlotId)}
+            onClick={onAddStoryboardSlot}
+            type="button"
+          >
+            <Plus size={16} />添加可选图槽
+          </button>
+          <button
+            aria-busy={isPlanningStoryboard}
+            className="vz-btn vz-btn--secondary secondary-button"
+            disabled={isPlanningStoryboard || !ledgerFacts.length}
+            onClick={onGenerateStoryboardBriefs}
+            type="button"
+          >
+            {isPlanningStoryboard ? <VistamzLoader size={16} label="正在生成图片方案" /> : <Sparkles size={16} />}
+            {isPlanningStoryboard ? '正在生成...' : isReady ? '重新生成方案' : '生成方案'}
+          </button>
+          <button className="vz-btn vz-btn--primary primary-button" disabled={!isReady || isPlanningStoryboard} onClick={onGoGeneration} type="button"><Sparkles size={16} />确认方案，开始生图</button>
+        </div>
+      </footer>
     </section>
   );
 }
@@ -5266,7 +5814,7 @@ function ExportGate({ reviewDecisions, storyboardBriefs, compact = false }) {
   const approved = decisions.filter(isDecisionFullyApproved).length;
   const rework = decisions.filter((decision) => decision.status === 'rework').length;
   const blocked = decisions.filter((decision) => decision.status === 'blocked').length;
-  const exportReady = approved === slotTotal && storyboardBriefs.length === STORYBOARD_SLOT_COUNT;
+  const exportReady = approved === slotTotal && isStoryboardPlanReady(storyboardBriefs);
   const incomplete = slotTotal - approved;
   const nextMissing = decisions.find((decision) => !isDecisionFullyApproved(decision));
 
@@ -5286,7 +5834,7 @@ function ExportGate({ reviewDecisions, storyboardBriefs, compact = false }) {
         <span><strong>{rework}</strong> 需返工</span>
         <span><strong>{blocked}</strong> 禁止导出</span>
       </div>
-      <button className={exportReady ? 'primary-button' : 'secondary-button'} disabled={!exportReady}>
+      <button className={exportReady ? 'vz-btn vz-btn--primary primary-button' : 'vz-btn vz-btn--secondary secondary-button'} disabled={!exportReady}>
         <Download size={17} />
         {exportReady ? '导出最终包' : '等待人工审核'}
       </button>
@@ -5300,14 +5848,14 @@ function QualityReportPanel({ generationRuns, storyboardBriefs, onExportQualityC
   const rows = getQualityReportRows(generationRuns, { slots: activeSlots });
   const importInputId = 'quality-csv-import';
   return (
-    <section className="panel quality-report-panel">
+    <section className="vz-card panel quality-report-panel">
       <div className="panel-header compact">
         <div>
           <p className="eyebrow">Quality Samples</p>
           <h3>质量样本表</h3>
         </div>
         <div className="panel-actions">
-          <label className="secondary-button upload-button" htmlFor={importInputId}>
+          <label className="vz-btn vz-btn--secondary secondary-button upload-button" htmlFor={importInputId}>
             <Database size={15} />
             导入 CSV
           </label>
@@ -5318,7 +5866,7 @@ function QualityReportPanel({ generationRuns, storyboardBriefs, onExportQualityC
             accept=".csv,text/csv"
             onChange={onImportQualityCsv}
           />
-          <button className="secondary-button" disabled={!overview.total} onClick={onExportQualityCsv}>
+          <button className="vz-btn vz-btn--secondary secondary-button" disabled={!overview.total} onClick={onExportQualityCsv}>
             <Download size={15} />
             导出 CSV
           </button>
@@ -5385,7 +5933,7 @@ function PromptTuningPanel({
 }) {
   const suggestions = getPromptTuningSuggestions(generationRuns, slot.id);
   return (
-    <section className="panel prompt-tuning-panel">
+    <section className="vz-card panel prompt-tuning-panel">
       <div className="panel-header compact">
         <div>
           <p className="eyebrow">Prompt Tuning</p>
@@ -5398,31 +5946,46 @@ function PromptTuningPanel({
       </div>
       <div className="prompt-tuning-body">
         <div className="prompt-tuning-current">
-          <span>当前图槽附加规则</span>
+          <div className="prompt-tuning-current-head">
+            <div>
+              <span>当前图槽附加规则</span>
+              <small>仅作用于本图槽的下一次生成</small>
+            </div>
+            {promptOverride && <span className="prompt-rule-count">已应用</span>}
+          </div>
           {promptOverride ? (
             <>
-              <p>{promptOverride}</p>
-              <button className="text-button" onClick={() => onUpdatePromptOverride(slot.id, '')}>清空本图槽规则</button>
+              <details className="prompt-rule-preview">
+                <summary>查看已应用规则 <ChevronRight size={15} /></summary>
+                <p>{promptOverride}</p>
+              </details>
+              <button className="vz-btn vz-btn--ghost text-button" onClick={() => onUpdatePromptOverride(slot.id, '')}>清空本图槽规则</button>
             </>
           ) : (
-            <p>还没有附加调优规则。先让系统根据失败原因推荐，或继续积累更多候选图。</p>
+            <p>暂未添加调优规则。系统会根据人工判断和 AI 预审结果推荐可用约束。</p>
           )}
         </div>
         <div className="prompt-suggestion-list">
           {suggestions.length ? suggestions.map((suggestion) => (
-            <div className="prompt-suggestion" key={suggestion.id}>
-              <div>
-                <span>{suggestion.title} · {suggestion.score}</span>
+            <details className="prompt-suggestion" key={suggestion.id}>
+              <summary>
+                <div>
+                  <span>{suggestion.title}</span>
+                  <small>来自 {suggestion.score} 个质量信号</small>
+                </div>
+                <ChevronRight size={16} />
+              </summary>
+              <div className="prompt-suggestion-detail">
                 <p>{suggestion.text}</p>
+                <button
+                  className="vz-btn vz-btn--secondary secondary-button"
+                  onClick={() => onUpdatePromptOverride(slot.id, mergePromptOverride(promptOverride, suggestion.text))}
+                >
+                  <Plus size={15} />
+                  加入本图
+                </button>
               </div>
-              <button
-                className="secondary-button"
-                onClick={() => onUpdatePromptOverride(slot.id, mergePromptOverride(promptOverride, suggestion.text))}
-              >
-                <Plus size={15} />
-                加入
-              </button>
-            </div>
+            </details>
           )) : (
             <div className="prompt-tuning-empty">
               <Sparkles size={18} />
@@ -5438,6 +6001,9 @@ function PromptTuningPanel({
 
 function getGenerationErrorMessage(error) {
   const raw = error instanceof Error ? error.message : String(error || '生成或预审失败');
+  if (/^not found$/i.test(raw) || /API 服务版本过旧/i.test(raw)) {
+    return '当前页面连接的 API 服务版本过旧，未找到生图任务入口。无需重新上传图片，请刷新页面或更新后端服务后重试。';
+  }
   if (/monthly spending cap/i.test(raw)) {
     return 'Gemini 项目已超过 monthly spending cap。需要到 Google AI Studio 调整 spend cap，或更换可用 API Key 后再生成。';
   }
@@ -5450,10 +6016,418 @@ function getGenerationErrorMessage(error) {
   if (/load failed|failed to fetch|networkerror|request body is too large/i.test(raw)) {
     return '预审请求网络中断。系统会保留已生成图片，请稍后重试 AI 预审或直接人工判断。';
   }
+  if (/AI response JSON object was incomplete|AI_REVIEW_INCOMPLETE_JSON|预审返回不完整|did not contain a JSON object|did not return text/i.test(raw)) {
+    return 'AI 预审返回不完整，候选图已保留。请重试 AI 预审或直接人工判断。';
+  }
   if (/did not return an image|没有返回图片|text only/i.test(raw)) {
     return 'Gemini 本次没有返回图片。请重新生成当前图槽，或稍后再试。';
   }
   return raw;
+}
+
+function normalizeSelectionPoint(event, element) {
+  const bounds = element.getBoundingClientRect();
+  return {
+    x: Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width)),
+    y: Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height))
+  };
+}
+
+function getLocalEditMaskDimensions(outputPreset = null) {
+  const sourceWidth = Number(outputPreset?.width) || 1024;
+  const sourceHeight = Number(outputPreset?.height) || 1024;
+  const scale = 1024 / Math.max(sourceWidth, sourceHeight);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale))
+  };
+}
+
+function loadCanvasImage(imageSrc, errorMessage = '图片读取失败', timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const timeoutId = window.setTimeout(() => {
+      image.src = '';
+      reject(new Error(`${errorMessage}（等待超过 ${Math.round(timeoutMs / 1000)} 秒）`));
+    }, timeoutMs);
+    image.onload = () => {
+      window.clearTimeout(timeoutId);
+      resolve(image);
+    };
+    image.onerror = () => {
+      window.clearTimeout(timeoutId);
+      reject(new Error(errorMessage));
+    };
+    image.src = imageSrc;
+  });
+}
+
+function createLocalEditMaskDataUrl(selection = {}, outputPreset = null) {
+  const canvas = document.createElement('canvas');
+  const dimensions = getLocalEditMaskDimensions(outputPreset);
+  canvas.width = dimensions.width;
+  canvas.height = dimensions.height;
+  const context = canvas.getContext('2d');
+  if (!context) return '';
+  context.fillStyle = '#000000';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = '#ffffff';
+  context.strokeStyle = '#ffffff';
+  context.lineJoin = 'round';
+  context.lineCap = 'round';
+
+  if (selection.type === 'lasso' && selection.points?.length >= 3) {
+    context.beginPath();
+    selection.points.forEach((point, index) => {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.closePath();
+    context.fill();
+  } else if (selection.type === 'brush' && selection.points?.length >= 2) {
+    context.lineWidth = Math.max(18, Math.round((selection.brushSize || 0.08) * canvas.width));
+    context.beginPath();
+    selection.points.forEach((point, index) => {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+  } else {
+    const x = Math.round((selection.x ?? 0.3) * canvas.width);
+    const y = Math.round((selection.y ?? 0.3) * canvas.height);
+    const width = Math.max(1, Math.round((selection.width ?? 0.35) * canvas.width));
+    const height = Math.max(1, Math.round((selection.height ?? 0.22) * canvas.height));
+    context.fillRect(x, y, width, height);
+  }
+  return canvas.toDataURL('image/png');
+}
+
+async function createLocalEditGuideDataUrl(baseImageSrc, selection = {}, outputPreset = null) {
+  const sourceDataUrl = await imageSourceToDataUrl(baseImageSrc);
+  const image = await loadCanvasImage(sourceDataUrl, '无法读取局部修改原图');
+  const dimensions = getLocalEditMaskDimensions(outputPreset);
+  const canvas = document.createElement('canvas');
+  canvas.width = dimensions.width;
+  canvas.height = dimensions.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('无法创建局部修改指引图');
+
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  context.fillStyle = 'rgba(255, 111, 56, 0.30)';
+  context.strokeStyle = '#ff6f38';
+  context.lineWidth = Math.max(5, Math.round(Math.min(canvas.width, canvas.height) * 0.008));
+  context.lineJoin = 'round';
+  context.lineCap = 'round';
+
+  if (selection.type === 'lasso' && selection.points?.length >= 3) {
+    context.beginPath();
+    selection.points.forEach((point, index) => {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.closePath();
+    context.fill();
+    context.stroke();
+  } else if (selection.type === 'brush' && selection.points?.length >= 2) {
+    context.globalAlpha = 0.58;
+    context.lineWidth = Math.max(18, Math.round((selection.brushSize || 0.08) * canvas.width));
+    context.beginPath();
+    selection.points.forEach((point, index) => {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+  } else {
+    const x = (selection.x ?? 0.3) * canvas.width;
+    const y = (selection.y ?? 0.3) * canvas.height;
+    const width = (selection.width ?? 0.35) * canvas.width;
+    const height = (selection.height ?? 0.22) * canvas.height;
+    context.fillRect(x, y, width, height);
+    context.strokeRect(x, y, width, height);
+  }
+  return canvas.toDataURL('image/png');
+}
+
+async function measureLocalEditDelta({ baseImageSrc, editedImageSrc, maskDataUrl, outputPreset }) {
+  const [baseDataUrl, editedDataUrl, maskSourceDataUrl] = await Promise.all([
+    imageSourceToDataUrl(baseImageSrc),
+    imageSourceToDataUrl(editedImageSrc),
+    imageSourceToDataUrl(maskDataUrl)
+  ]);
+  const [baseImage, editedImage, maskImage] = await Promise.all([
+    loadCanvasImage(baseDataUrl, '无法读取局部修改原图'),
+    loadCanvasImage(editedDataUrl, '无法读取局部修改结果'),
+    loadCanvasImage(maskSourceDataUrl, '无法读取局部修改遮罩')
+  ]);
+  const dimensions = getLocalEditMaskDimensions(outputPreset);
+  const canvas = document.createElement('canvas');
+  canvas.width = dimensions.width;
+  canvas.height = dimensions.height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('无法创建局部修改变化检测画布');
+
+  context.drawImage(baseImage, 0, 0, canvas.width, canvas.height);
+  const basePixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(editedImage, 0, 0, canvas.width, canvas.height);
+  const editedPixels = context.getImageData(0, 0, canvas.width, canvas.height);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(maskImage, 0, 0, canvas.width, canvas.height);
+  const maskPixels = context.getImageData(0, 0, canvas.width, canvas.height);
+
+  let selectedPixels = 0;
+  let changedPixels = 0;
+  let totalDelta = 0;
+  for (let index = 0; index < basePixels.data.length; index += 4) {
+    const maskValue = (maskPixels.data[index] + maskPixels.data[index + 1] + maskPixels.data[index + 2]) / (3 * 255);
+    if (maskValue < 0.6) continue;
+    selectedPixels += 1;
+    const delta = (
+      Math.abs(basePixels.data[index] - editedPixels.data[index])
+      + Math.abs(basePixels.data[index + 1] - editedPixels.data[index + 1])
+      + Math.abs(basePixels.data[index + 2] - editedPixels.data[index + 2])
+    ) / (3 * 255);
+    totalDelta += delta;
+    if (delta >= 0.06) changedPixels += 1;
+  }
+  return {
+    selectedPixels,
+    changedPixels,
+    changedRatio: selectedPixels ? changedPixels / selectedPixels : 0,
+    averageDelta: selectedPixels ? totalDelta / selectedPixels : 0
+  };
+}
+
+async function composeLocalEditResult({ baseImageSrc, editedImageSrc, maskDataUrl, outputPreset }) {
+  const [baseDataUrl, editedDataUrl, maskSourceDataUrl] = await Promise.all([
+    imageSourceToDataUrl(baseImageSrc),
+    imageSourceToDataUrl(editedImageSrc),
+    imageSourceToDataUrl(maskDataUrl)
+  ]);
+  const [baseImage, editedImage, maskImage] = await Promise.all([
+    loadCanvasImage(baseDataUrl, '无法读取原候选图'),
+    loadCanvasImage(editedDataUrl, '无法读取局部修正版'),
+    loadCanvasImage(maskSourceDataUrl, '无法读取局部修改遮罩')
+  ]);
+  const width = Number(outputPreset?.width) || 1024;
+  const height = Number(outputPreset?.height) || 1024;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('无法创建局部修改合成画布');
+  context.drawImage(baseImage, 0, 0, width, height);
+  const basePixels = context.getImageData(0, 0, width, height);
+  context.clearRect(0, 0, width, height);
+  context.drawImage(editedImage, 0, 0, width, height);
+  const editedPixels = context.getImageData(0, 0, width, height);
+  context.clearRect(0, 0, width, height);
+  context.drawImage(maskImage, 0, 0, width, height);
+  const maskPixels = context.getImageData(0, 0, width, height);
+  const output = context.createImageData(width, height);
+  for (let index = 0; index < output.data.length; index += 4) {
+    const maskValue = (maskPixels.data[index] + maskPixels.data[index + 1] + maskPixels.data[index + 2]) / (3 * 255);
+    const source = maskValue > 0.5 ? editedPixels.data : basePixels.data;
+    output.data[index] = source[index];
+    output.data[index + 1] = source[index + 1];
+    output.data[index + 2] = source[index + 2];
+    output.data[index + 3] = source[index + 3];
+  }
+  context.putImageData(output, 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+function cloneLocalEditSelection(selection = {}) {
+  return { ...selection, points: [...(selection.points || [])] };
+}
+
+function LocalEditModal({ candidate, outputPreset, isBusy, onClose, onGenerate }) {
+  const [tool, setTool] = useState('rectangle');
+  const [instruction, setInstruction] = useState('');
+  const [brushSize, setBrushSize] = useState(0.08);
+  const [selection, setSelection] = useState({ type: 'rectangle', x: 0.3, y: 0.28, width: 0.38, height: 0.25, points: [] });
+  const [selectionHistory, setSelectionHistory] = useState([]);
+  const [zoom, setZoom] = useState(1);
+  const drawingRef = useRef(null);
+  const drawingStartSelectionRef = useRef(null);
+  const selectionRef = useRef(selection);
+
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
+
+  useEffect(() => {
+    if (!candidate) return;
+    setTool('rectangle');
+    setInstruction('');
+    setSelectionHistory([]);
+    setZoom(1);
+    setSelection({ type: 'rectangle', x: 0.3, y: 0.28, width: 0.38, height: 0.25, points: [] });
+  }, [candidate?.id]);
+
+  if (!candidate) return null;
+
+  const updateTool = (nextTool) => {
+    setSelectionHistory((history) => [...history.slice(-14), cloneLocalEditSelection(selectionRef.current)]);
+    setTool(nextTool);
+    if (nextTool === 'rectangle') {
+      setSelection({ type: 'rectangle', x: 0.3, y: 0.28, width: 0.38, height: 0.25, points: [] });
+    } else {
+      setSelection({ type: nextTool, points: [] });
+    }
+  };
+
+  const onPointerDown = (event) => {
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const point = normalizeSelectionPoint(event, event.currentTarget);
+    drawingRef.current = point;
+    drawingStartSelectionRef.current = cloneLocalEditSelection(selectionRef.current);
+    if (tool === 'rectangle') {
+      setSelection({ type: 'rectangle', x: point.x, y: point.y, width: 0.001, height: 0.001, points: [] });
+    } else {
+      setSelection({ type: tool, points: [point], brushSize });
+    }
+  };
+
+  const onPointerMove = (event) => {
+    if (!drawingRef.current) return;
+    const point = normalizeSelectionPoint(event, event.currentTarget);
+    if (tool === 'rectangle') {
+      const start = drawingRef.current;
+      setSelection({
+        type: 'rectangle',
+        x: Math.min(start.x, point.x),
+        y: Math.min(start.y, point.y),
+        width: Math.max(0.01, Math.abs(point.x - start.x)),
+        height: Math.max(0.01, Math.abs(point.y - start.y)),
+        points: []
+      });
+      return;
+    }
+    setSelection((current) => ({ ...current, points: [...(current.points || []), point], brushSize }));
+  };
+
+  const onPointerUp = () => {
+    if (drawingStartSelectionRef.current) {
+      const previous = drawingStartSelectionRef.current;
+      setSelectionHistory((history) => [...history.slice(-14), previous]);
+    }
+    drawingRef.current = null;
+    drawingStartSelectionRef.current = null;
+  };
+
+  const hasSelection = selection.type === 'rectangle'
+    ? selection.width > 0.01 && selection.height > 0.01
+    : selection.points?.length >= (selection.type === 'lasso' ? 3 : 2);
+  const maskDataUrl = !hasSelection ? '' : createLocalEditMaskDataUrl(selection, outputPreset);
+  const selectionStyle = selection.type === 'rectangle'
+    ? { left: `${selection.x * 100}%`, top: `${selection.y * 100}%`, width: `${selection.width * 100}%`, height: `${selection.height * 100}%` }
+    : undefined;
+  const pathPoints = selection.points?.map((point) => `${point.x * 100},${point.y * 100}`).join(' ') || '';
+  const undoSelection = () => {
+    const previous = selectionHistory[selectionHistory.length - 1];
+    if (!previous) return;
+    setSelection(previous);
+    setSelectionHistory((history) => history.slice(0, -1));
+  };
+  const clearSelection = () => {
+    setSelectionHistory((history) => [...history.slice(-14), cloneLocalEditSelection(selectionRef.current)]);
+    setSelection(tool === 'rectangle'
+      ? { type: 'rectangle', x: 0, y: 0, width: 0, height: 0, points: [] }
+      : { type: tool, points: [] });
+  };
+
+  return (
+    <div className="local-edit-modal" role="dialog" aria-modal="true" aria-labelledby="local-edit-title">
+      <button className="local-edit-backdrop" type="button" aria-label="关闭局部修改" onClick={isBusy ? undefined : onClose} />
+      <section className="local-edit-dialog">
+        {isBusy && (
+          <div className="local-edit-processing" role="status" aria-live="polite">
+            <VistamzLoader size={48} label="正在生成局部修正版" />
+            <strong>正在生成局部修正版</strong>
+            <span>已锁定选区外画面。完成后会自动进入 AI 预审，请勿重复提交。</span>
+          </div>
+        )}
+        <header className="local-edit-header">
+          <div><p className="eyebrow">LOCAL EDIT</p><h2 id="local-edit-title">局部修改候选图</h2><p>只重绘白色选区，其他区域作为锁定参考保留。局部修改会生成新的候选版本。</p></div>
+          <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" type="button" disabled={isBusy} onClick={onClose} aria-label="关闭局部修改"><X size={18} /></button>
+        </header>
+        <div className="local-edit-body">
+          <section className="local-edit-canvas-section">
+            <div className="local-edit-tools" role="group" aria-label="选区工具">
+              <button className={tool === 'rectangle' ? 'active' : ''} type="button" onClick={() => updateTool('rectangle')}>框选</button>
+              <button className={tool === 'lasso' ? 'active' : ''} type="button" onClick={() => updateTool('lasso')}>套索</button>
+              <button className={tool === 'brush' ? 'active' : ''} type="button" onClick={() => updateTool('brush')}>画笔</button>
+            </div>
+            <div className="local-edit-tool-actions">
+              <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" type="button" disabled={!selectionHistory.length} title="撤销上一步选区" aria-label="撤销上一步选区" onClick={undoSelection}><RotateCcw size={16} /></button>
+              <button className="vz-btn vz-btn--ghost text-button" type="button" onClick={clearSelection}>清除选区</button>
+              <span className="local-edit-zoom" aria-label="图片缩放">
+                <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" type="button" disabled={zoom <= 1} title="缩小" aria-label="缩小" onClick={() => setZoom((value) => Math.max(1, value - 0.25))}><ZoomOut size={16} /></button>
+                <b>{Math.round(zoom * 100)}%</b>
+                <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" type="button" disabled={zoom >= 2} title="放大" aria-label="放大" onClick={() => setZoom((value) => Math.min(2, value + 0.25))}><ZoomIn size={16} /></button>
+              </span>
+            </div>
+            {tool === 'brush' && <label className="local-edit-brush"><span>画笔大小</span><input type="range" min="0.03" max="0.2" step="0.01" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))} /><b>{Math.round(brushSize * 100)}%</b></label>}
+            <div className="local-edit-canvas-viewport">
+              <div
+                className={`local-edit-canvas tool-${tool}`}
+                style={{ '--candidate-ratio': `${outputPreset?.width || 1} / ${outputPreset?.height || 1}`, width: `${zoom * 100}%` }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+                onPointerCancel={onPointerUp}
+              >
+                <img src={candidate.imageSrc} alt="当前候选图" draggable="false" />
+                {selection.type === 'rectangle' && <div className="local-edit-selection" style={selectionStyle}><span>选区</span></div>}
+                {(selection.type === 'lasso' || selection.type === 'brush') && pathPoints && <svg className="local-edit-selection-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  {selection.type === 'lasso'
+                    ? <polygon points={pathPoints} />
+                    : <polyline points={pathPoints} style={{ strokeWidth: brushSize * 100 }} />}
+                </svg>}
+                <span className="local-edit-canvas-hint">在图片上{tool === 'rectangle' ? '拖拽框选' : tool === 'lasso' ? '沿边缘圈选' : '涂抹'}需要修改的区域</span>
+              </div>
+            </div>
+          </section>
+          <aside className="local-edit-control-panel">
+            <div><p className="eyebrow">CURRENT CANDIDATE</p><strong>{candidate.slotTitle}</strong><small>{candidate.outputPresetLabel} · {candidate.outputPresetSize}</small></div>
+            <label><span>这一区域需要怎样修改？</span><textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：仅修正顶部横杆角度，保持木材颜色、产品比例和其余画面不变。" /></label>
+            <div className="local-edit-rule"><strong>锁定规则</strong><p>未选区域不得改变产品结构、构图、背景、文字或品牌风格。修改后会自动进入 AI 预审。</p></div>
+            <button className="vz-btn vz-btn--primary primary-button" type="button" disabled={!hasSelection || !maskDataUrl || !instruction.trim() || isBusy} onClick={() => onGenerate({ instruction: instruction.trim(), selection, maskDataUrl })}>
+              {isBusy ? <VistamzLoader size={16} label="正在生成局部修正版" /> : <Sparkles size={16} />}{isBusy ? '正在生成局部修正版...' : '生成局部修正版'}
+            </button>
+          </aside>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LocalEditCompareModal({ beforeCandidate, afterCandidate, onClose }) {
+  if (!beforeCandidate || !afterCandidate) return null;
+  return (
+    <div className="local-edit-modal local-edit-compare-modal" role="dialog" aria-modal="true" aria-labelledby="local-edit-compare-title">
+      <button className="local-edit-backdrop" type="button" aria-label="关闭图片对比" onClick={onClose} />
+      <section className="local-edit-dialog local-edit-compare-dialog">
+        <header className="local-edit-header">
+          <div><p className="eyebrow">VERSION COMPARE</p><h2 id="local-edit-compare-title">原图与局部修正版</h2><p>未选区域已由系统从原候选图逐像素锁回；请重点检查选区边缘是否自然。</p></div>
+          <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" type="button" onClick={onClose} aria-label="关闭图片对比"><X size={18} /></button>
+        </header>
+        <div className="local-edit-compare-grid">
+          <figure><figcaption>原候选图</figcaption><img src={beforeCandidate.imageSrc} alt="局部修改前的候选图" /></figure>
+          <figure><figcaption>局部修正版</figcaption><img src={afterCandidate.imageSrc} alt="局部修改后的候选图" /></figure>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function summarizeBatchGenerationResult(completedCount, totalCount, failedMessages, label = '生成') {
@@ -5468,6 +6442,7 @@ function summarizeBatchGenerationResult(completedCount, totalCount, failedMessag
 }
 
 function QualityConsolePage({
+  activeProjectId,
   projectForm,
   storyboardBriefs,
   generationRuns,
@@ -5489,6 +6464,7 @@ function QualityConsolePage({
     const filename = `${projectName}-quality-baseline.csv`;
     try {
       const result = await saveTextExportToApi({
+        projectId: activeProjectId,
         filename,
         content: csv,
         mimeType: 'text/csv;charset=utf-8'
@@ -5526,7 +6502,7 @@ function QualityConsolePage({
   return (
     <section className="quality-console-page">
       <FocusFrame active={getFocusSignal(focusRequest, 'quality')}>
-        <section className="panel quality-console-hero">
+        <section className="vz-card panel quality-console-hero">
           <div>
             <p className="eyebrow">Quality Console</p>
             <h3>质量后台</h3>
@@ -5537,7 +6513,7 @@ function QualityConsolePage({
       </FocusFrame>
 
       <section className="quality-console-grid">
-        <section className="panel">
+        <section className="vz-card panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Quality Log</p>
@@ -5558,7 +6534,7 @@ function QualityConsolePage({
           <p className="panel-note">当某类原因持续出现，就优先调整对应图槽的提示词或补充参考图。</p>
         </section>
 
-        <section className="panel">
+        <section className="vz-card panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Validation Rule</p>
@@ -5602,6 +6578,7 @@ function QualityConsolePage({
 function GenerationPage({
   activeProjectId,
   projectForm,
+  ledgerFacts,
   storyboardBriefs,
   selectedSlot,
   setSelectedSlot,
@@ -5620,23 +6597,36 @@ function GenerationPage({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAiReviewing, setIsAiReviewing] = useState(false);
   const [isBatchRunning, setIsBatchRunning] = useState(false);
-  const [batchMode, setBatchMode] = useState('current-5');
   const [batchLog, setBatchLog] = useState([]);
   const [generationMode, setGenerationMode] = useState('single-multi');
   const [singleBatchCount, setSingleBatchCount] = useState(3);
   const plannedOutputPresetId = getProjectPlanOutputPresetId(projectForm);
   const [outputPresetId, setOutputPresetId] = useState(plannedOutputPresetId);
-  const [baselineMode, setBaselineMode] = useState(true);
+  const projectBrandId = getProjectBrandId(projectForm, brandLibrary);
+  const hasSelectedBrand = projectBrandId !== 'none' && brandLibrary.some((brand) => brand.id === projectBrandId);
+  const selectedProjectBrand = brandLibrary.find((brand) => brand.id === projectBrandId);
+  const [baselineMode, setBaselineMode] = useState(() => !hasSelectedBrand);
+  const previousBrandAvailabilityRef = useRef(hasSelectedBrand);
   const [autoAdvanceReview, setAutoAdvanceReview] = useState(true);
   const [gptComparisonPrompt, setGptComparisonPrompt] = useState('');
+  const [isLocalEditOpen, setIsLocalEditOpen] = useState(false);
+  const [isLocalEditing, setIsLocalEditing] = useState(false);
+  const [isLocalCompareOpen, setIsLocalCompareOpen] = useState(false);
+  const [serverGenerationTasks, setServerGenerationTasks] = useState([]);
+  const recoveredTaskIdsRef = useRef(new Set());
   const outputPreset = outputPresets.find((preset) => preset.id === outputPresetId) || outputPresets[0];
   const activeSlots = useMemo(() => getActiveSlots(storyboardBriefs), [storyboardBriefs]);
   const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
   const selectedPromptOverride = promptOverrides?.[selectedSlot.id] || '';
+  const structuredProductLock = useMemo(
+    () => buildStructuredProductLock(projectForm, ledgerFacts),
+    [projectForm, ledgerFacts]
+  );
   const prompt = selectedBrief ? buildGenerationPrompt(selectedBrief, selectedSlot, outputPreset, {
     baselineMode,
     promptOverride: selectedPromptOverride,
-    brandLibrary
+    brandLibrary,
+    productLock: structuredProductLock
   }) : '';
   const generationPreviewImage = getReferenceImage(projectForm);
   const generationReferences = getGenerationReferenceItems(projectForm, selectedSlot.id, outputPreset.id, selectedBrief?.visualType);
@@ -5649,28 +6639,28 @@ function GenerationPage({
   const activeCandidateSlot = activeSlots.find((slot) => slot.id === activeCandidate?.slotId) || selectedSlot;
   const activeCandidateBrief = storyboardBriefs.find((brief) => brief.id === activeCandidateSlot.id) || selectedBrief;
   const activeCandidatePreset = activeCandidate ? getOutputPresetById(activeCandidate.outputPresetId) : outputPreset;
+  const activeParentCandidate = activeCandidate?.parentRunId
+    ? generationRuns.find((run) => run.id === activeCandidate.parentRunId)
+    : null;
   const activeReasonSuggestions = activeCandidate
     ? getPromptTuningSuggestionsForReasons(activeCandidate.reasons)
     : [];
   const qualityRuns = getQualityScopeRuns(generationRuns);
   const unreviewedQualityRuns = qualityRuns.filter((run) => run.verdict === 'unreviewed');
   const visibleQueueRuns = unreviewedQualityRuns.slice(0, 8);
-  const projectQuality = getGenerationQualityStats(qualityRuns);
-  const slotQuality = getSlotQualitySummary(qualityRuns, selectedSlot.id);
+  const activeServerTasks = serverGenerationTasks
+    .filter((task) => task.status === 'queued' || task.status === 'running')
+    .slice(0, 8);
   const approvedSlotRuns = activeSlots
     .map((slot) => ({ slot, run: getBestRunForSlot(slot.id, generationRuns) }))
     .filter((item) => item.run?.verdict === 'usable');
+  const reviewedSlotCount = activeSlots.filter((slot) => {
+    const selectedRun = getBestRunForSlot(slot.id, generationRuns);
+    return selectedRun && selectedRun.verdict !== 'unreviewed';
+  }).length;
   const generationReadyForReview = activeSlots.length > 0
-    && storyboardBriefs.length === STORYBOARD_SLOT_COUNT
+    && isStoryboardPlanReady(storyboardBriefs, projectForm)
     && approvedSlotRuns.length === activeSlots.length;
-  const missingApprovedSlots = Math.max(0, activeSlots.length - approvedSlotRuns.length);
-  const generationButtonLabel = isGenerating || isBatchRunning
-    ? '生成中...'
-    : generationMode === 'all-one'
-      ? '各卖点各生成一张'
-      : singleBatchCount > 1
-        ? `当前卖点生成 ${singleBatchCount} 张`
-        : '生成候选图';
   const batchProgress = useMemo(() => {
     const total = batchLog.length;
     const done = batchLog.filter((item) => item.status === 'done').length;
@@ -5678,14 +6668,12 @@ function GenerationPage({
     const running = batchLog.find((item) => item.status === 'running');
     return { total, done, failed, running };
   }, [batchLog]);
+  const isGenerationBusy = isGenerating || isAiReviewing || isBatchRunning || isLocalEditing;
   const generationStatusLooksLikeProgress = /生成|候选图|预审|Gemini|模型接口|API Key|额度|spending cap|quota|rate limit/i.test(generationStatus);
-  const showGenerationProgress = isGenerating || isAiReviewing || isBatchRunning || batchLog.length > 0 || generationStatusLooksLikeProgress;
-  const singleProgressStatus = /失败|不可用|额度|spending cap|quota|rate limit/i.test(generationStatus)
-    ? 'failed'
-    : isGenerating || isAiReviewing
-      ? 'running'
-      : 'done';
-  const generationStageLabel = isBatchRunning
+  const showGenerationProgress = isGenerationBusy || batchLog.length > 0 || generationStatusLooksLikeProgress;
+  const generationStageLabel = isLocalEditing
+    ? '局部修改中'
+    : isBatchRunning
     ? batchProgress.running?.message || '生成中'
     : isGenerating
       ? '生成中'
@@ -5706,10 +6694,29 @@ function GenerationPage({
         ? 'success'
         : ''
   ].filter(Boolean).join(' ');
+  const candidatePendingTitle = isLocalEditing
+    ? '正在生成局部修正版'
+    : isAiReviewing
+      ? '正在 AI 预审'
+      : isGenerating || isBatchRunning
+        ? '正在生成候选图'
+    : '候选图会显示在这里';
+  const candidatePendingDetail = isGenerationBusy
+    ? '处理中请勿重复提交。完成后候选版本会自动保留，并进入人工判断队列。'
+    : '选择右侧生成方式后，先在这里查看图片，再决定是否采用或调整。';
 
   useEffect(() => {
     setOutputPresetId(plannedOutputPresetId);
   }, [plannedOutputPresetId]);
+
+  useEffect(() => {
+    if (!hasSelectedBrand) {
+      setBaselineMode(true);
+    } else if (!previousBrandAvailabilityRef.current) {
+      setBaselineMode(false);
+    }
+    previousBrandAvailabilityRef.current = hasSelectedBrand;
+  }, [hasSelectedBrand]);
 
   useEffect(() => {
     const activeRunBelongsToSlot = slotRuns.some((run) => run.id === activeRunId);
@@ -5723,6 +6730,104 @@ function GenerationPage({
       setSelectedSlot(activeSlots[0]);
     }
   }, [activeSlots, selectedSlot.id, setSelectedSlot]);
+
+  useEffect(() => {
+    let mounted = true;
+    let timer = 0;
+    let refreshInFlight = false;
+    const refreshTasks = async () => {
+      if (!activeProjectId) return;
+      // The active generation flow already owns polling and persistence. Recovery
+      // is only for page reloads; running both paths races and uploads one result twice.
+      if (isGenerating || isBatchRunning || refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        const tasks = await listGenerationTasks(activeProjectId, 30);
+        if (!mounted) return;
+        setServerGenerationTasks(tasks);
+        const activeTasks = tasks.filter((task) => task.status === 'queued' || task.status === 'running');
+        if (activeTasks.length && !isGenerating && !isBatchRunning) {
+          const runningCount = activeTasks.filter((task) => task.status === 'running').length;
+          setGenerationStatus(runningCount
+            ? `${runningCount} 个任务正在生成，另有 ${activeTasks.length - runningCount} 个等待处理。`
+            : `${activeTasks.length} 个生图任务正在排队。`);
+        }
+        for (const task of tasks) {
+          if (task.status !== 'succeeded' || !task.output?.imageUrl || recoveredTaskIdsRef.current.has(task.id)) continue;
+          if (generationRuns.some((run) => run.id === task.runId)) {
+            recoveredTaskIdsRef.current.add(task.id);
+            continue;
+          }
+          recoveredTaskIdsRef.current.add(task.id);
+          try {
+            const taskSlot = activeSlots.find((slot) => String(slot.id) === String(task.slotId));
+            const taskBrief = storyboardBriefs.find((brief) => String(brief.id) === String(task.slotId));
+            if (!taskSlot || !taskBrief || !task.runId) continue;
+            const recoveredPreset = getOutputPresetById(plannedOutputPresetId);
+            const fittedImageSrc = await resizeImageToPreset(task.output.imageUrl, recoveredPreset);
+            const reviewImageDataUrl = await createImageThumbnail(fittedImageSrc, 1200);
+            const storedImage = await saveGeneratedImageToApi({
+              projectId: activeProjectId,
+              imageDataUrl: fittedImageSrc,
+              projectForm,
+              slotId: taskSlot.id,
+              runId: task.runId
+            });
+            const recoveredRun = normalizeGenerationRun({
+              id: task.runId,
+              slotId: taskSlot.id,
+              slotTitle: task.slotTitle || taskBrief.title || taskSlot.title,
+              outputPresetId: recoveredPreset.id,
+              outputPresetLabel: recoveredPreset.label,
+              outputPresetSize: recoveredPreset.size,
+              imageSrc: storedImage.imageUrl,
+              reviewImageDataUrl,
+              imageFilePath: storedImage.filePath || '',
+              imageFilename: storedImage.filename || '',
+              storageKey: storedImage.storageKey || '',
+              storageMode: storedImage.storageMode || '',
+              requestId: task.output.requestId || '',
+              model: task.output.model || '',
+              durationMs: task.output.durationMs || 0,
+              verdict: 'unreviewed',
+              note: '页面刷新后从服务器任务恢复的候选图。',
+              createdAt: task.updatedAt || new Date().toISOString()
+            });
+            onSaveGenerationRun(recoveredRun);
+            setGenerationStatus(`已恢复 ${taskSlot.id} 号图槽的已完成候选图，请继续 AI 预审和人工判断。`);
+          } catch (error) {
+            recoveredTaskIdsRef.current.delete(task.id);
+            appLogger.error('pipeline.generation.task_recovery_failed', error, {
+              projectId: activeProjectId,
+              taskId: task.id
+            });
+          }
+        }
+      } catch (error) {
+        appLogger.error('pipeline.generation.tasks_load_failed', error, { projectId: activeProjectId });
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+    void refreshTasks();
+    timer = window.setInterval(refreshTasks, 8000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [activeProjectId, activeSlots, storyboardBriefs, generationRuns, plannedOutputPresetId, isGenerating, isBatchRunning]);
+
+  const cancelServerTask = async (taskId) => {
+    try {
+      await cancelGenerationTask(activeProjectId, taskId);
+      setServerGenerationTasks((tasks) => tasks.map((task) => (
+        task.id === taskId ? { ...task, status: 'cancelled' } : task
+      )));
+      setGenerationStatus('已取消任务。正在生成中的模型请求可能仍会结束，但结果不会进入候选图。');
+    } catch (error) {
+      setGenerationStatus(error instanceof Error ? error.message : '任务取消失败。');
+    }
+  };
 
   const selectQualityRun = (run, message = '') => {
     const runSlot = activeSlots.find((slot) => slot.id === run.slotId);
@@ -5799,7 +6904,7 @@ function GenerationPage({
 
   const copyGptTestPrompt = async () => {
     if (!selectedBrief) {
-      setGenerationStatus('请先生成 7 图方案，再复制给 GPT 测试。');
+      setGenerationStatus('请先生成图片方案，再复制给 GPT 测试。');
       return;
     }
     const comparisonPrompt = buildGptComparisonPrompt({
@@ -5825,7 +6930,7 @@ function GenerationPage({
     event.target.value = '';
     if (!file) return;
     if (!selectedBrief) {
-      setGenerationStatus('请先生成 7 图方案，再导入外部结果。');
+      setGenerationStatus('请先生成图片方案，再导入外部结果。');
       return;
     }
     setGenerationStatus('正在导入 GPT 页面端结果图...');
@@ -5838,6 +6943,7 @@ function GenerationPage({
       let storedImage = null;
       try {
         storedImage = await saveGeneratedImageToApi({
+          projectId: activeProjectId,
           imageDataUrl: fittedImageSrc,
           projectForm,
           slotId: selectedSlot.id,
@@ -5858,6 +6964,8 @@ function GenerationPage({
         rawImageSrc: '',
         imageFilePath: storedImage?.filePath || '',
         imageFilename: storedImage?.filename || '',
+        storageKey: storedImage?.storageKey || '',
+        storageMode: storedImage?.storageMode || '',
         prompt,
         baselineMode,
         requestId: `external-${runId}`,
@@ -5883,13 +6991,14 @@ function GenerationPage({
   const createCandidateRun = async (slot, brief, options = {}) => {
     const runOutputPreset = options.outputPreset || outputPreset;
     const runBaselineMode = options.baselineMode ?? baselineMode;
+    const localEdit = options.localEdit || null;
     const referenceItems = getGenerationReferenceItems(projectForm, slot.id, runOutputPreset.id, brief?.visualType);
     const runBrand = getBrandProfile(brief.brandId, brandLibrary);
     const shouldAttachLogo = !runBaselineMode
       && runOutputPreset.id === 'aplus'
       && runBrand.id !== 'none'
       && Boolean(runBrand.logoPreview);
-    const generationReferenceItems = shouldAttachLogo
+    const baseReferenceItems = shouldAttachLogo
       ? [
         ...referenceItems,
         {
@@ -5900,11 +7009,37 @@ function GenerationPage({
         }
       ]
       : referenceItems;
-    const runPrompt = buildGenerationPrompt(brief, slot, runOutputPreset, {
+    const generationReferenceItems = localEdit
+      ? [
+        {
+          id: 'local-edit-base',
+          label: 'Current candidate image - exact base image',
+          name: 'Current selected candidate',
+          preview: localEdit.baseImageSrc
+        },
+        ...(localEdit.guideDataUrl ? [{
+          id: 'local-edit-guide',
+          label: 'Edit-zone guide - orange overlay marks the only area that must visibly change',
+          name: 'Local edit area guide',
+          preview: localEdit.guideDataUrl
+        }] : [])
+      ]
+      : baseReferenceItems;
+    const basePrompt = buildGenerationPrompt(brief, slot, runOutputPreset, {
       baselineMode: runBaselineMode,
       promptOverride: promptOverrides?.[slot.id] || '',
-      brandLibrary
+      brandLibrary,
+      productLock: structuredProductLock
     });
+    const runPrompt = localEdit
+      ? [
+        'LOCAL IMAGE EDIT. The first reference is the exact current candidate. The second reference is an edit-zone guide: its orange overlay marks the only area that must visibly change.',
+        `Requested local change: ${localEdit.instruction}`,
+        'Apply the requested change clearly and visibly inside the orange area. Do not output the orange overlay, a mask, annotations, or a comparison layout.',
+        'Everything outside the orange area must remain visually identical: product geometry, material, product color, composition, lighting, background, text, and brand design. Do not reframe, crop, redraw, or alter the full product.',
+        'Generate exactly one final edited ecommerce image.'
+      ].join('\n\n')
+      : basePrompt;
     const runId = createGenerationRunId();
     const startedAt = performance.now();
     appLogger.log('pipeline.generation.request_started', {
@@ -5914,38 +7049,173 @@ function GenerationPage({
       outputPresetId: runOutputPreset.id,
       baselineMode: runBaselineMode,
       referenceCount: generationReferenceItems.length,
-      hasPromptOverride: Boolean(promptOverrides?.[slot.id])
+      hasPromptOverride: Boolean(promptOverrides?.[slot.id]),
+      editType: localEdit ? 'local' : 'full'
     }, { projectId: activeProjectId, step: 'generation', traceId: runId });
-    const sourceImages = await Promise.all(generationReferenceItems.map(async (reference) => ({
+    const sourceImages = await Promise.all(generationReferenceItems.map(async (reference) => {
+      const sourceDataUrl = await imageSourceToDataUrl(reference.preview);
+      return {
         id: reference.id,
         label: reference.label,
         name: reference.name,
-        dataUrl: await imageSourceToDataUrl(reference.preview)
-      })));
-      const sourceImageDataUrl = sourceImages[0]?.dataUrl || await imageSourceToDataUrl(getReferenceImage(projectForm));
-      const response = await fetch(`${IMAGE_API_BASE_URL}/api/generate-image`, {
+        // Local edits only need a model-readable reference. The full-resolution
+        // original remains in the browser for the final outside-mask lock.
+        dataUrl: localEdit ? await createImageThumbnail(sourceDataUrl, 1200) : sourceDataUrl
+      };
+    }));
+    const sourceImageDataUrl = sourceImages[0]?.dataUrl || await imageSourceToDataUrl(getReferenceImage(projectForm));
+    const requestGeneratedImage = async (prompt, attempt = 1) => {
+      const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/generation-tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authenticatedJsonHeaders(),
         body: JSON.stringify({
+          projectId: activeProjectId,
+          runId,
+          clientTaskId: `${runId}-${attempt}`,
           slotId: slot.id,
           slotTitle: brief.title || slot.title,
-          prompt: runPrompt,
+          projectName: projectForm.projectName || projectForm.productName || projectForm.sku || 'vistamz',
+          prompt,
           sourceImageDataUrl,
           sourceImages,
           size: '1024x1024',
           quality: 'low'
         })
-      });
-      const result = await response.json();
-      if (!response.ok || !result.ok) {
+      }, 20000, '生图任务提交超过 20 秒，请检查服务连接后重试。');
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok || !result.task?.id) {
+        const responseMessage = response.status === 404
+          ? '当前 API 服务版本过旧，未找到生图任务入口。'
+          : (result.error || '生图接口返回失败。');
         appLogger.log('pipeline.generation.request_failed', {
           runId,
           slotId: slot.id,
           status: response.status,
-          message: result.error || '生图接口返回失败。',
+          attempt,
+          message: responseMessage,
           durationMs: Math.round(performance.now() - startedAt)
         }, { level: 'error', projectId: activeProjectId, step: 'generation', traceId: runId });
-        throw new Error(result.error || '生图接口返回失败。');
+        throw new Error(responseMessage);
+      }
+      const taskId = result.task.id;
+      const pollingStartedAt = Date.now();
+      const pollingDeadlineMs = 180000;
+      for (let pollCount = 0; Date.now() - pollingStartedAt < pollingDeadlineMs; pollCount += 1) {
+        if (pollCount > 0) await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const taskResponse = await fetchWithTimeout(
+          `${IMAGE_API_BASE_URL}/api/generation-tasks/${encodeURIComponent(taskId)}?projectId=${encodeURIComponent(activeProjectId)}`,
+          { headers: authenticatedJsonHeaders() },
+          12000,
+          '读取生图进度超时，系统会继续保留服务器任务。'
+        );
+        const taskResult = await taskResponse.json().catch(() => ({}));
+        if (!taskResponse.ok || !taskResult.ok) {
+          throw new Error(taskResult.error || '无法读取生图任务状态。');
+        }
+        const task = taskResult.task || {};
+        if (task.status === 'succeeded') return task.output;
+        if (task.status === 'failed' || task.status === 'cancelled') {
+          throw new Error(task.errorMessage || '生图任务重试后仍未完成。');
+        }
+        if (pollCount % 4 === 0) {
+          setGenerationStatus(task.status === 'running'
+            ? `正在生成图片（第 ${Math.max(1, task.attemptCount || 1)} 次尝试）...`
+            : '生图任务已排队，正在等待处理...');
+        }
+      }
+      throw new Error('生图任务等待超过 3 分钟。服务器任务已保留，完成后会自动恢复到候选图。');
+    };
+
+      const fitGeneratedImage = async (imageSrc, attempt) => {
+        const postprocessStartedAt = performance.now();
+        appLogger.log('pipeline.generation.postprocess_started', {
+          runId,
+          slotId: slot.id,
+          attempt,
+          outputPresetId: runOutputPreset.id
+        }, { projectId: activeProjectId, step: 'generation', traceId: runId });
+        try {
+          const fittedImageSrc = await resizeImageToPreset(imageSrc, runOutputPreset);
+          appLogger.log('pipeline.generation.postprocess_completed', {
+            runId,
+            slotId: slot.id,
+            attempt,
+            outputPresetId: runOutputPreset.id,
+            durationMs: Math.round(performance.now() - postprocessStartedAt)
+          }, { projectId: activeProjectId, step: 'generation', traceId: runId });
+          return fittedImageSrc;
+        } catch (error) {
+          appLogger.error('pipeline.generation.postprocess_failed', error, {
+            projectId: activeProjectId,
+            step: 'generation',
+            traceId: runId,
+            runId,
+            slotId: slot.id,
+            attempt,
+            outputPresetId: runOutputPreset.id,
+            durationMs: Math.round(performance.now() - postprocessStartedAt)
+          });
+          throw error;
+        }
+      };
+
+      let result = await requestGeneratedImage(runPrompt);
+      let rawImageSrc = result.imageDataUrl || result.imageUrl;
+      let generatedFittedImageSrc = await fitGeneratedImage(rawImageSrc, 1);
+      if (localEdit) {
+        try {
+          let delta = await measureLocalEditDelta({
+            baseImageSrc: localEdit.baseImageSrc,
+            editedImageSrc: generatedFittedImageSrc,
+            maskDataUrl: localEdit.maskDataUrl,
+            outputPreset: runOutputPreset
+          });
+          appLogger.log('pipeline.local_edit.delta_checked', {
+            runId,
+            parentRunId: localEdit.parentRunId,
+            slotId: slot.id,
+            attempt: 1,
+            ...delta
+          }, { projectId: activeProjectId, step: 'generation', traceId: runId });
+
+          const didNotVisiblyChange = delta.selectedPixels > 0
+            && delta.changedRatio < 0.01
+            && delta.averageDelta < 0.018;
+          if (didNotVisiblyChange) {
+            appLogger.log('pipeline.local_edit.retry_requested', {
+              runId,
+              parentRunId: localEdit.parentRunId,
+              slotId: slot.id,
+              ...delta
+            }, { level: 'warn', projectId: activeProjectId, step: 'generation', traceId: runId });
+            setGenerationStatus('第一次局部修改变化不明显，正在自动重试一次...');
+            result = await requestGeneratedImage([
+              runPrompt,
+              'RETRY REQUIRED: the previous result did not visibly apply the requested local change. Make the requested change clearly perceptible inside the orange edit zone, while preserving every pixel outside it.'
+            ].join('\n\n'), 2);
+            rawImageSrc = result.imageDataUrl || result.imageUrl;
+            generatedFittedImageSrc = await fitGeneratedImage(rawImageSrc, 2);
+            delta = await measureLocalEditDelta({
+              baseImageSrc: localEdit.baseImageSrc,
+              editedImageSrc: generatedFittedImageSrc,
+              maskDataUrl: localEdit.maskDataUrl,
+              outputPreset: runOutputPreset
+            });
+            appLogger.log('pipeline.local_edit.delta_checked', {
+              runId,
+              parentRunId: localEdit.parentRunId,
+              slotId: slot.id,
+              attempt: 2,
+              ...delta
+            }, { projectId: activeProjectId, step: 'generation', traceId: runId });
+          }
+        } catch (error) {
+          appLogger.error('pipeline.local_edit.delta_check_failed', error, {
+            runId,
+            parentRunId: localEdit.parentRunId,
+            slotId: slot.id
+          });
+        }
       }
       appLogger.log('pipeline.generation.request_completed', {
         runId,
@@ -5954,13 +7224,35 @@ function GenerationPage({
         requestId: result.requestId,
         durationMs: result.durationMs || Math.round(performance.now() - startedAt)
       }, { projectId: activeProjectId, step: 'generation', traceId: runId });
-      const rawImageSrc = result.imageDataUrl || result.imageUrl;
-      const fittedImageSrc = await resizeImageToPreset(rawImageSrc, runOutputPreset);
+      let fittedImageSrc = generatedFittedImageSrc;
+      if (localEdit) {
+        try {
+          fittedImageSrc = await composeLocalEditResult({
+            baseImageSrc: localEdit.baseImageSrc,
+            editedImageSrc: generatedFittedImageSrc,
+            maskDataUrl: localEdit.maskDataUrl,
+            outputPreset: runOutputPreset
+          });
+          appLogger.log('pipeline.local_edit.outside_mask_locked', {
+            runId,
+            parentRunId: localEdit.parentRunId,
+            slotId: slot.id
+          }, { projectId: activeProjectId, step: 'generation', traceId: runId });
+        } catch (error) {
+          appLogger.error('pipeline.local_edit.compose_failed', error, {
+            runId,
+            parentRunId: localEdit.parentRunId,
+            slotId: slot.id
+          });
+          throw new Error('局部修改生成后无法锁定选区外画面，请重试。');
+        }
+      }
       const previewImageSrc = await createImageThumbnail(fittedImageSrc);
       const reviewImageDataUrl = await createImageThumbnail(fittedImageSrc, 1200);
       let storedImage = null;
       try {
         storedImage = await saveGeneratedImageToApi({
+          projectId: activeProjectId,
           imageDataUrl: fittedImageSrc,
           projectForm,
           slotId: slot.id,
@@ -5987,6 +7279,8 @@ function GenerationPage({
         rawImageSrc: '',
         imageFilePath: storedImage?.filePath || '',
         imageFilename: storedImage?.filename || '',
+        storageKey: storedImage?.storageKey || '',
+        storageMode: storedImage?.storageMode || '',
         prompt: runPrompt,
         baselineMode: runBaselineMode,
         requestId: result.requestId,
@@ -5994,6 +7288,14 @@ function GenerationPage({
         referenceCount: sourceImages.length,
         referenceLabels: sourceImages.map((image) => image.label),
         durationMs: result.durationMs,
+        parentRunId: localEdit?.parentRunId || '',
+        editType: localEdit ? 'local' : 'full',
+        localEdit: localEdit ? {
+          instruction: localEdit.instruction,
+          selection: localEdit.selection,
+          outsideMaskLocked: true,
+          createdAt: new Date().toISOString()
+        } : null,
         verdict: 'unreviewed',
         reasons: [],
         createdAt: new Date().toISOString()
@@ -6010,7 +7312,9 @@ function GenerationPage({
     }, { projectId: activeProjectId, step: 'generation', traceId: run.id });
     try {
       const review = await reviewGeneratedImageWithApi({
+        projectId: activeProjectId,
         projectForm,
+        productLock: structuredProductLock,
         brief,
         run,
         sourceImages: getGenerationReferenceItems(projectForm, slot.id, runOutputPreset.id, brief?.visualType)
@@ -6041,15 +7345,25 @@ function GenerationPage({
     }
   };
 
-  const runGeneration = async () => {
+  const runGeneration = async (requestedMode = generationMode) => {
     if (!selectedBrief) {
       appLogger.log('pipeline.generation.blocked', {
         reason: 'missing_storyboard_brief'
       }, { level: 'warn', projectId: activeProjectId, step: 'generation' });
-      setGenerationStatus('请先生成 7 图方案，再进入生图验证。');
+      setGenerationStatus('请先生成图片方案，再进入生图验证。');
       return;
     }
-    const tasks = generationMode === 'all-one'
+    const referenceReadiness = getReferenceReadiness(projectForm);
+    if (!referenceReadiness.ready) {
+      appLogger.log('pipeline.generation.blocked', {
+        reason: 'reference_quality_gate',
+        blockers: referenceReadiness.blockers
+      }, { level: 'warn', projectId: activeProjectId, step: 'generation' });
+      setGenerationStatus(`参考图暂不能用于生图：${referenceReadiness.blockers.join('；')}`);
+      return;
+    }
+    const activeGenerationMode = requestedMode;
+    const tasks = activeGenerationMode === 'all-one'
       ? activeSlots
         .map((slot) => ({ slot, brief: storyboardBriefs.find((item) => item.id === slot.id) }))
         .filter((task) => task.brief)
@@ -6057,7 +7371,7 @@ function GenerationPage({
     if (!tasks.length) {
       appLogger.log('pipeline.generation.blocked', {
         reason: 'empty_generation_tasks',
-        generationMode
+        generationMode: activeGenerationMode
       }, { level: 'warn', projectId: activeProjectId, step: 'generation' });
       setGenerationStatus('当前没有可生成的图片方案。');
       return;
@@ -6067,7 +7381,7 @@ function GenerationPage({
     const startedAt = performance.now();
     appLogger.log('pipeline.generation.batch_started', {
       generationSessionId,
-      generationMode,
+      generationMode: activeGenerationMode,
       taskCount: tasks.length,
       outputPresetId: outputPreset.id,
       baselineMode,
@@ -6083,11 +7397,12 @@ function GenerationPage({
         status: 'waiting',
         message: '等待开始'
       })));
-      setGenerationStatus(generationMode === 'all-one'
+      setGenerationStatus(activeGenerationMode === 'all-one'
         ? `开始生成一轮完整图片：共 ${tasks.length} 张，每个卖点各 1 张。`
         : `开始为当前卖点生成 ${tasks.length} 张候选图。`);
       const completedRuns = [];
       const failedMessages = [];
+      let reviewChain = Promise.resolve();
       for (const [index, task] of tasks.entries()) {
         const logId = `${task.slot.id}-${index}`;
         setBatchLog((items) => items.map((item) => (
@@ -6098,39 +7413,41 @@ function GenerationPage({
             baselineMode,
             outputPreset
           });
+          completedRuns.unshift(run);
+          onSaveGenerationRuns(completedRuns);
+          setActiveRunId(run.id);
+          setSelectedSlot(task.slot);
           setBatchLog((items) => items.map((item) => (
-            item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
+            item.id === logId ? { ...item, status: 'reviewing', message: '等待 AI 预审' } : item
           )));
-          try {
-            const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, {
-              outputPreset
-            });
-            completedRuns.unshift(reviewedRun);
-            onSaveGenerationRuns(completedRuns);
-            setActiveRunId(reviewedRun.id);
-            setSelectedSlot(task.slot);
+          reviewChain = reviewChain.then(async () => {
             setBatchLog((items) => items.map((item) => (
-              item.id === logId
-                ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
-                : item
+              item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
             )));
-          } catch (reviewError) {
-            const message = getGenerationErrorMessage(reviewError);
-            const keptRun = {
-              ...run,
-              note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。`
-            };
-            completedRuns.unshift(keptRun);
-            onSaveGenerationRuns(completedRuns);
-            setActiveRunId(keptRun.id);
-            setSelectedSlot(task.slot);
-            failedMessages.push(`AI 预审失败：${message}`);
-            setBatchLog((items) => items.map((item) => (
-              item.id === logId
-                ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
-                : item
-            )));
-          }
+            try {
+              const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, { outputPreset });
+              const runIndex = completedRuns.findIndex((item) => item.id === run.id);
+              if (runIndex >= 0) completedRuns.splice(runIndex, 1, reviewedRun);
+              onSaveGenerationRuns(completedRuns);
+              setBatchLog((items) => items.map((item) => (
+                item.id === logId
+                  ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
+                  : item
+              )));
+            } catch (reviewError) {
+              const message = getGenerationErrorMessage(reviewError);
+              const keptRun = { ...run, note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。` };
+              const runIndex = completedRuns.findIndex((item) => item.id === run.id);
+              if (runIndex >= 0) completedRuns.splice(runIndex, 1, keptRun);
+              onSaveGenerationRuns(completedRuns);
+              failedMessages.push(`AI 预审失败：${message}`);
+              setBatchLog((items) => items.map((item) => (
+                item.id === logId
+                  ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
+                  : item
+              )));
+            }
+          });
         } catch (error) {
           const message = getGenerationErrorMessage(error);
           failedMessages.push(message);
@@ -6141,6 +7458,10 @@ function GenerationPage({
           )));
         }
       }
+      if (completedRuns.length) {
+        setGenerationStatus('候选图已生成，正在完成剩余 AI 预审...');
+      }
+      await reviewChain;
       setIsBatchRunning(false);
       appLogger.log('pipeline.generation.batch_completed', {
         generationSessionId,
@@ -6159,6 +7480,9 @@ function GenerationPage({
     try {
       const run = await createCandidateRun(selectedSlot, selectedBrief);
       setActiveRunId(run.id);
+      onSaveGenerationRun(run);
+      setIsGenerating(false);
+      setIsAiReviewing(true);
       setGenerationStatus('候选图已生成，正在自动 AI 预审...');
       try {
         const reviewedRun = await reviewCandidateRun(run, selectedSlot, selectedBrief, {
@@ -6168,10 +7492,11 @@ function GenerationPage({
         setActiveRunId(reviewedRun.id);
         setGenerationStatus(`候选图已生成并完成 AI 预审：${aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '需复核'}。请人工判断是否可用。`);
       } catch (reviewError) {
-        onSaveGenerationRun(run);
         setGenerationStatus(reviewError instanceof Error
           ? `候选图已生成，但 AI 预审失败：${reviewError.message}。请人工判断是否可用。`
           : '候选图已生成，但 AI 预审失败。请人工判断是否可用。');
+      } finally {
+        setIsAiReviewing(false);
       }
       appLogger.log('pipeline.generation.batch_completed', {
         generationSessionId,
@@ -6185,12 +7510,13 @@ function GenerationPage({
         projectId: activeProjectId,
         step: 'generation',
         traceId: generationSessionId,
-        generationMode,
+        generationMode: activeGenerationMode,
         durationMs: Math.round(performance.now() - startedAt)
       });
       setGenerationStatus(getGenerationErrorMessage(error));
     } finally {
       setIsGenerating(false);
+      setIsAiReviewing(false);
     }
   };
 
@@ -6224,95 +7550,77 @@ function GenerationPage({
     }
   };
 
-  const runBatchValidation = async () => {
-    if (!storyboardBriefs.length) {
-      setGenerationStatus('请先生成 7 图方案，再跑批量验证。');
-      return;
-    }
-    const baselineOutputPreset = outputPresets[0];
-    const tasks = batchMode === 'all-1'
-      ? activeSlots
-        .map((slot) => ({ slot, brief: storyboardBriefs.find((item) => item.id === slot.id) }))
-        .filter((task) => task.brief)
-      : Array.from({ length: 5 }, () => ({ slot: selectedSlot, brief: selectedBrief })).filter((task) => task.brief);
-    if (!tasks.length) {
-      setGenerationStatus('当前没有可验证的图槽方案。');
-      return;
-    }
-
-    setIsBatchRunning(true);
-    setBatchLog(tasks.map((task, index) => ({
-      id: `${task.slot.id}-${index}`,
-      slotTitle: task.brief.title || task.slot.title,
-      status: 'waiting',
-      message: '等待开始'
-    })));
-    setGenerationStatus(`批量验证开始：共 ${tasks.length} 张，强制使用无品牌基线 + ${baselineOutputPreset.size}，生成后会自动 AI 预审。`);
-
-    const completedRuns = [];
-    const failedMessages = [];
-    for (const [index, task] of tasks.entries()) {
-      const logId = `${task.slot.id}-${index}`;
-      setBatchLog((items) => items.map((item) => (
-        item.id === logId ? { ...item, status: 'running', message: '正在生成候选图' } : item
-      )));
-      try {
-        const run = await createCandidateRun(task.slot, task.brief, {
-          baselineMode: true,
-          outputPreset: baselineOutputPreset
-        });
-        setBatchLog((items) => items.map((item) => (
-          item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
-        )));
-        try {
-          const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, {
-            outputPreset: baselineOutputPreset
-          });
-          completedRuns.unshift(reviewedRun);
-          onSaveGenerationRuns(completedRuns);
-          setActiveRunId(reviewedRun.id);
-          setSelectedSlot(task.slot);
-          setBatchLog((items) => items.map((item) => (
-            item.id === logId
-              ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
-              : item
-          )));
-        } catch (reviewError) {
-          const message = getGenerationErrorMessage(reviewError);
-          const keptRun = {
-            ...run,
-            note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。`
-          };
-          completedRuns.unshift(keptRun);
-          onSaveGenerationRuns(completedRuns);
-          setActiveRunId(keptRun.id);
-          setSelectedSlot(task.slot);
-          failedMessages.push(`AI 预审失败：${message}`);
-          setBatchLog((items) => items.map((item) => (
-            item.id === logId
-              ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
-              : item
-          )));
+  const generateLocalEdit = async ({ instruction, selection, maskDataUrl }) => {
+    if (!activeCandidate || !activeCandidateBrief || !maskDataUrl) return;
+    const runOutputPreset = getOutputPresetById(activeCandidate.outputPresetId);
+    setIsLocalEditing(true);
+    setGenerationStatus('正在基于当前候选图生成局部修正版...');
+    appLogger.log('pipeline.local_edit.started', {
+      parentRunId: activeCandidate.id,
+      slotId: activeCandidate.slotId,
+      selectionType: selection.type,
+      instructionLength: instruction.length
+    }, { projectId: activeProjectId, step: 'generation', traceId: activeCandidate.id });
+    try {
+      setGenerationStatus('正在读取当前图片并准备局部选区...');
+      appLogger.log('pipeline.local_edit.guide_started', {
+        parentRunId: activeCandidate.id,
+        slotId: activeCandidate.slotId
+      }, { projectId: activeProjectId, step: 'generation', traceId: activeCandidate.id });
+      const guideDataUrl = await createLocalEditGuideDataUrl(activeCandidate.imageSrc, selection, runOutputPreset);
+      appLogger.log('pipeline.local_edit.guide_completed', {
+        parentRunId: activeCandidate.id,
+        slotId: activeCandidate.slotId
+      }, { projectId: activeProjectId, step: 'generation', traceId: activeCandidate.id });
+      setGenerationStatus('局部选区已准备，正在提交生图任务...');
+      const run = await createCandidateRun(activeCandidateSlot, activeCandidateBrief, {
+        outputPreset: runOutputPreset,
+        baselineMode: activeCandidate.baselineMode,
+        localEdit: {
+          parentRunId: activeCandidate.id,
+          baseImageSrc: activeCandidate.imageSrc,
+          maskDataUrl,
+          guideDataUrl,
+          instruction,
+          selection
         }
-      } catch (error) {
-        const message = getGenerationErrorMessage(error);
-        failedMessages.push(message);
-        setBatchLog((items) => items.map((item) => (
-          item.id === logId
-            ? { ...item, status: 'failed', message }
-            : item
-        )));
+      });
+      setGenerationStatus('局部修正版已生成，正在自动 AI 预审...');
+      try {
+        const reviewedRun = await reviewCandidateRun(run, activeCandidateSlot, activeCandidateBrief, {
+          outputPreset: runOutputPreset
+        });
+        onSaveGenerationRun(reviewedRun);
+        setActiveRunId(reviewedRun.id);
+        setGenerationStatus(`局部修正版已完成 AI 预审：${aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '需复核'}。`);
+      } catch (reviewError) {
+        onSaveGenerationRun({ ...run, note: `局部修改完成，但 AI 预审失败：${getGenerationErrorMessage(reviewError)}` });
+        setActiveRunId(run.id);
+        setGenerationStatus('局部修正版已保留，但 AI 预审未完成。请人工判断或稍后重试预审。');
       }
+      setIsLocalEditOpen(false);
+      appLogger.log('pipeline.local_edit.completed', {
+        parentRunId: activeCandidate.id,
+        slotId: activeCandidate.slotId
+      }, { projectId: activeProjectId, step: 'generation', traceId: activeCandidate.id });
+    } catch (error) {
+      const message = getGenerationErrorMessage(error);
+      setGenerationStatus(`局部修改失败：${message}`);
+      appLogger.error('pipeline.local_edit.failed', error, {
+        projectId: activeProjectId,
+        step: 'generation',
+        traceId: activeCandidate.id,
+        slotId: activeCandidate.slotId
+      });
+    } finally {
+      setIsLocalEditing(false);
     }
-
-    setIsBatchRunning(false);
-    setGenerationStatus(summarizeBatchGenerationResult(completedRuns.length, tasks.length, failedMessages, '批量验证'));
   };
 
   return (
-    <section className="page-grid">
+    <section className="page-grid generation-workspace">
       <div className="left-column generation-left-sticky">
-        <section className="panel api-panel">
+        <section className="vz-card panel api-panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Slots</p>
@@ -6329,6 +7637,7 @@ function GenerationPage({
               return (
               <button
                 className={selectedSlot.id === slot.id ? 'generation-slot active' : 'generation-slot'}
+                data-slot-number={String(slot.id).padStart(2, '0')}
                 key={slot.id}
                 onClick={() => {
                   setSelectedSlot(slot);
@@ -6337,7 +7646,7 @@ function GenerationPage({
               >
                 <img src={generationPreviewImage} alt={`${slot.title} product reference`} />
                 <span>
-                  <strong>{String(slot.id).padStart(2, '0')} · {brief?.title || slot.title}</strong>
+                          <strong>{brief?.title || slot.title}</strong>
                   <small>{brief ? brief.goal : '等待方案'}</small>
                 </span>
                 <SlotGenerationStatusPill slotId={slot.id} generationRuns={generationRuns} />
@@ -6348,88 +7657,98 @@ function GenerationPage({
           <p className="panel-note">
             同一产品内重新生成卖点或 7 图方案会保留质量样本；如果更换主图、SKU 或产品名，系统会清空旧记录避免混入旧产品数据。
           </p>
-        </section>
-
-        <section className="panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Reference</p>
-              <h3>每次从原图生成</h3>
+          <div className="generation-left-queue" aria-label="待人工判断">
+            <div className="generation-left-queue-head">
+            <div><p className="eyebrow">REVIEW QUEUE</p><strong>待人工判断</strong></div>
+            <span>{unreviewedQualityRuns.length}</span>
             </div>
-          </div>
-          <div className="generation-reference">
-            <img src={getReferenceImage(projectForm)} alt="Locked product reference" />
-            <div>
-              <strong>{getReferenceImageName(projectForm)}</strong>
-              <p>验证阶段只允许把原始参考图组传给 API，不允许基于上一张候选图继续修改。</p>
-              <span>{projectForm.productName || projectForm.projectName || '未命名产品'}</span>
-            </div>
-          </div>
-          <div className="generation-reference-strip">
-            {generationReferences.map((reference) => (
-              <span key={reference.id}>
-                {reference.label}
-                <b>{reference.name || '已就绪'}</b>
-              </span>
-            ))}
+            {(showGenerationProgress || generationStatus) && (
+              <div className={generationStatusClass}>
+                <span>{generationStageLabel || '处理状态'}</span>
+                <strong>{generationStatus || batchProgress.running?.message || '正在等待下一次操作'}</strong>
+              </div>
+            )}
+            {activeServerTasks.length > 0 && (
+              <div className="generation-server-task-list" aria-label="服务器生图任务">
+                {activeServerTasks.map((task) => (
+                  <div key={task.id}>
+                    <span>{String(task.slotId || '').padStart(2, '0')}</span>
+                    <p>
+                      <strong>{task.slotTitle || '图片生成任务'}</strong>
+                      <small>{task.status === 'running' ? `生成中 · 第 ${Math.max(1, task.attemptCount || 1)} 次尝试` : '排队中'}</small>
+                    </p>
+                    <button className="vz-btn vz-btn--ghost" type="button" onClick={() => cancelServerTask(task.id)}>取消</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {visibleQueueRuns.length ? (
+              <div className="generation-left-queue-list">
+                {visibleQueueRuns.map((run) => (
+                  <button
+                    className={activeCandidate?.id === run.id ? 'active' : ''}
+                    key={run.id}
+                    onClick={() => selectQualityRun(run, '已打开待判断候选图。')}
+                    type="button"
+                  >
+                    <span>{String(run.slotId).padStart(2, '0')}</span>
+                    <strong>{run.slotTitle}</strong>
+                    <small>{run.aiReview ? aiReviewVerdicts[run.aiReview.verdict]?.label || '已预审' : '待 AI 预审'}</small>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="generation-left-queue-empty">候选图生成后，可从这里直接进入人工判断。</p>
+            )}
           </div>
         </section>
       </div>
 
       <div className="right-column">
         <FocusFrame active={getFocusSignal(focusRequest, 'generation')}>
-          <section className="panel generation-panel">
+          <section className={`vz-card panel generation-panel ${activeCandidate ? 'has-candidate' : 'is-empty'}`}>
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Generate</p>
-                <h3>{String(selectedSlot.id).padStart(2, '0')} · {selectedBrief?.title || selectedSlot.title}</h3>
+                <h3>设计与生图</h3>
+                <p className="generation-workspace-subtitle">{String(selectedSlot.id).padStart(2, '0')} · {selectedBrief?.title || selectedSlot.title}</p>
               </div>
-              <button className="primary-button" disabled={!canGenerate || isGenerating || isBatchRunning} onClick={runGeneration}>
-                <Sparkles size={17} />
-                {generationButtonLabel}
-              </button>
             </div>
 
             <div className="generation-setup">
             <div className="generation-setup-head">
-              <span>生成设置</span>
-              <strong>{outputPreset.label} · {baselineMode ? '基线模式' : '品牌模式'}</strong>
+              <span>生成方式</span>
+              <strong>{baselineMode ? '基线模式' : '品牌模式'}</strong>
             </div>
 
             <div className="generation-method">
               <div className="generation-method-grid">
                 <button
-                  className={generationMode === 'single-multi' ? 'generation-method-card active' : 'generation-method-card'}
-                  disabled={isBatchRunning || isGenerating}
-                  onClick={() => setGenerationMode('single-multi')}
+                  className="vz-btn vz-btn--primary primary-button generation-action-button"
+                  disabled={isGenerationBusy}
+                  onClick={() => {
+                    setGenerationMode('single-multi');
+                    runGeneration('single-multi');
+                  }}
                 >
-                  <span>方式一</span>
-                  <strong>单个卖点生成多张</strong>
-                  <p>适合打磨当前图槽，快速比较构图、审美和文案表现。</p>
+                  <Sparkles size={15} />
+                  重生当前图 · 3 张
                 </button>
                 <button
-                  className={generationMode === 'all-one' ? 'generation-method-card active' : 'generation-method-card'}
-                  disabled={isBatchRunning || isGenerating}
-                  onClick={() => setGenerationMode('all-one')}
+                  className="vz-btn vz-btn--primary primary-button generation-action-button"
+                  disabled={isGenerationBusy}
+                  onClick={() => {
+                    setGenerationMode('all-one');
+                    runGeneration('all-one');
+                  }}
                 >
-                  <span>方式二</span>
-                  <strong>各卖点各生成一张</strong>
-                  <p>适合快速跑完整套图，像验证流程一样一次看 7 张方向。</p>
+                  <Layers size={15} />
+                  整套生成 · 各 1 张
                 </button>
               </div>
               {generationMode === 'single-multi' ? (
-                <div className="generation-count-row">
-                  <span>生成数量</span>
-                  {[1, 3, 5].map((count) => (
-                    <button
-                      className={singleBatchCount === count ? 'active' : ''}
-                      disabled={isBatchRunning || isGenerating}
-                      key={count}
-                      onClick={() => setSingleBatchCount(count)}
-                    >
-                      {count} 张
-                    </button>
-                  ))}
+                <div className="generation-count-row muted">
+                  <span>当前图槽固定生成 3 张候选图，用于比较后选定一张。</span>
                 </div>
               ) : (
                 <div className="generation-count-row muted">
@@ -6438,198 +7757,54 @@ function GenerationPage({
               )}
             </div>
 
-            <div className="output-mode">
-              {outputPresets.map((preset) => (
-                <button
-                  className={outputPreset.id === preset.id ? 'active' : ''}
-                  disabled
-                  key={preset.id}
-                  title="输出类型来自图片方案；如需切换，请回到规划图片重新生成方案。"
-                >
-                  <strong>{preset.label}</strong>
-                  <span>{preset.size}</span>
-                </button>
-              ))}
-            </div>
-            <p className="panel-note">输出类型已跟随图片方案锁定。要切换主图/A+，请回到“规划图片”重新生成方案。</p>
-
-            <div className="validation-bar style-bar">
-              <div>
-                <Palette size={16} />
-                <span>图片风格</span>
+            <section className="generation-style-selector" aria-label="图片风格">
+              <div className="generation-style-selector-head">
+                <div>
+                  <Palette size={16} />
+                  <span>图片风格</span>
+                </div>
+                <small>{hasSelectedBrand ? '可在生成前临时切换' : '未选择品牌，仅可使用基线'}</small>
               </div>
-              <div className="output-mode">
+              <div className="generation-style-options" role="group" aria-label="选择图片风格模式">
                 <button
                   className={baselineMode ? 'active' : ''}
                   onClick={() => setBaselineMode(true)}
                 >
-                  <strong>基线模式</strong>
-                  <span>不套品牌，统一基线</span>
+                  <Layers size={16} />
+                  <span><strong>基线</strong><small>统一商业基线</small></span>
                 </button>
                 <button
                   className={!baselineMode ? 'active' : ''}
+                  disabled={!hasSelectedBrand}
                   onClick={() => setBaselineMode(false)}
+                  title={hasSelectedBrand ? '套用当前项目的品牌规则' : '请先在项目资料中选择品牌'}
                 >
-                  <strong>品牌模式</strong>
-                  <span>套用品牌风格</span>
+                  <Palette size={16} />
+                  <span><strong>品牌</strong><small>{hasSelectedBrand ? '应用品牌规则' : '未选择品牌'}</small></span>
                 </button>
               </div>
+              <p>{baselineMode ? '使用统一的商业基线，不读取品牌色、标题与箭头规则。' : '生成时会读取项目已绑定品牌的色彩、标题、箭头和场景规则。'}</p>
+            </section>
             </div>
-            </div>
-
-            {(approvedSlotRuns.length > 0 || generationReadyForReview) && (
-              <div className={generationReadyForReview ? 'inline-next-step' : 'inline-next-step muted'}>
-                <div>
-                  {generationReadyForReview ? <Check size={18} /> : <Eye size={18} />}
-                  <span>
-                    <strong>{generationReadyForReview ? '7 张图已人工通过' : `已有 ${approvedSlotRuns.length}/${activeSlots.length || STORYBOARD_SLOT_COUNT} 张图人工通过`}</strong>
-                    <small>{generationReadyForReview
-                      ? '可以进入审核页做最终确认。'
-                      : `还差 ${missingApprovedSlots} 个图槽需要有一张候选图被标记为可用。`}</small>
-                  </span>
-                </div>
-                <button className="primary-button" disabled={!generationReadyForReview} onClick={onGoReview}>
-                  <ShieldCheck size={16} />
-                  下一步：审核图片
-                </button>
-              </div>
-            )}
-
-            {showGenerationProgress && (
-              <div className="generation-progress-panel">
-                <div className="generation-progress-head">
-                  <div>
-                    <span>生成进度</span>
-                    <strong>{generationStageLabel}</strong>
-                  </div>
-                  {batchProgress.total > 0 && (
-                    <em>{batchProgress.done + batchProgress.failed}/{batchProgress.total} 已处理</em>
-                  )}
-                </div>
-                {batchLog.length > 0 ? (
-                  <div className="generation-progress-list">
-                    {batchLog.map((item) => (
-                      <div className={item.status} key={item.id}>
-                        <span>{item.slotTitle}</span>
-                        <strong>{item.message}</strong>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="generation-progress-list compact">
-                    <div className={singleProgressStatus}>
-                      <span>{selectedBrief?.title || selectedSlot.title}</span>
-                      <strong>{generationStatus || generationStageLabel || '等待生成'}</strong>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div className="review-flow-panel">
-              <div className="review-flow-head">
-                <div>
-                  <span>待判断队列</span>
-                  <strong>{unreviewedQualityRuns.length ? `${unreviewedQualityRuns.length} 张候选图待人工判断` : '当前没有待判断图'}</strong>
-                </div>
-                {unreviewedQualityRuns.length > 0 && (
-                  <button
-                    className="secondary-button"
-                    onClick={() => selectNextUnreviewedRun()}
-                  >
-                    <ChevronRight size={16} />
-                    下一张待判断
-                  </button>
-                )}
-              </div>
-              {visibleQueueRuns.length > 0 ? (
-                <div className="review-flow-list">
-                  {visibleQueueRuns.map((run) => (
-                    <button
-                      className={activeCandidate?.id === run.id ? 'active' : ''}
-                      key={run.id}
-                      onClick={() => selectQualityRun(run, '已打开待判断候选图。')}
-                    >
-                      <span>{String(run.slotId).padStart(2, '0')}</span>
-                      <strong>{run.slotTitle}</strong>
-                      <small>{run.aiReview ? aiReviewVerdicts[run.aiReview.verdict]?.label || '已预审' : '待 AI 预审'}</small>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p>生成候选图后，这里会出现需要人工判断的图片。</p>
-              )}
-            </div>
-
-            <details className="disclosure-panel generation-advanced">
-              <summary>
-                <span>
-                  <b>质量工具</b>
-                  <small>当前图槽可用率、失败原因和基线验证</small>
-                </span>
-                <ChevronRight size={17} />
-              </summary>
-              <div className="quality-summary">
-                <Metric label="当前图槽记录" value={slotQuality.total} />
-                <Metric label="可用" value={slotQuality.usable} tone="good" />
-                <Metric label="需修改" value={slotQuality.needsFix} />
-                <Metric label="不可用" value={slotQuality.rejected} tone="danger" />
-              </div>
-              <div className="batch-validation-box">
-                <div className="batch-validation-head">
-                  <div>
-                    <span>质量基线</span>
-                    <strong>用固定基线模式跑一组候选图</strong>
-                  </div>
-                  <button
-                    className="secondary-button"
-                    disabled={isBatchRunning || isGenerating || isAiReviewing || !storyboardBriefs.length}
-                    onClick={runBatchValidation}
-                  >
-                    {isBatchRunning ? <RefreshCcw className="spin-icon" size={16} /> : <Sparkles size={16} />}
-                    {isBatchRunning ? '运行中...' : '跑一轮质量基线'}
-                  </button>
-                </div>
-                <div className="batch-mode">
-                  <button
-                    className={batchMode === 'current-5' ? 'active' : ''}
-                    disabled={isBatchRunning}
-                    onClick={() => setBatchMode('current-5')}
-                  >
-                    当前图槽 5 张
-                  </button>
-                  <button
-                    className={batchMode === 'all-1' ? 'active' : ''}
-                    disabled={isBatchRunning}
-                    onClick={() => setBatchMode('all-1')}
-                  >
-                    当前 7 图各 1 张
-                  </button>
-                </div>
-              </div>
-            </details>
 
             {selectedBrief ? (
               <div className="generation-brief">
-                <div>
-                  <span>本张图的生成说明</span>
-                  <p>{selectedBrief.composition} · 输出：{outputPreset.label} {outputPreset.size}</p>
+                <div className="generation-context-head">
+                  <span className="eyebrow">Generation Context</span>
+                  <span className="vz-tag generation-context-mode">
+                    {baselineMode ? '基线模式' : `品牌模式${selectedProjectBrand?.name ? ` · ${selectedProjectBrand.name}` : ''}`}
+                  </span>
                 </div>
-                <div className="visual-proof-box compact">
-                  <span>主卖点</span>
+                <div className="generation-brief-summary">
+                  <span>本图证明什么</span>
                   <strong>{selectedBrief.primaryClaim || '暂未分配主卖点'}</strong>
-                  <span>画面证明方式</span>
-                  <p>{selectedBrief.visualProof || '这张图需要用画面证明卖点，而不是只放文字。'}</p>
+                  <p>{selectedBrief.visualProof || selectedBrief.composition || '这张图需要用画面证明卖点，而不是只放文字。'}</p>
                 </div>
-                <div className="language-rule-note">
-                  <Check size={15} />
-                  <p>关键词和卖点可以中文填写；生成图片里的可见文案统一输出英文。标准主图优先用画面证明卖点，尽量少放说明文字；第 1 张白底主图产品占画面目标 80%-85%，最低约 75%，且不能裁切或变形；如有标题通常放在图上方，7 张图保持统一字体和风格。A+ 是内容模块例外：不要求第一张白底，标题可按版式摆放，也可组合相关可用卖点。禁用卖点不能用画面暗示成卖点。</p>
-                </div>
-                <details className="disclosure-panel inline-disclosure">
+                <details className="generation-brief-details">
                   <summary>
                     <span>
-                      <b>提示词与模型对照</b>
-                      <small>GPT 页面测试、完整 Prompt、高级排查</small>
+                      <b>生成规则与模型对照</b>
+                      <small>仅在需要时展开</small>
                     </span>
                     <ChevronRight size={17} />
                   </summary>
@@ -6639,13 +7814,13 @@ function GenerationPage({
                       <p>复制同一套提示词到页面端 GPT；生成后把图片导入这里，用同一套 P0 标准判断。</p>
                     </div>
                     <div className="model-compare-actions">
-                      <button className="secondary-button" onClick={copyGptTestPrompt}>
+                      <button className="vz-btn vz-btn--secondary secondary-button" onClick={copyGptTestPrompt}>
                         <ClipboardCheck size={15} />
-                        生成/复制 GPT 提示词
+                        复制提示词
                       </button>
-                      <label className="secondary-button upload-button" htmlFor="external-candidate-upload">
+                      <label className="vz-btn vz-btn--secondary secondary-button upload-button" htmlFor="external-candidate-upload">
                         <Upload size={15} />
-                        导入 GPT 结果图
+                        导入外部图
                       </label>
                       <input
                         className="file-input"
@@ -6659,7 +7834,7 @@ function GenerationPage({
                       <div className="gpt-prompt-draft">
                         <div>
                           <strong>GPT 测试提示词</strong>
-                          <button className="text-button" onClick={() => setGptComparisonPrompt('')}>关闭</button>
+                          <button className="vz-btn vz-btn--ghost text-button" onClick={() => setGptComparisonPrompt('')}>关闭</button>
                         </div>
                         <textarea
                           readOnly
@@ -6669,10 +7844,6 @@ function GenerationPage({
                         <p>如果自动复制没有成功，点进这个文本框后全选复制；到网页端 GPT 上传同一张产品参考图，再粘贴这段内容。</p>
                       </div>
                     )}
-                  </div>
-                  <div className="prompt-brief">
-                    <span>完整提示词</span>
-                    <p>{prompt}</p>
                   </div>
                 </details>
               </div>
@@ -6684,308 +7855,399 @@ function GenerationPage({
               </div>
             )}
 
-            {generationStatus && (
-              <div className={generationStatusClass}>
-                {generationStatus}
+            {!activeCandidate && (
+              <div className="candidate-block candidate-pending-block">
+                <div className="candidate-preview candidate-preview-pending">
+                  {isGenerationBusy && <VistamzLoader size={40} label={generationStageLabel} />}
+                  <strong>{candidatePendingTitle}</strong>
+                  <p>{batchProgress.total ? `${batchProgress.done + batchProgress.failed}/${batchProgress.total} 已处理。${candidatePendingDetail}` : candidatePendingDetail}</p>
+                </div>
               </div>
             )}
 
             {activeCandidate && (
-              <div className="candidate-block">
-                <div
-                  className="candidate-preview"
-                  style={{ '--candidate-ratio': `${activeCandidatePreset.width} / ${activeCandidatePreset.height}` }}
-                >
-	                  {activeCandidate.imageSrc ? (
-	                    <img src={activeCandidate.imageSrc} alt="Generated candidate" />
-	                  ) : (
-	                    <div className="candidate-image-missing">
-	                      <FileImage size={28} />
-	                      <strong>这张旧图没有保存文件</strong>
-	                      <span>请重新生成这一张。之后的新候选图会保存到本机文件夹，刷新后也能继续查看。</span>
-	                    </div>
-	                  )}
-	                  <div>
-                    <div className="candidate-title-row">
-                      <strong>{activeCandidate.slotTitle}</strong>
-                      <GenerationVerdictPill verdict={activeCandidate.verdict} />
-                    </div>
-                    <p>
-                      {activeCandidate.model || 'image model'} · {activeCandidate.outputPresetLabel} {activeCandidate.outputPresetSize}
-                      {' · '}
-                      {activeCandidate.referenceCount || 1} 张参考图
-                      {activeCandidate.durationMs ? ` · ${Math.round(activeCandidate.durationMs / 1000)}s` : ''}
-                    </p>
-                    <span>{activeCandidate.baselineMode ? '基线模式' : '品牌模式'} · {formatProjectTime(activeCandidate.createdAt)}</span>
-                    {activeCandidate.requestId && <span>request: {activeCandidate.requestId}</span>}
-                    <div className={`candidate-review-summary ${activeCandidate.aiReview?.verdict || 'empty'}`}>
-                      <span>AI 预审</span>
-                      <strong>{activeCandidate.aiReview ? aiReviewVerdicts[activeCandidate.aiReview.verdict]?.label || '需复核' : '等待预审'}</strong>
-                      <p>{activeCandidate.aiReview
-                        ? `风险分 ${activeCandidate.aiReview.score ?? '-'} · 最终以人工判断为准`
-                        : '生成后会自动预审；这里显示简短结论。'}</p>
-                    </div>
+              <>
+                <div className="candidate-block">
+                  <div
+                    className={`candidate-preview ${isGenerationBusy ? 'is-processing' : ''}`}
+                    style={{ '--candidate-ratio': `${activeCandidatePreset.width} / ${activeCandidatePreset.height}` }}
+                    aria-busy={isGenerationBusy}
+                  >
+                    {activeCandidate.imageSrc ? (
+                      <img src={activeCandidate.imageSrc} alt="Generated candidate" />
+                    ) : (
+                      <div className="candidate-image-missing">
+                        <FileImage size={28} />
+                        <strong>这张旧图没有保存文件</strong>
+                        <span>请重新生成这一张。之后的新候选图会保存到本机文件夹，刷新后也能继续查看。</span>
+                      </div>
+                    )}
+                    {isGenerationBusy && (
+                      <div className="candidate-processing-overlay" role="status" aria-live="polite">
+                        <VistamzLoader size={42} label={generationStageLabel} />
+                        <strong>{generationStageLabel}</strong>
+                        <span>{generationStatus || '正在处理，请勿重复提交。'}</span>
+                      </div>
+                    )}
                   </div>
-                </div>
 
-                <div className="quick-review-bar">
-                  <div>
-                    <span>快速人工判断</span>
-                    <strong>{String(activeCandidate.slotId).padStart(2, '0')} · {activeCandidate.slotTitle}</strong>
-                  </div>
-                  <div className="quick-review-actions">
-                    {Object.entries(generationVerdicts).filter(([id]) => id !== 'unreviewed').map(([id, item]) => {
-                      const Icon = item.icon;
-                      return (
+                  {slotRuns.length > 1 && (
+                    <div className="run-history">
+                      <span>候选版本 {slotRuns.length}</span>
+                      {slotRuns.slice(0, 5).map((run) => (
                         <button
-                          className={activeCandidate.verdict === id ? `active ${item.className}` : ''}
-                          key={id}
-                          onClick={() => markActiveCandidate(id)}
+                          className={activeCandidate?.id === run.id ? 'active' : ''}
+                          key={run.id}
+                          onClick={() => setActiveRunId(run.id)}
                         >
-                          <Icon size={15} />
-                          {item.label}
+                          {run.imageSrc && <img src={run.imageSrc} alt={`${run.slotTitle} 候选图`} />}
+                          <GenerationVerdictPill verdict={run.verdict} />
+                          <strong>{run.editType === 'local' ? '局部修订' : '候选图'}</strong>
+                          <small>{formatProjectTime(run.createdAt)}</small>
                         </button>
-                      );
-                    })}
-                    <button
-                      className="ai-suggestion-action"
-                      disabled={!activeCandidate.aiSuggestion && !activeCandidate.aiReview}
-                      onClick={applyAiSuggestionToActiveCandidate}
-                    >
-                      <Sparkles size={15} />
-                      采用 AI 建议
-                    </button>
-                    <button
-                      className="secondary-button"
-                      disabled={!unreviewedQualityRuns.length}
-                      onClick={() => selectNextUnreviewedRun()}
-                    >
-                      <ChevronRight size={15} />
-                      下一张
-                    </button>
-                  </div>
-                  <label className="auto-advance-toggle">
-                    <input
-                      checked={autoAdvanceReview}
-                      onChange={(event) => setAutoAdvanceReview(event.target.checked)}
-                      type="checkbox"
-                    />
-                    标记后自动跳下一张
-                  </label>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <div className="quality-review-box">
-                  <div className="quality-review-header">
-                    <div>
-                      <span>问题原因</span>
-                      <p>先在上方判断可用性；如果需修改或不可用，再勾选原因。</p>
+                <aside className="generation-review-panel">
+                  <div className={`candidate-review-summary ${activeCandidate.aiReview?.verdict || 'empty'}`}>
+                    <div className="candidate-review-summary-head">
+                      <span>AI 预审</span>
+                      {activeCandidate.aiReview && <b className="candidate-review-score" aria-label={`风险分 ${activeCandidate.aiReview.score ?? '-'}`}>{activeCandidate.aiReview.score ?? '-'}</b>}
                     </div>
+                    <strong>{activeCandidate.aiReview ? aiReviewVerdicts[activeCandidate.aiReview.verdict]?.label || '需复核' : '等待预审'}</strong>
+                    <p>{activeCandidate.aiReview ? '最终以人工判断为准' : '生成后会自动预审；这里显示简短结论。'}</p>
                   </div>
-                  {activeCandidate.verdict === 'usable' ? (
-                    <div className="reason-empty-state">
-                      <Check size={16} />
-                      <span>已标记可用，无需选择问题原因。</span>
-                    </div>
-                  ) : (
-                    <div className="reason-grid">
-                      {generationFailureReasons.map((reason) => {
-                        const checked = activeCandidate.reasons.includes(reason.id);
-                        return (
-                          <button
-                            className={checked ? 'active' : ''}
-                            key={reason.id}
-                            onClick={() => {
-                              const reasons = checked
-                                ? activeCandidate.reasons.filter((item) => item !== reason.id)
-                                : [...activeCandidate.reasons, reason.id];
-                              onUpdateGenerationRun(activeCandidate.id, { reasons });
-                            }}
-                          >
-                            {checked ? <Check size={14} /> : <Plus size={14} />}
-                            {reason.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {activeCandidate.reasons.length > 0 && (
-                    <p className="reason-summary">
-                      已标记：{getFailureReasonLabels(activeCandidate.reasons).join('、')}
-                    </p>
-                  )}
-                  {activeCandidate.verdict !== 'usable' && activeReasonSuggestions.length > 0 && (
-                    <div className="reason-tuning-box">
-                      <div>
-                        <span>下轮生成建议</span>
-                        <strong>已根据问题原因生成 {activeReasonSuggestions.length} 条提示词规则</strong>
-                        <p>{activeReasonSuggestions.map((suggestion) => suggestion.title).join('、')}</p>
-                      </div>
-                      <div className="reason-tuning-actions">
-                        <button className="secondary-button" onClick={applyActiveReasonRulesToPrompt}>
-                          <Plus size={15} />
-                          加入本图槽提示词
-                        </button>
-                        <button className="secondary-button" onClick={saveReasonsAndGoNext}>
-                          <ChevronRight size={15} />
-                          保存原因，下一张
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  <div className="ai-review-details">
-                    <div className="ai-review-details-head">
-                      <div>
-                        <span>AI 预审详情</span>
-                        <strong>{activeCandidate.aiReview ? '风险项和建议已展开' : '当前候选图还没有预审结果'}</strong>
-                      </div>
-                    </div>
+
+                  <details className="candidate-ai-evidence">
+                    <summary>
+                      <span>查看预审依据</span>
+                      <ChevronRight size={16} />
+                    </summary>
                     <div className="ai-review-action-row">
-                      <button className="secondary-button" disabled={isAiReviewing || isBatchRunning} onClick={runAiReview}>
+                      <button className="vz-btn vz-btn--secondary secondary-button" disabled={isAiReviewing || isBatchRunning} onClick={runAiReview}>
                         <ShieldCheck size={16} />
                         {isAiReviewing ? 'AI 预审中...' : activeCandidate.aiReview ? '重新 AI 预审' : 'AI 预审'}
                       </button>
-                      <span>AI 只做风险提示，最终仍由人工确认。</span>
+                      <span>AI 只提示风险，最终仍由人工确认。</span>
                     </div>
                     <AiReviewPanel review={activeCandidate.aiReview} />
-                    <AiSuggestionBox
-                      suggestion={activeCandidate.aiSuggestion}
-                      onApply={applyAiSuggestionToActiveCandidate}
-                    />
+                    <AiSuggestionBox suggestion={activeCandidate.aiSuggestion} onApply={applyAiSuggestionToActiveCandidate} />
+                  </details>
+
+                  <div className="generation-review-divider" />
+
+                  <div className="quick-review-bar">
+                    <div>
+                      <span>人工判断</span>
+                      <strong>确认后，这张图才计入提交版本。</strong>
+                    </div>
+                    <div className="quick-review-actions">
+                      {Object.entries(generationVerdicts).filter(([id]) => id !== 'unreviewed').map(([id, item]) => {
+                        const Icon = item.icon;
+                        return (
+                          <button
+                            className={activeCandidate.verdict === id ? `active ${item.className}` : ''}
+                            key={id}
+                            onClick={() => markActiveCandidate(id)}
+                          >
+                            <Icon size={15} />
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                      <button className="ai-suggestion-action" disabled={!activeCandidate.aiSuggestion && !activeCandidate.aiReview} onClick={applyAiSuggestionToActiveCandidate}>
+                        <Sparkles size={15} />采用 AI 建议
+                      </button>
+                      <button className="vz-btn vz-btn--secondary secondary-button" disabled={!unreviewedQualityRuns.length} onClick={() => selectNextUnreviewedRun()}>
+                        <ChevronRight size={15} />下一张
+                      </button>
+                    </div>
+                    <label className="auto-advance-toggle">
+                      <input checked={autoAdvanceReview} onChange={(event) => setAutoAdvanceReview(event.target.checked)} type="checkbox" />
+                      标记后自动跳下一张
+                    </label>
                   </div>
-                </div>
 
-                <div className="candidate-prompt-tuning">
-                  <PromptTuningPanel
-                    slot={activeCandidateSlot}
-                    generationRuns={generationRuns}
-                    promptOverride={promptOverrides?.[activeCandidateSlot.id] || ''}
-                    onUpdatePromptOverride={onUpdatePromptOverride}
-                  />
-                </div>
-              </div>
-            )}
+                  <div className="quality-review-box">
+                    <div className="quality-review-header"><div><span>问题原因与提示词调优</span><p>仅在需修改或不可用时记录；系统会把它转成下一轮的限制条件。</p></div></div>
+                    {activeCandidate.verdict === 'usable' ? (
+                      <div className="reason-empty-state"><Check size={16} /><span>已标记可用，无需选择问题原因。</span></div>
+                    ) : (
+                      <div className="reason-grid">
+                        {generationFailureReasons.map((reason) => {
+                          const checked = activeCandidate.reasons.includes(reason.id);
+                          return (
+                            <button
+                              className={checked ? 'active' : ''}
+                              key={reason.id}
+                              onClick={() => {
+                                const reasons = checked ? activeCandidate.reasons.filter((item) => item !== reason.id) : [...activeCandidate.reasons, reason.id];
+                                onUpdateGenerationRun(activeCandidate.id, { reasons });
+                              }}
+                            >
+                              {checked ? <Check size={14} /> : <Plus size={14} />}{reason.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    {activeCandidate.reasons.length > 0 && <p className="reason-summary">已标记：{getFailureReasonLabels(activeCandidate.reasons).join('、')}</p>}
+                    {activeCandidate.verdict !== 'usable' && activeReasonSuggestions.length > 0 && (
+                      <div className="reason-tuning-box">
+                        <div><span>下轮生成建议</span><strong>已生成 {activeReasonSuggestions.length} 条限制规则</strong><p>{activeReasonSuggestions.map((suggestion) => suggestion.title).join('、')}</p></div>
+                        <div className="reason-tuning-actions">
+                          <button className="vz-btn vz-btn--secondary secondary-button" onClick={applyActiveReasonRulesToPrompt}><Plus size={15} />加入提示词</button>
+                          <button className="vz-btn vz-btn--secondary secondary-button" onClick={saveReasonsAndGoNext}><ChevronRight size={15} />保存并下一张</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
-            {slotRuns.length > 1 && (
-              <div className="run-history">
-                <span>本图槽历史记录</span>
-                {slotRuns.slice(0, 5).map((run) => (
-                  <button
-                    className={activeCandidate?.id === run.id ? 'active' : ''}
-                    key={run.id}
-                    onClick={() => setActiveRunId(run.id)}
-                  >
-                    <GenerationVerdictPill verdict={run.verdict} />
-                    <strong>{run.outputPresetLabel}</strong>
-                    <small>{formatProjectTime(run.createdAt)}</small>
-                  </button>
-                ))}
-              </div>
+                  <div className="candidate-local-edit-bar">
+                    <div className="candidate-local-edit-copy"><PencilLine size={17} /><span><strong>局部修改</strong><small>仅修改选中区域，选区外保持原图不变。</small></span></div>
+                    <div className="candidate-local-edit-actions">
+                      {activeParentCandidate?.imageSrc && <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => setIsLocalCompareOpen(true)}><Eye size={16} />对比</button>}
+                      <button className="vz-btn vz-btn--secondary secondary-button" type="button" disabled={isGenerating || isBatchRunning || isLocalEditing || !activeCandidate.imageSrc} onClick={() => setIsLocalEditOpen(true)}><PencilLine size={16} />局部修改</button>
+                    </div>
+                  </div>
+
+                  <details className="candidate-prompt-tuning">
+                    <summary><span>提示词调优</span><ChevronRight size={16} /></summary>
+                    <PromptTuningPanel
+                      slot={activeCandidateSlot}
+                      generationRuns={generationRuns}
+                      promptOverride={promptOverrides?.[activeCandidateSlot.id] || ''}
+                      onUpdatePromptOverride={onUpdatePromptOverride}
+                    />
+                  </details>
+                </aside>
+              </>
             )}
           </section>
         </FocusFrame>
 
       </div>
+      <footer className="generation-submit-bar">
+        <div>
+          <strong>{reviewedSlotCount} / {activeSlots.length || STORYBOARD_SLOT_COUNT} 张已审核</strong>
+          <small>{generationReadyForReview
+            ? '每个图槽均已选定一张可用版本，可以提交审核。'
+            : `已选定 ${approvedSlotRuns.length} 张可用图，还需处理 ${Math.max(0, (activeSlots.length || STORYBOARD_SLOT_COUNT) - reviewedSlotCount)} 张。`}</small>
+        </div>
+        <button className="vz-btn vz-btn--primary primary-button" disabled={!generationReadyForReview} onClick={onGoReview} type="button">
+          <ShieldCheck size={16} />提交审核
+        </button>
+      </footer>
+      {isLocalEditOpen && <LocalEditModal
+        candidate={activeCandidate}
+        outputPreset={activeCandidatePreset}
+        isBusy={isLocalEditing}
+        onClose={() => setIsLocalEditOpen(false)}
+        onGenerate={generateLocalEdit}
+      />}
+      {isLocalCompareOpen && <LocalEditCompareModal
+        beforeCandidate={activeParentCandidate}
+        afterCandidate={activeCandidate}
+        onClose={() => setIsLocalCompareOpen(false)}
+      />}
     </section>
   );
 }
 
-function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns, onUpdateReview, onManageLedger, focusRequest }) {
+function SystemOverviewPage({ projects, onNavigate }) {
+  const [taskMonitor, setTaskMonitor] = useState({ tasks: [], summary: {}, loading: true, error: '' });
+  const inReview = projects.filter((project) => project.cloud?.status === 'review').length;
+  const readyForRelease = projects.filter((project) => {
+    const activeSlots = getActiveSlots(project.storyboardBriefs || []);
+    return activeSlots.length > 0 && activeSlots.every((slot) => (
+      getReviewDecision(project.reviewDecisions || [], slot.id, project.storyboardBriefs || []).opsStatus === 'approved'
+    ));
+  }).length;
+  const loadTaskMonitor = async () => {
+    try {
+      const next = await listAdminGenerationTasks(100);
+      setTaskMonitor({ ...next, loading: false, error: '' });
+    } catch (error) {
+      setTaskMonitor((current) => ({ ...current, loading: false, error: error instanceof Error ? error.message : '任务状态读取失败。' }));
+    }
+  };
+
+  useEffect(() => {
+    void loadTaskMonitor();
+    const timer = window.setInterval(() => void loadTaskMonitor(), 15000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const exceptionTasks = taskMonitor.tasks
+    .filter((task) => ['failed', 'running', 'queued'].includes(task.status))
+    .slice(0, 12);
+  const taskStatusLabel = (status) => ({ failed: '失败', running: '生成中', queued: '排队中' }[status] || status);
+  const taskSummary = taskMonitor.summary || {};
+
+  return (
+    <section className="system-overview-page">
+      <header className="system-overview-heading">
+        <div><p className="eyebrow">SYSTEM HEALTH</p><h2>系统与日志</h2><p>用于分配项目、定位问题，并完成最终放行。</p></div>
+        <span className="system-health-pill"><Check size={14} />日志记录已启用</span>
+      </header>
+      <div className="system-metric-grid">
+        <article><small>团队项目</small><strong>{projects.length}</strong><span>当前可访问</span></article>
+        <article><small>等待运营</small><strong>{inReview}</strong><span>已提交审核</span></article>
+        <article><small>等待放行</small><strong>{readyForRelease}</strong><span>运营已通过</span></article>
+        <article><small>运行中任务</small><strong>{taskSummary.activeCount || 0}</strong><span>排队与生成中</span></article>
+        <article><small>失败任务</small><strong>{taskSummary.failedCount || 0}</strong><span>需要管理员关注</span></article>
+        <article><small>今日估算成本</small><strong>${Number(taskSummary.todayCostUsd || 0).toFixed(2)}</strong><span>{taskSummary.todayCount || 0} 个任务，非最终账单</span></article>
+      </div>
+      <div className="system-shortcut-grid">
+        <button type="button" onClick={() => onNavigate('team')}><UsersRound size={20} /><strong>项目分配</strong><small>指定设计师与运营负责人</small></button>
+        <button type="button" onClick={() => onNavigate('admin-release')}><ShieldCheck size={20} /><strong>最终放行</strong><small>查看运营已通过的项目</small></button>
+        <button type="button" onClick={() => onNavigate('quality')}><BarChart3 size={20} /><strong>质量与问题记录</strong><small>定位生图、预审和导出问题</small></button>
+      </div>
+      <section className="system-task-monitor">
+        <header>
+          <div><p className="eyebrow">GENERATION TASKS</p><h3>生图任务监控</h3><p>集中查看排队、运行和失败任务；页面每 15 秒自动更新。</p></div>
+          <button className="vz-btn vz-btn--ghost" type="button" onClick={() => void loadTaskMonitor()} disabled={taskMonitor.loading}>
+            {taskMonitor.loading ? <VistamzLoader size={15} label="正在读取任务状态" /> : <RefreshCcw size={15} />}{taskMonitor.loading ? '读取中' : '刷新'}
+          </button>
+        </header>
+        {taskMonitor.error && <div className="system-task-error">{taskMonitor.error}</div>}
+        <div className="system-task-list">
+          {exceptionTasks.length ? exceptionTasks.map((task) => (
+            <article className={`system-task-row is-${task.status}`} key={task.id}>
+              <span className="system-task-state">{taskStatusLabel(task.status)}</span>
+              <div><strong>{task.projectName || '未命名项目'} · {task.slotTitle || `图槽 ${task.slotId}`}</strong><small>{task.requestedByName || '未知发起人'} · 已尝试 {task.attemptCount}/3 次 · {formatProjectTime(task.updatedAt)}</small></div>
+              <div className="system-task-cost"><small>估算成本</small><strong>${Number(task.estimatedCostUsd || 0).toFixed(2)}</strong></div>
+              {task.errorMessage ? <p>{task.errorMessage}</p> : <p>{task.status === 'queued' ? '等待当前项目的前一任务结束。' : '模型正在生成候选图。'}</p>}
+            </article>
+          )) : <div className="system-task-empty"><Check size={18} /><span>目前没有排队、运行或失败的生图任务。</span></div>}
+        </div>
+      </section>
+      <section className="system-log-note"><MessageSquareWarning size={18} /><div><strong>问题日志会随操作持续记录</strong><p>生成失败、AI 预审异常、权限拦截和导出问题都会附带项目、步骤和追踪编号，供后续修复与版本升级使用。</p></div></section>
+    </section>
+  );
+}
+
+function AdminReleasePage({ projects, onOpenProject }) {
+  const readyProjects = projects.filter((project) => {
+    const activeSlots = getActiveSlots(project.storyboardBriefs || []);
+    return activeSlots.length > 0 && activeSlots.every((slot) => (
+      getReviewDecision(project.reviewDecisions || [], slot.id, project.storyboardBriefs || []).opsStatus === 'approved'
+    ));
+  });
+
+  return (
+    <section className="admin-release-page">
+      <header className="admin-release-heading"><div><p className="eyebrow">FINAL RELEASE</p><h2>管理员最终放行</h2><p>只显示运营已通过、等待管理员确认交付的项目。</p></div><div className="admin-release-count"><strong>{readyProjects.length}</strong><span>待放行</span></div></header>
+      <div className="admin-release-list">
+        {readyProjects.length ? readyProjects.map((project) => {
+          const form = project.form || {};
+          const preview = form.referenceImages?.main?.displayPreview || form.sourceImageDisplayPreview || form.sourceImagePreview;
+          const activeSlots = getActiveSlots(project.storyboardBriefs || []);
+          return <article className="admin-release-row" key={project.id}>
+            <div className="admin-release-thumb">{preview ? <img src={preview} alt="" /> : <FileImage size={22} />}</div>
+            <div><span className="admin-ops-chip">运营已通过</span><h3>{getProjectTitle(form)}</h3><p>{getProjectPlanOutputPreset(form).label} · {activeSlots.length}/{activeSlots.length} 张运营通过</p></div>
+            <div className="admin-release-meta"><small>待确认</small><strong>管理员最终放行</strong></div>
+            <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(project.id, 'review')}>检查并放行</button>
+          </article>;
+        }) : <div className="admin-release-empty"><ShieldCheck size={24} /><strong>暂时没有等待放行的项目</strong><p>运营完成整套审核后，项目会自动出现在这里。</p></div>}
+      </div>
+    </section>
+  );
+}
+
+function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, onSubmit }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
+  const selectedRuns = activeSlots
+    .map((slot) => ({ slot, run: getBestRunForSlot(slot.id, generationRuns) }))
+    .filter((item) => item.run?.verdict === 'usable');
+  const ready = isStoryboardPlanReady(storyboardBriefs, projectForm) && selectedRuns.length === activeSlots.length;
+  const attentionCount = selectedRuns.filter((item) => item.run?.aiReview?.verdict !== 'pass').length;
+
+  return (
+    <section className="handoff-page">
+      <header className="handoff-heading">
+        <div>
+          <button className="workspace-back-button" type="button" onClick={onBack}><ChevronRight size={15} />返回设计与生图</button>
+          <p className="eyebrow">SUBMIT FOR REVIEW</p>
+          <h2>提交运营审核</h2>
+          <p>只提交每个图槽选定的一张候选图；其他候选图和局部修正版会保留在项目中。</p>
+        </div>
+      </header>
+
+      <section className="handoff-overview">
+        <div className="handoff-number"><strong>{selectedRuns.length} / {activeSlots.length || STORYBOARD_SLOT_COUNT}</strong><span>图槽已选定</span></div>
+        <div><h3>{getProjectTitle(projectForm)}</h3><p>{getProjectPlanOutputPreset(projectForm).label} · 提交后将进入运营的审核队列</p></div>
+        <span className={ready ? 'handoff-ready-pill' : 'handoff-pending-pill'}>{ready ? '可以提交' : '等待补齐'}</span>
+      </section>
+
+      <section className="handoff-checks">
+        <h3>提交前检查</h3>
+        <div><Check size={16} /><span><strong>每个图槽只会提交一张选定候选图</strong><small>未选中的候选图不会删除，可随时继续局部修改或回退。</small></span></div>
+        <div><Check size={16} /><span><strong>运营将依据图槽方案、卖点和 AI 预审进行审核</strong><small>运营审核只看当前项目，不进入设计工作台。</small></span></div>
+        <div className={attentionCount ? 'attention' : ''}>{attentionCount ? <MessageSquareWarning size={16} /> : <Check size={16} />}<span><strong>{attentionCount ? `${attentionCount} 张图片仍有 AI 风险提示` : '没有待关注的 AI 风险提示'}</strong><small>AI 提示不会拦截提交，但会在运营审核时优先展示。</small></span></div>
+      </section>
+
+      <label className="handoff-note-field"><span>给运营的说明（可选）</span><textarea placeholder="例如：已核对第 3 张人物与产品比例；第 6 张的尺寸数据来自说明书。" /></label>
+      <footer className="handoff-actions"><button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={onBack}>返回继续修改</button><button className="vz-btn vz-btn--primary primary-button" disabled={!ready} type="button" onClick={onSubmit}><ClipboardCheck size={16} />提交 {selectedRuns.length} 张给运营审核</button></footer>
+    </section>
+  );
+}
+
+function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns, onUpdateReview, onManageLedger, focusRequest, userRole }) {
+  const activeSlots = getActiveSlots(storyboardBriefs);
+  const activeRole = userRole === 'admin' ? 'admin' : 'ops';
   const decisions = activeSlots.map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs));
   const approved = decisions.filter(isDecisionFullyApproved).length;
   const rework = decisions.filter((decision) => decision.status === 'rework' || decision.status === 'blocked').length;
   const pending = Math.max(0, activeSlots.length - approved - rework);
+  const [selectedSlotId, setSelectedSlotId] = useState(() => activeSlots[0]?.id || 1);
+  const selectedSlot = activeSlots.find((slot) => slot.id === selectedSlotId) || activeSlots[0] || getFallbackSlot(1);
+  const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
+  const selectedDecision = getReviewDecision(reviewDecisions, selectedSlot.id, storyboardBriefs);
+  const selectedRun = getBestRunForSlot(selectedSlot.id, generationRuns);
+
+  useEffect(() => {
+    if (!activeSlots.some((slot) => slot.id === selectedSlotId) && activeSlots[0]) setSelectedSlotId(activeSlots[0].id);
+  }, [activeSlots, selectedSlotId]);
+
   return (
-    <section className="page-grid">
-      <FocusFrame active={getFocusSignal(focusRequest, 'review')} className="left-column">
-        <section className="panel review-queue-panel">
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Review</p>
-              <h3>图片确认队列</h3>
-            </div>
-          </div>
-          <div className="review-overview-strip">
-            <span><strong>{approved}</strong> 人工通过</span>
-            <span><strong>{pending}</strong> 待确认</span>
-            <span><strong>{rework}</strong> 需处理</span>
-          </div>
-          <div className="review-list">
-            {activeSlots.map((slot) => {
-              const decision = getReviewDecision(reviewDecisions, slot.id, storyboardBriefs);
-              const brief = storyboardBriefs.find((item) => item.id === slot.id);
-              const previewRun = getBestRunForSlot(slot.id, generationRuns);
-              return (
-                <div className="review-card" key={slot.id}>
-                  <div className="review-card-head">
-                    <div className="review-card-thumb">
-                      {previewRun?.imageSrc ? (
-                        <img src={previewRun.imageSrc} alt={brief?.title || slot.title} />
-                      ) : (
-                        <FileImage size={22} />
-                      )}
-                    </div>
-                    <span>{String(slot.id).padStart(2, '0')}</span>
-                    <div>
-                      <strong>{brief?.title || slot.title}</strong>
-                      <p>
-                        {previewRun
-                          ? `${generationVerdicts[previewRun.verdict]?.label || '未判断'} · ${previewRun.outputPresetSize}`
-                          : '还没有可审核的候选图'}
-                        {' · '}
-                        {decision.note || getDefaultReviewNote(decision.status, brief)}
-                      </p>
-                    </div>
-                    <ReviewStatusPill status={decision.status} />
-                  </div>
-                  <ReviewActions decision={decision} activeRole="human" onUpdateReview={onUpdateReview} />
-                </div>
-              );
-            })}
-          </div>
-        </section>
+    <section className="review-workspace">
+      <aside className="review-slot-panel">
+        <div className="review-slot-panel-head"><p className="eyebrow">REVIEW QUEUE</p><strong>图片审核</strong><span>{approved}/{activeSlots.length || STORYBOARD_SLOT_COUNT} 已最终放行</span></div>
+        <div className="review-slot-list">
+          {activeSlots.map((slot) => {
+            const decision = getReviewDecision(reviewDecisions, slot.id, storyboardBriefs);
+            const brief = storyboardBriefs.find((item) => item.id === slot.id);
+            const run = getBestRunForSlot(slot.id, generationRuns);
+            return (
+              <button className={selectedSlot.id === slot.id ? 'active' : ''} key={slot.id} onClick={() => setSelectedSlotId(slot.id)} type="button">
+                <div className="review-slot-thumb">{run?.imageSrc ? <img src={run.imageSrc} alt="" /> : <FileImage size={18} />}</div>
+                <span><small>{String(slot.id).padStart(2, '0')}</small><strong>{brief?.title || slot.title}</strong><em>{run ? generationVerdicts[run.verdict]?.label || '待判断' : '等待候选图'}</em></span>
+                <ReviewStatusPill status={decision.status} />
+              </button>
+            );
+          })}
+        </div>
+      </aside>
+
+      <FocusFrame active={getFocusSignal(focusRequest, 'review')} className="review-preview-panel">
+        <div className="review-preview-head"><div><p className="eyebrow">{String(selectedSlot.id).padStart(2, '0')} · IMAGE REVIEW</p><h3>{selectedBrief?.title || selectedSlot.title}</h3><p>{selectedBrief?.goal || selectedSlot.goal}</p></div><ReviewStatusPill status={selectedDecision.status} /></div>
+        <div className="review-image-canvas">
+          {selectedRun?.imageSrc ? <img src={selectedRun.imageSrc} alt={selectedBrief?.title || selectedSlot.title} /> : <div><FileImage size={34} /><strong>还没有可审核的候选图</strong><p>设计完成生图后，这里会显示候选图。</p></div>}
+        </div>
+        {selectedRun && <div className="review-image-meta"><span>{selectedRun.outputPresetLabel} · {selectedRun.outputPresetSize}</span><span>{selectedRun.aiReview ? `AI 预审：${aiReviewVerdicts[selectedRun.aiReview.verdict]?.label || '需复核'}` : '等待 AI 预审'}</span></div>}
       </FocusFrame>
 
-      <div className="right-column">
-        <details className="panel disclosure-panel" open>
-          <summary>
-            <span>
-              <b>审核依据</b>
-              <small>产品、卖点、物理逻辑和合规表达</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-          <div className="panel-header compact">
-            <div>
-              <p className="eyebrow">Checklist</p>
-              <h3>审核检查项</h3>
-            </div>
-          </div>
-          <div className="audit-list">
-            {auditItems.map((item) => (
-              <div className="audit-row" key={item.label}>
-                <div className={item.state === 'pass' ? 'audit-icon pass' : 'audit-icon warn'}>
-                  {item.state === 'pass' ? <ShieldCheck size={18} /> : <MessageSquareWarning size={18} />}
-                </div>
-                <div>
-                  <strong>{item.label}</strong>
-                  <p>{item.detail}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </details>
-        <details className="panel disclosure-panel">
-          <summary>
-            <span>
-              <b>卖点详情</b>
-              <small>需要核对文案和证据时展开</small>
-            </span>
-            <ChevronRight size={17} />
-          </summary>
-          <FactLedgerPanel compact ledgerFacts={ledgerFacts} onManage={onManageLedger} />
-        </details>
-      </div>
+      <aside className="review-action-panel">
+        <div className="review-action-head"><p className="eyebrow">YOUR DECISION</p><h3>{activeRole === 'admin' ? '管理员最终放行' : '运营审核'}</h3><p>{activeRole === 'admin' ? '确认运营已通过后，决定是否允许导出。' : '核对产品、卖点、文字和物理逻辑。'}</p></div>
+        <RoleChecklist decision={selectedDecision} />
+        <ReviewActions decision={selectedDecision} activeRole={activeRole} onUpdateReview={onUpdateReview} />
+        <div className="review-checklist-mini"><strong>本张审核要点</strong>{auditItems.slice(0, 4).map((item) => <span key={item.label}>{item.state === 'pass' ? <Check size={14} /> : <MessageSquareWarning size={14} />}{item.label}</span>)}</div>
+        <button className="vz-btn vz-btn--ghost text-button strong review-ledger-link" onClick={onManageLedger} type="button">查看关联卖点 <ChevronRight size={15} /></button>
+        <div className="review-workspace-summary"><span><strong>{pending}</strong> 待确认</span><span><strong>{rework}</strong> 需处理</span></div>
+      </aside>
     </section>
   );
 }
@@ -6998,7 +8260,8 @@ function ExportPage({
   generationRuns,
   exportSelections,
   onUpdateExportSelection,
-  focusRequest
+  focusRequest,
+  userRole
 }) {
   const [exportStatus, setExportStatus] = useState('');
   const [isExporting, setIsExporting] = useState(false);
@@ -7035,9 +8298,9 @@ function ExportPage({
   ];
   const readyForZip = selectedImageCount === slotTotal && selectedImageCount > 0;
   const reviewReady = activeSlots.length > 0
-    && storyboardBriefs.length === STORYBOARD_SLOT_COUNT
+    && isStoryboardPlanReady(storyboardBriefs, projectForm)
     && activeSlots.every((slot) => isDecisionFullyApproved(getReviewDecision(reviewDecisions, slot.id, storyboardBriefs)));
-  const canExportZip = readyForZip && reviewReady;
+  const canExportZip = readyForZip && reviewReady && userRole === 'admin';
   const firstMissingReview = activeSlots
     .map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs))
     .find((decision) => !isDecisionFullyApproved(decision));
@@ -7049,11 +8312,15 @@ function ExportPage({
         : '最终图已选齐，但仍有图片未完全通过审核。'
     : `还缺 ${Math.max(0, slotTotal - selectedImageCount)} 张最终图。`;
   const exportImagesZip = async () => {
+    if (userRole !== 'admin') {
+      setExportStatus('请等待管理员完成最终放行并由管理员导出。');
+      return;
+    }
     if (!storyboardBriefs.length) {
       appLogger.log('pipeline.export.blocked', {
         reason: 'missing_storyboard'
       }, { level: 'warn', projectId: activeProjectId, step: 'export' });
-      setExportStatus('请先生成 7 图方案，再导出图片 ZIP。');
+      setExportStatus('请先生成图片方案，再导出图片 ZIP。');
       return;
     }
     if (!readyForZip) {
@@ -7088,6 +8355,7 @@ function ExportPage({
     }, { projectId: activeProjectId, step: 'export', traceId });
     try {
       const zip = await saveImagesZipToApi({
+        projectId: activeProjectId,
         projectForm,
         storyboardBriefs,
         generationRuns,
@@ -7117,7 +8385,7 @@ function ExportPage({
   return (
     <section className="page-grid">
       <div className="left-column">
-        <section className="panel export-ready-panel">
+        <section className="vz-card panel export-ready-panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Export</p>
@@ -7141,9 +8409,9 @@ function ExportPage({
           </div>
           <div className="delivery-export-box">
             <p>只导出右侧最终图清单中选中的图片。图片会自动打包成 ZIP，保存到本机 exports 文件夹。</p>
-            <button className="primary-button" disabled={isExporting || !canExportZip} onClick={exportImagesZip}>
+            <button className="vz-btn vz-btn--primary primary-button" disabled={isExporting || !canExportZip} onClick={exportImagesZip}>
               <Download size={17} />
-              {isExporting ? '打包中...' : canExportZip ? '导出图片 ZIP' : '等待人工审核通过'}
+              {isExporting ? '打包中...' : canExportZip ? '导出图片 ZIP' : userRole !== 'admin' ? '等待管理员导出' : '等待审核完成'}
             </button>
             {exportStatus && <div className="generation-status success">{exportStatus}</div>}
             {savedZip && (
@@ -7159,7 +8427,7 @@ function ExportPage({
       </div>
 
       <FocusFrame active={getFocusSignal(focusRequest, 'export')} className="right-column">
-        <section className="panel">
+        <section className="vz-card panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Final Images</p>
@@ -7210,7 +8478,7 @@ function ExportPage({
             ))}
           </div>
         </section>
-        <section className="panel">
+        <section className="vz-card panel">
           <ExportGate reviewDecisions={reviewDecisions} storyboardBriefs={storyboardBriefs} />
         </section>
       </FocusFrame>
@@ -7219,13 +8487,15 @@ function ExportPage({
 }
 
 function WorkspaceApp({ session, onLogout }) {
-  const initialProjects = useMemo(() => loadStoredProjects(), []);
-  const hasStoredProjects = initialProjects.length > 0;
+  const initialProjects = useMemo(() => [], []);
+  const hasStoredProjects = false;
   const initialProject = initialProjects[0] || createProjectRecord(blankProjectForm, [], createProjectId());
   const initialBrands = useMemo(() => loadStoredBrands(), []);
   const [selectedSlot, setSelectedSlot] = useState(() => getActiveSlots(initialProject.storyboardBriefs || [])[0] || slots[0]);
   const [activeTab, setActiveTab] = useState('storyboard');
-  const [activeSection, setActiveSection] = useState(hasStoredProjects ? 'storyboard' : 'project');
+  const [activeSection, setActiveSection] = useState(() => (
+    session.user.role === 'admin' ? 'system' : session.user.role === 'operator' ? 'review' : 'projects'
+  ));
   const [projects, setProjects] = useState(initialProjects);
   const [brandLibrary, setBrandLibrary] = useState(initialBrands);
   const [activeProjectId, setActiveProjectId] = useState(initialProject.id);
@@ -7242,7 +8512,9 @@ function WorkspaceApp({ session, onLogout }) {
   const [focusRequest, setFocusRequest] = useState(null);
   const [isPlanningStoryboard, setIsPlanningStoryboard] = useState(false);
   const [regeneratingSlotId, setRegeneratingSlotId] = useState(null);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const previousSectionRef = useRef(activeSection);
+  const planningStartedAtRef = useRef(0);
 
   useEffect(() => {
     appLogger.log('app.session.started', {
@@ -7253,13 +8525,62 @@ function WorkspaceApp({ session, onLogout }) {
 
   useEffect(() => {
     let mounted = true;
+    listTeamBrands()
+      .then((remoteBrands) => {
+        if (!mounted || !remoteBrands.length) return;
+        const baseline = normalizeBrandLibrary(defaultBrandLibrary).find((brand) => brand.id === 'none');
+        const normalized = normalizeBrandLibrary([baseline, ...remoteBrands].filter(Boolean));
+        setBrandLibrary(normalized);
+        storeBrands(normalized);
+      })
+      .catch((error) => {
+        appLogger.error('brand.library.load_failed', error, { step: 'brands' });
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!isPlanningStoryboard) return undefined;
+    const elapsed = planningStartedAtRef.current ? Date.now() - planningStartedAtRef.current : 65000;
+    const timeoutId = window.setTimeout(() => {
+      setIsPlanningStoryboard(false);
+      planningStartedAtRef.current = 0;
+      setSaveStatus('方案生成超过 65 秒仍未返回，已停止等待。请重新生成方案，系统会在超时时自动使用本地兜底方案。');
+      appLogger.log('pipeline.storyboard.watchdog_stopped', { elapsedMs: elapsed }, {
+        level: 'warn',
+        projectId: activeProjectId,
+        step: 'storyboard'
+      });
+    }, Math.max(0, 65000 - elapsed));
+    return () => window.clearTimeout(timeoutId);
+  }, [activeProjectId, isPlanningStoryboard]);
+
+  useEffect(() => {
+    let mounted = true;
+    const projectLoadStartedAt = performance.now();
     setIsLoadingTeamProjects(true);
     listTeamProjects()
       .then((remoteProjects) => {
         if (!mounted) return;
         const nextProjects = remoteProjects.map(mapTeamProjectToWorkspaceProject);
+        appLogger.log('team.projects.metadata_loaded', {
+          projectCount: nextProjects.length,
+          durationMs: Math.round(performance.now() - projectLoadStartedAt)
+        }, { step: 'projects' });
         if (!nextProjects.length) {
+          setProjects([]);
+          setActiveProjectId('');
+          setProjectForm(blankProjectForm);
+          setLedgerFacts([]);
+          setStoryboardBriefs([]);
+          setReviewDecisions([]);
+          setGenerationRuns([]);
+          setPromptOverrides({});
+          setExportSelections({});
+          setSelectedSlot(slots[0]);
+          setActiveSection(session.user.role === 'admin' ? 'system' : session.user.role === 'operator' ? 'review' : 'projects');
           setSaveStatus(session.user.role === 'operator' ? '暂无分配给你的项目。' : '暂无云端项目，可以创建一个新项目开始。');
+          setIsLoadingTeamProjects(false);
           return;
         }
         const nextActive = nextProjects[0];
@@ -7273,8 +8594,26 @@ function WorkspaceApp({ session, onLogout }) {
         setGenerationRuns(normalizeGenerationRuns(nextActive.generationRuns));
         setPromptOverrides(nextActive.promptOverrides || {});
         setExportSelections(nextActive.exportSelections || {});
-        setActiveSection('project');
-        setSaveStatus(`已载入 ${nextProjects.length} 个团队项目`);
+        setActiveSection(session.user.role === 'admin' ? 'system' : session.user.role === 'operator' ? 'review' : 'projects');
+        setSaveStatus(`已载入 ${nextProjects.length} 个团队项目，图片正在后台恢复`);
+        setIsLoadingTeamProjects(false);
+
+        // Project metadata is usable immediately. Signed image URLs are refreshed
+        // in the background so historical assets cannot block the whole workspace.
+        void Promise.all(nextProjects.map(refreshWorkspaceProjectAssetUrls)).then((hydratedProjects) => {
+          if (!mounted) return;
+          setProjects(hydratedProjects);
+          storeProjects(hydratedProjects);
+          const hydratedActive = hydratedProjects.find((project) => project.id === nextActive.id);
+          if (hydratedActive) {
+            setGenerationRuns(normalizeGenerationRuns(hydratedActive.generationRuns));
+          }
+          appLogger.log('team.projects.assets_hydrated', {
+            projectCount: hydratedProjects.length,
+            durationMs: Math.round(performance.now() - projectLoadStartedAt)
+          }, { projectId: nextActive.id, step: 'projects' });
+          setSaveStatus(`已载入 ${hydratedProjects.length} 个团队项目`);
+        });
       })
       .catch((error) => {
         if (!mounted) return;
@@ -7346,22 +8685,47 @@ function WorkspaceApp({ session, onLogout }) {
     [ledgerFacts]
   );
   const roleWorkspaceAccess = {
-    designer: ['project', 'ledger', 'storyboard', 'generation', 'brands'],
-    operator: ['project', 'ledger', 'review', 'export'],
-    admin: [...navItems.map((item) => item.id), ...globalNavItems.map((item) => item.id)]
+    designer: ['projects', 'project', 'ledger', 'storyboard', 'generation', 'handoff', 'brands'],
+    operator: ['projects', 'review'],
+    admin: ['system', 'team', 'admin-release', 'brands', 'quality', 'review', 'export']
   };
   const allowedSections = roleWorkspaceAccess[session.user.role] || ['project'];
+  const workspaceNavItems = session.user.role === 'designer'
+    ? [
+      { id: 'projects', label: '项目中心', icon: FolderOpen },
+      { id: 'brands', label: '品牌库', icon: Palette }
+    ]
+    : session.user.role === 'operator'
+      ? [
+        { id: 'projects', label: '我的项目', icon: FolderOpen },
+        { id: 'review', label: '审核队列', icon: ShieldCheck }
+      ]
+      : [
+        { id: 'system', label: '系统与日志', icon: BarChart3 },
+        { id: 'team', label: '项目分配', icon: UsersRound },
+        { id: 'admin-release', label: '最终放行', icon: ShieldCheck },
+        { id: 'brands', label: '品牌库', icon: Palette },
+        { id: 'quality', label: '质量记录', icon: MessageSquareWarning }
+      ];
   const visibleNavItems = navItems.filter((item) => allowedSections.includes(item.id));
-  const visibleGlobalNavItems = globalNavItems.filter((item) => allowedSections.includes(item.id));
   const canCreateProject = ['designer', 'admin'].includes(session.user.role);
-  const currentNav = [...navItems, ...globalNavItems].find((item) => item.id === activeSection) || visibleNavItems[0] || navItems[0];
+  const currentNav = [...navItems, ...globalNavItems,
+    { id: 'projects', eyebrow: 'Projects', title: '项目中心', subtitle: '查看并继续你负责的项目。' },
+    { id: 'system', eyebrow: 'System Health', title: '系统与日志', subtitle: '管理员专用。用于定位问题、分配项目和最终放行。' },
+    { id: 'admin-release', eyebrow: 'Final Release', title: '管理员最终放行', subtitle: '只显示运营已通过、等待管理员确认交付的项目。' }
+  ]
+    .find((item) => item.id === activeSection) || visibleNavItems[0] || navItems[0];
   const currentProject = projects.find((project) => project.id === activeProjectId);
+  const projectBrandLibrary = useMemo(
+    () => getProjectScopedBrandLibrary(projectForm, currentProject, brandLibrary),
+    [brandLibrary, currentProject?.brandSnapshot, projectForm.brandId]
+  );
   const slotTotal = activeSlots.length || STORYBOARD_SLOT_COUNT;
   const currentProductLock = getProjectProductLock(projectForm);
   const productLockChanged = currentProject ? !isSameProductLock(currentProject, projectForm) : false;
   const hasReferenceImage = Boolean(projectForm.sourceImageName || projectForm.sourceImagePreview);
   const hasLedgerDraft = ledgerFacts.length > 0;
-  const hasStoryboardBriefs = storyboardBriefs.length === STORYBOARD_SLOT_COUNT;
+  const hasStoryboardBriefs = isStoryboardPlanReady(storyboardBriefs, projectForm);
   const exportReady = hasStoryboardBriefs
     && activeSlots.length > 0
     && activeSlots.every((slot) => isDecisionFullyApproved(getReviewDecision(reviewDecisions, slot.id, storyboardBriefs)));
@@ -7391,7 +8755,7 @@ function WorkspaceApp({ session, onLogout }) {
     {
       id: 'storyboard',
       title: '规划图片',
-      helper: hasStoryboardBriefs ? '7 张图片方案已生成，下一步可以生成候选图。' : 'AI 会按产品和卖点选择图片角色，不再强行套固定模板。',
+      helper: hasStoryboardBriefs ? `${slotTotal} 个图片方向已生成，下一步可以生成候选图。` : 'AI 会按产品和卖点选择图片角色，不再强行套固定模板。',
       summary: hasStoryboardBriefs ? `${slotTotal} 个图片角色` : hasLedgerDraft ? '可以开始' : '等待卖点',
       action: hasStoryboardBriefs ? '查看图片方案' : '生成图片方案',
       target: 'storyboard',
@@ -7439,7 +8803,7 @@ function WorkspaceApp({ session, onLogout }) {
   ];
   const visibleWorkflowGuideSteps = workflowGuideSteps.filter((step) => allowedSections.includes(step.target));
   useEffect(() => {
-    if (!allowedSections.includes(activeSection)) setActiveSection(visibleNavItems[0]?.id || 'project');
+    if (!allowedSections.includes(activeSection)) setActiveSection('projects');
   }, [activeSection, session.user.role]);
   useEffect(() => {
     if (!activeSlots.some((slot) => slot.id === selectedSlot.id) && activeSlots[0]) {
@@ -7449,7 +8813,25 @@ function WorkspaceApp({ session, onLogout }) {
   const syncProjectToTeam = async (project) => {
     if (!project?.cloud?.remote) return;
     try {
-      await updateTeamProject(project.id, makeTeamProjectPayload(project));
+      const projectWithAssets = await uploadInlineProjectReferences(project);
+      const remote = await updateTeamProject(project.id, makeTeamProjectPayload(projectWithAssets));
+      if (projectWithAssets !== project) {
+        setProjects((currentProjects) => {
+          const synced = currentProjects.map((item) => item.id === project.id ? projectWithAssets : item);
+          storeProjects(synced);
+          return synced;
+        });
+        if (activeProjectId === project.id) setProjectForm(projectWithAssets.form);
+      }
+      if (remote?.brandSnapshot) {
+        setProjects((currentProjects) => {
+          const synced = currentProjects.map((item) => (
+            item.id === project.id ? { ...item, brandSnapshot: remote.brandSnapshot } : item
+          ));
+          storeProjects(synced);
+          return synced;
+        });
+      }
     } catch (error) {
       appLogger.error('team.project.sync_failed', error, { projectId: project.id, step: activeSection });
       setSaveStatus('已保存在本机，但团队同步暂时失败。');
@@ -7458,7 +8840,11 @@ function WorkspaceApp({ session, onLogout }) {
   const persistProjects = (nextProjects, remoteProjectId = activeProjectId) => {
     const normalizedProjects = nextProjects.map((project) => {
       const previous = projects.find((item) => item.id === project.id);
-      return project.cloud ? project : { ...project, cloud: previous?.cloud };
+      return {
+        ...project,
+        cloud: project.cloud || previous?.cloud,
+        brandSnapshot: project.brandSnapshot || previous?.brandSnapshot || null
+      };
     });
     setProjects(normalizedProjects);
     storeProjects(normalizedProjects);
@@ -7473,7 +8859,44 @@ function WorkspaceApp({ session, onLogout }) {
       brandCount: normalized.length,
       brandNames: normalized.map((brand) => brand.name)
     }, { projectId: activeProjectId, step: 'brands' });
-    setSaveStatus('品牌库已保存');
+    setSaveStatus('品牌规则有未保存修改。');
+  };
+  const saveBrandProfile = async (brand) => {
+    let brandForSave = brand;
+    if (isInlineImageSource(brand.logoPreview)) {
+      const asset = await uploadTeamBrandLogo({
+        brandId: brand.id,
+        assetId: Date.now(),
+        imageDataUrl: brand.logoPreview
+      });
+      brandForSave = { ...brand, logoStorageKey: asset.storageKey, logoPreview: '' };
+    }
+    const saved = brandForSave.version
+      ? await updateTeamBrand(brandForSave)
+      : await createTeamBrand(brandForSave);
+    if (brandForSave.logoStorageKey && !saved.logoPreview) saved.logoPreview = brand.logoPreview;
+    const normalizedSaved = normalizeBrandProfile(saved);
+    const normalized = normalizeBrandLibrary([
+      ...brandLibrary.filter((item) => item.id !== brand.id && item.id !== normalizedSaved.id),
+      normalizedSaved
+    ]);
+    setBrandLibrary(normalized);
+    storeBrands(normalized);
+    appLogger.log('audit.brand_profile.saved', {
+      brandId: normalizedSaved.id,
+      brandName: normalizedSaved.name,
+      brandVersion: normalizedSaved.version
+    }, { projectId: activeProjectId, step: 'brands' });
+    setSaveStatus(`${normalizedSaved.name} 品牌规则已保存为 v${normalizedSaved.version}。`);
+    return normalizedSaved;
+  };
+  const removeBrandProfile = async (brand) => {
+    if (brand.version) await deleteTeamBrand(brand.id);
+    appLogger.log('audit.brand_profile.deleted', {
+      brandId: brand.id,
+      brandName: brand.name
+    }, { projectId: activeProjectId, step: 'brands' });
+    setSaveStatus(`${brand.name} 已从品牌库删除。`);
   };
   const assignProjectMember = async (projectId, assignmentRole, assignee) => {
     await assignTeamProject(projectId, { userId: assignee?.id || '', assignmentRole });
@@ -7506,7 +8929,8 @@ function WorkspaceApp({ session, onLogout }) {
     if (nextPreset.id === getProjectPlanOutputPresetId(projectForm)) return;
     const nextForm = {
       ...projectForm,
-      planOutputPresetId: nextPreset.id
+      planOutputPresetId: nextPreset.id,
+      storyboardSlotCountOverride: 0
     };
     const nextProjectId = activeProjectId || createProjectId();
     setProjectForm(nextForm);
@@ -7526,8 +8950,77 @@ function WorkspaceApp({ session, onLogout }) {
       outputPresetId: nextPreset.id,
       outputPresetLabel: nextPreset.label
     }, { projectId: nextProjectId, step: 'storyboard' });
-    setSaveStatus(`已切换为 ${nextPreset.label} 方案类型。旧方案和候选图已清空，请重新生成 7 图方案。`);
+    setSaveStatus(`已切换为 ${nextPreset.label} 方案类型。旧方案和候选图已清空，请重新生成图片方案。`);
     navigateTo('storyboard', 'storyboard');
+  };
+  const commitStoryboardStructure = (briefs, selectedIndex, actionLabel) => {
+    const nextBriefs = normalizeStoryboardSequence(briefs);
+    const nextForm = {
+      ...projectForm,
+      storyboardSlotCountOverride: nextBriefs.length
+    };
+    const nextDecisions = createReviewDecisions(nextBriefs);
+    const nextProject = createProjectRecord(nextForm, ledgerFacts, activeProjectId, nextBriefs, nextDecisions, [], {}, {});
+    const nextProjects = projects.some((project) => project.id === activeProjectId)
+      ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
+      : [nextProject, ...projects];
+    setProjectForm(nextForm);
+    setStoryboardBriefs(nextBriefs);
+    setReviewDecisions(nextDecisions);
+    setGenerationRuns([]);
+    setPromptOverrides({});
+    setExportSelections({});
+    setSelectedSlot(getSlotFromBrief(nextBriefs[Math.max(0, Math.min(selectedIndex, nextBriefs.length - 1))]));
+    persistProjects(nextProjects);
+    appLogger.log('audit.storyboard.structure_changed', {
+      action: actionLabel,
+      slotCount: nextBriefs.length,
+      outputPresetId: getProjectPlanOutputPresetId(nextForm)
+    }, { projectId: activeProjectId, step: 'storyboard' });
+    setSaveStatus(`${actionLabel}。图槽结构已保存；为避免错配，旧候选图和审核状态已清空。`);
+  };
+  const addStoryboardSlot = () => {
+    if (!storyboardBriefs.length) return;
+    const isAPlus = isAPlusPlan(projectForm);
+    const maximum = isAPlus ? APLUS_MAX_MODULE_COUNT : MAIN_MAX_SLOT_COUNT;
+    if (storyboardBriefs.length >= maximum) {
+      setSaveStatus(`当前图片类型最多保留 ${maximum} 个图槽。`);
+      return;
+    }
+    const nextBrief = createOptionalStoryboardBrief({
+      id: storyboardBriefs.length + 1,
+      form: projectForm,
+      ledgerFacts,
+      existingBriefs: storyboardBriefs,
+      brands: projectBrandLibrary
+    });
+    commitStoryboardStructure([...storyboardBriefs, nextBrief], storyboardBriefs.length, '已添加可选图槽');
+  };
+  const removeStoryboardSlot = (slotId) => {
+    const currentIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(slotId));
+    if (currentIndex < 0) return;
+    const isAPlus = isAPlusPlan(projectForm);
+    const minimum = isAPlus ? APLUS_MIN_MODULE_COUNT : MAIN_MIN_SLOT_COUNT;
+    if ((!isAPlus && currentIndex === 0) || storyboardBriefs.length <= minimum) {
+      setSaveStatus(!isAPlus && currentIndex === 0 ? '白底主图是主图套图的必需图槽，不能删除。' : `当前图片类型至少需要 ${minimum} 个图槽。`);
+      return;
+    }
+    const nextBriefs = storyboardBriefs.filter((_, index) => index !== currentIndex);
+    commitStoryboardStructure(nextBriefs, Math.min(currentIndex, nextBriefs.length - 1), '已删除可选图槽');
+  };
+  const moveStoryboardSlot = (slotId, direction) => {
+    const currentIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(slotId));
+    if (currentIndex < 0) return;
+    const isAPlus = isAPlusPlan(projectForm);
+    const targetIndex = currentIndex + direction;
+    if (targetIndex < 0 || targetIndex >= storyboardBriefs.length) return;
+    if (!isAPlus && (currentIndex === 0 || targetIndex === 0)) {
+      setSaveStatus('白底主图必须保持在第 1 个图槽。');
+      return;
+    }
+    const nextBriefs = [...storyboardBriefs];
+    [nextBriefs[currentIndex], nextBriefs[targetIndex]] = [nextBriefs[targetIndex], nextBriefs[currentIndex]];
+    commitStoryboardStructure(nextBriefs, targetIndex, '已调整图槽顺序');
   };
   const navigateTo = (section, anchor) => {
     if (!allowedSections.includes(section)) {
@@ -7552,7 +9045,12 @@ function WorkspaceApp({ session, onLogout }) {
       }
       try {
         const remote = await createTeamProject(makeTeamProjectPayload(nextProject));
-        nextProject = { ...nextProject, id: remote.id, cloud: { remote: true, status: remote.status || 'draft', assignments: [], createdBy: session.user } };
+        nextProject = {
+          ...nextProject,
+          id: remote.id,
+          brandSnapshot: remote.brandSnapshot || null,
+          cloud: { remote: true, status: remote.status || 'draft', assignments: [], createdBy: session.user }
+        };
       } catch (error) {
         appLogger.error('team.project.create_failed', error);
         setSaveStatus(error instanceof Error ? error.message : '团队项目创建失败，请稍后重试。');
@@ -7574,7 +9072,7 @@ function WorkspaceApp({ session, onLogout }) {
     }, { projectId: nextProject.id, step: activeSection });
     setSaveStatus(`已同步保存 ${formatProjectTime(nextProject.updatedAt)}`);
   };
-  const selectProject = (projectId) => {
+  const selectProject = (projectId, destination = 'project') => {
     const selectedProject = projects.find((project) => project.id === projectId);
     if (!selectedProject) return;
     setActiveProjectId(projectId);
@@ -7592,7 +9090,7 @@ function WorkspaceApp({ session, onLogout }) {
       storyboardCount: selectedProject.storyboardBriefs?.length || 0,
       generationRunCount: selectedProject.generationRuns?.length || 0
     }, { projectId, step: 'project' });
-    setActiveSection('project');
+    setActiveSection(allowedSections.includes(destination) ? destination : 'projects');
   };
   const createNewProject = async () => {
     if (!['designer', 'admin'].includes(session.user.role)) {
@@ -7608,7 +9106,12 @@ function WorkspaceApp({ session, onLogout }) {
       setSaveStatus(error instanceof Error ? error.message : '团队项目创建失败，请稍后重试。');
       return;
     }
-    const cloudProject = { ...nextProject, id: remote.id, cloud: { remote: true, status: remote.status || 'draft', assignments: [], createdBy: session.user } };
+    const cloudProject = {
+      ...nextProject,
+      id: remote.id,
+      brandSnapshot: remote.brandSnapshot || null,
+      cloud: { remote: true, status: remote.status || 'draft', assignments: [], createdBy: session.user }
+    };
     const nextProjects = [cloudProject, ...projects];
     persistProjects(nextProjects, cloudProject.id);
     setActiveProjectId(cloudProject.id);
@@ -7712,6 +9215,29 @@ function WorkspaceApp({ session, onLogout }) {
     }, { projectId: activeProjectId, step: 'ledger' });
     setSaveStatus('卖点已更新，后续生成方案会使用最新卖点。');
   };
+  const addLedgerFact = (claim) => {
+    const nextClaim = claim.trim();
+    if (!nextClaim) return;
+    const nextLedgerFacts = [
+      ...ledgerFacts,
+      {
+        claim: nextClaim,
+        ...classifyClaim(nextClaim, 'manual'),
+        source: 'manual-add'
+      }
+    ];
+    setLedgerFacts(nextLedgerFacts);
+    const nextProject = createProjectRecord(projectForm, nextLedgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    const nextProjects = projects.some((project) => project.id === activeProjectId)
+      ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
+      : [nextProject, ...projects];
+    persistProjects(nextProjects);
+    appLogger.log('audit.ledger.claim_added', {
+      claim: nextClaim,
+      state: nextLedgerFacts[nextLedgerFacts.length - 1]?.state || ''
+    }, { projectId: activeProjectId, step: 'ledger' });
+    setSaveStatus('卖点已添加，图片方案会使用最新内容。');
+  };
   const generateStoryboardBriefs = async () => {
     if (isPlanningStoryboard || regeneratingSlotId) return;
     if (!ledgerFacts.length) {
@@ -7722,11 +9248,13 @@ function WorkspaceApp({ session, onLogout }) {
       navigateTo('project', 'claims');
       return;
     }
-    if (!getReferenceImage(projectForm)) {
+    const referenceReadiness = getReferenceReadiness(projectForm);
+    if (!referenceReadiness.ready) {
       appLogger.log('pipeline.storyboard.blocked', {
-        reason: 'missing_reference_image'
+        reason: 'reference_quality_gate',
+        blockers: referenceReadiness.blockers
       }, { level: 'warn', projectId: activeProjectId, step: 'storyboard' });
-      setSaveStatus('请先上传产品参考图');
+      setSaveStatus(`参考图暂不能用于规划：${referenceReadiness.blockers.join('；')}`);
       navigateTo('project', 'image-upload');
       return;
     }
@@ -7735,6 +9263,7 @@ function WorkspaceApp({ session, onLogout }) {
       ...projectForm,
       planOutputPresetId: getProjectPlanOutputPresetId(projectForm)
     };
+    planningStartedAtRef.current = Date.now();
     setIsPlanningStoryboard(true);
     setSaveStatus(`正在根据产品图、卖点和品牌生成 ${getProjectPlanOutputPreset(planningForm).label} 方案...`);
     const startedAt = performance.now();
@@ -7742,14 +9271,15 @@ function WorkspaceApp({ session, onLogout }) {
     appLogger.log('pipeline.storyboard.started', {
       outputPresetId: planningForm.planOutputPresetId,
       ledgerCount: refreshedLedgerFacts.length,
-      brandId: getProjectBrandId(planningForm, brandLibrary)
+      brandId: getProjectBrandId(planningForm, projectBrandLibrary),
+      brandVersion: currentProject?.brandSnapshot?.brandVersion || 0
     }, { projectId: activeProjectId, step: 'storyboard' });
     try {
       let briefs;
-      let plannerMessage = 'AI 已根据产品图、卖点和品牌生成 7 图方案';
+      let plannerMessage = 'AI 已根据产品图、卖点和品牌生成图片方案';
       const lockMatches = currentProject ? isSameProductLock(currentProject, projectForm) : true;
       try {
-        const aiPlan = await planStoryboardWithApi(planningForm, refreshedLedgerFacts, brandLibrary);
+        const aiPlan = await planStoryboardWithApi(activeProjectId, planningForm, refreshedLedgerFacts, projectBrandLibrary);
         briefs = aiPlan.briefs;
         plannerMessage = `AI 已生成 ${getProjectPlanOutputPreset(planningForm).label} 方案：${aiPlan.productType || '已识别产品类型'} · ${aiPlan.model || 'planner'}`;
       } catch (error) {
@@ -7758,7 +9288,7 @@ function WorkspaceApp({ session, onLogout }) {
           projectId: activeProjectId,
           step: 'storyboard'
         });
-        briefs = buildStoryboardBriefs(refreshedLedgerFacts, planningForm, brandLibrary);
+        briefs = buildStoryboardBriefs(refreshedLedgerFacts, planningForm, projectBrandLibrary);
         plannerMessage = `AI 方案暂不可用，已使用本地兜底方案。${error instanceof Error ? error.message : ''}`.trim();
       }
       const decisions = createReviewDecisions(briefs);
@@ -7800,6 +9330,7 @@ function WorkspaceApp({ session, onLogout }) {
       throw error;
     } finally {
       setIsPlanningStoryboard(false);
+      planningStartedAtRef.current = 0;
     }
   };
   const regenerateStoryboardSlot = async (slotId, role = activeRole) => {
@@ -7809,8 +9340,9 @@ function WorkspaceApp({ session, onLogout }) {
       navigateTo('project', 'claims');
       return;
     }
-    if (!getReferenceImage(projectForm)) {
-      setSaveStatus('请先上传产品参考图');
+    const referenceReadiness = getReferenceReadiness(projectForm);
+    if (!referenceReadiness.ready) {
+      setSaveStatus(`参考图暂不能用于规划：${referenceReadiness.blockers.join('；')}`);
       navigateTo('project', 'image-upload');
       return;
     }
@@ -7829,8 +9361,10 @@ function WorkspaceApp({ session, onLogout }) {
       let nextBrief;
       let plannerMessage = 'AI 已重生成当前图槽方案';
       try {
-        const aiPlan = await planStoryboardWithApi(projectForm, refreshedLedgerFacts, brandLibrary);
-        nextBrief = aiPlan.briefs.find((brief) => Number(brief.id) === numericSlotId);
+        const aiPlan = await planStoryboardWithApi(activeProjectId, projectForm, refreshedLedgerFacts, projectBrandLibrary);
+        const plannedBrief = aiPlan.briefs.find((brief) => Number(brief.id) === numericSlotId)
+          || aiPlan.briefs[Math.min(numericSlotId - 1, aiPlan.briefs.length - 1)];
+        nextBrief = plannedBrief ? { ...plannedBrief, id: numericSlotId } : null;
         plannerMessage = `AI 已重生成第 ${String(numericSlotId).padStart(2, '0')} 张方案：${aiPlan.model || 'planner'}`;
       } catch (error) {
         planProvider = 'local_fallback';
@@ -7839,8 +9373,10 @@ function WorkspaceApp({ session, onLogout }) {
           step: 'storyboard',
           slotId: numericSlotId
         });
-        const fallbackBriefs = buildStoryboardBriefs(refreshedLedgerFacts, projectForm, brandLibrary);
-        nextBrief = fallbackBriefs.find((brief) => Number(brief.id) === numericSlotId);
+        const fallbackBriefs = buildStoryboardBriefs(refreshedLedgerFacts, projectForm, projectBrandLibrary);
+        const fallbackBrief = fallbackBriefs.find((brief) => Number(brief.id) === numericSlotId)
+          || fallbackBriefs[Math.min(numericSlotId - 1, fallbackBriefs.length - 1)];
+        nextBrief = fallbackBrief ? { ...fallbackBrief, id: numericSlotId } : null;
         plannerMessage = `AI 局部方案暂不可用，已用本地兜底重生成当前图槽。${error instanceof Error ? error.message : ''}`.trim();
       }
 
@@ -7850,7 +9386,7 @@ function WorkspaceApp({ session, onLogout }) {
 
       const previousBriefs = storyboardBriefs.length
         ? storyboardBriefs
-        : buildStoryboardBriefs(refreshedLedgerFacts, projectForm, brandLibrary);
+        : buildStoryboardBriefs(refreshedLedgerFacts, projectForm, projectBrandLibrary);
       const nextBriefs = previousBriefs.map((brief) => (
         Number(brief.id) === numericSlotId ? nextBrief : brief
       ));
@@ -7897,12 +9433,12 @@ function WorkspaceApp({ session, onLogout }) {
       setRegeneratingSlotId(null);
     }
   };
-  const updateReviewDecision = (slotId, role, status) => {
+  const updateReviewDecision = (slotId, role, status, context = 'review') => {
     const slot = activeSlots.find((item) => item.id === slotId) || getFallbackSlot(slotId);
     const brief = storyboardBriefs.find((item) => item.id === slotId);
     const normalized = reviewDecisions.length ? reviewDecisions : createReviewDecisions(storyboardBriefs);
     const nextDecisions = normalized.map((decision) => (
-      decision.slotId === slotId ? updateDecisionByRole(decision, slot, brief, role, status) : decision
+      decision.slotId === slotId ? updateDecisionByRole(decision, slot, brief, role, status, context) : decision
     ));
     setReviewDecisions(nextDecisions);
     const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, nextDecisions, generationRuns, promptOverrides, exportSelections);
@@ -7914,9 +9450,12 @@ function WorkspaceApp({ session, onLogout }) {
       slotId,
       role,
       status,
+      context,
       slotTitle: slot?.title || ''
     }, { projectId: activeProjectId, step: 'review' });
-    setSaveStatus(`${slot?.title || '图槽'} 已由${reviewerRoles[role]?.label || '审核人'}标记为${reviewStatusMeta[status]?.text || '待审核'}，已自动保存`);
+    setSaveStatus(context === 'plan'
+      ? `${slot?.title || '图槽'} 的方案方向已更新。`
+      : `${slot?.title || '图槽'} 已由${reviewerRoles[role]?.label || '审核人'}标记为${reviewStatusMeta[status]?.text || '待审核'}，已自动保存`);
   };
   const saveGenerationRun = (run) => {
     const nextRuns = normalizeGenerationRuns([stripTransientGenerationRun(run), ...generationRuns]).slice(0, QUALITY_MAX_STORED_RUNS);
@@ -8022,11 +9561,79 @@ function WorkspaceApp({ session, onLogout }) {
     navigateTo('generation', 'generation');
   };
   const goReview = () => {
+    if (session.user.role === 'designer') {
+      navigateTo('handoff', 'handoff');
+      return;
+    }
     setActiveSection('review');
     navigateTo('review', 'review');
   };
+  const submitForOpsReview = () => {
+    const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    nextProject.cloud = { ...(currentProject?.cloud || {}), status: 'review' };
+    const nextProjects = projects.some((project) => project.id === activeProjectId)
+      ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
+      : [nextProject, ...projects];
+    persistProjects(nextProjects);
+    appLogger.log('workflow.review.submitted', {
+      selectedRunCount: activeSlots.filter((slot) => getBestRunForSlot(slot.id, generationRuns)?.verdict === 'usable').length
+    }, { projectId: activeProjectId, step: 'handoff' });
+    setSaveStatus('已提交运营审核。运营负责人将在自己的审核队列中看到该项目。');
+    setActiveSection('projects');
+  };
+  const trashProjectFromCenter = async (project) => {
+    const title = getProjectTitle(project.form);
+    if (!window.confirm(`将「${title}」移入回收站？项目会保留 30 天。`)) return;
+    await trashTeamProject(project.id);
+    const nextProjects = projects.filter((item) => item.id !== project.id);
+    setProjects(nextProjects);
+    storeProjects(nextProjects);
+    if (activeProjectId === project.id) {
+      const nextActive = nextProjects[0];
+      setActiveProjectId(nextActive?.id || '');
+      setProjectForm(nextActive?.form || blankProjectForm);
+      setLedgerFacts(nextActive?.ledgerFacts || []);
+      setStoryboardBriefs(nextActive?.storyboardBriefs || []);
+      setReviewDecisions(nextActive?.reviewDecisions || []);
+      setGenerationRuns(normalizeGenerationRuns(nextActive?.generationRuns || []));
+      setPromptOverrides(nextActive?.promptOverrides || {});
+      setExportSelections(nextActive?.exportSelections || {});
+    }
+    setSaveStatus(`「${title}」已移入回收站。`);
+  };
+  const restoreProjectFromTrash = async (project) => {
+    await restoreTrashedTeamProject(project.id);
+    const remoteProjects = await listTeamProjects();
+    const restoredProjects = await Promise.all(remoteProjects
+      .map(mapTeamProjectToWorkspaceProject)
+      .map(refreshWorkspaceProjectAssetUrls));
+    setProjects(restoredProjects);
+    storeProjects(restoredProjects);
+    setSaveStatus(`「${project.projectName}」已恢复。`);
+  };
+  const projectStageItems = navItems.filter((item) => (
+    session.user.role === 'designer'
+      ? ['project', 'ledger', 'storyboard', 'generation'].includes(item.id)
+      : session.user.role === 'operator'
+        ? ['review'].includes(item.id)
+        : ['project', 'ledger', 'storyboard', 'generation', 'review', 'export'].includes(item.id)
+  ));
+  const isProjectWorkspace = projectStageItems.some((item) => item.id === activeSection) || activeSection === 'handoff';
+  const roleLabel = session.user.role === 'designer' ? '设计' : session.user.role === 'operator' ? '运营' : '管理员';
 
   const pageMap = {
+    system: <SystemOverviewPage projects={projects} onNavigate={(section) => navigateTo(section, section)} />,
+    projects: (
+      <ProjectCenterPage
+        projects={projects}
+        currentUser={session.user}
+        onOpenProject={selectProject}
+        onCreateProject={createNewProject}
+        onTrashProject={trashProjectFromCenter}
+        onRestoreProject={restoreProjectFromTrash}
+        isLoading={isLoadingTeamProjects}
+      />
+    ),
     project: (
       <ProjectPage
         projectForm={projectForm}
@@ -8047,6 +9654,9 @@ function WorkspaceApp({ session, onLogout }) {
       <BrandLibraryPage
         brandLibrary={brandLibrary}
         onUpdateBrands={updateBrandLibrary}
+        onSaveBrand={saveBrandProfile}
+        onDeleteBrand={removeBrandProfile}
+        userRole={session.user.role}
         focusRequest={focusRequest}
       />
     ),
@@ -8057,8 +9667,10 @@ function WorkspaceApp({ session, onLogout }) {
         focusRequest={focusRequest}
       />
     ),
+    'admin-release': <AdminReleasePage projects={projects} onOpenProject={selectProject} />,
     quality: (
       <QualityConsolePage
+        activeProjectId={activeProjectId}
         projectForm={projectForm}
         storyboardBriefs={storyboardBriefs}
         generationRuns={generationRuns}
@@ -8069,25 +9681,33 @@ function WorkspaceApp({ session, onLogout }) {
         focusRequest={focusRequest}
       />
     ),
-    ledger: <LedgerPage ledgerFacts={ledgerFacts} onUpdateFact={updateLedgerFact} focusRequest={focusRequest} />,
+    ledger: (
+      <LedgerPage
+        projectForm={projectForm}
+        brandLibrary={brandLibrary}
+        ledgerFacts={ledgerFacts}
+        onUpdateFact={updateLedgerFact}
+        onAddFact={addLedgerFact}
+        onGoStoryboard={continueToStoryboard}
+        focusRequest={focusRequest}
+      />
+    ),
     storyboard: (
-      <StoryboardPage
+      <StoryboardPlanPage
         selectedSlot={selectedSlot}
         setSelectedSlot={setSelectedSlot}
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
         ledgerFacts={ledgerFacts}
         projectForm={projectForm}
         storyboardBriefs={storyboardBriefs}
-        reviewDecisions={reviewDecisions}
         onChangePlanOutputPreset={changePlanOutputPreset}
         isPlanningStoryboard={isPlanningStoryboard}
         regeneratingSlotId={regeneratingSlotId}
-        onUpdateReview={updateReviewDecision}
         onGenerateStoryboardBriefs={generateStoryboardBriefs}
         onRegenerateStoryboardSlot={regenerateStoryboardSlot}
+        onAddStoryboardSlot={addStoryboardSlot}
+        onRemoveStoryboardSlot={removeStoryboardSlot}
+        onMoveStoryboardSlot={moveStoryboardSlot}
         onGoGeneration={goGeneration}
-        onManageLedger={() => navigateTo('ledger', 'ledger')}
         focusRequest={focusRequest}
       />
     ),
@@ -8095,18 +9715,28 @@ function WorkspaceApp({ session, onLogout }) {
       <GenerationPage
         activeProjectId={activeProjectId}
         projectForm={projectForm}
+        ledgerFacts={ledgerFacts}
         storyboardBriefs={storyboardBriefs}
         selectedSlot={selectedSlot}
         setSelectedSlot={setSelectedSlot}
         generationRuns={generationRuns}
         promptOverrides={promptOverrides}
-        brandLibrary={brandLibrary}
+        brandLibrary={projectBrandLibrary}
         onSaveGenerationRun={saveGenerationRun}
         onSaveGenerationRuns={saveGenerationRuns}
         onUpdateGenerationRun={updateGenerationRun}
         onUpdatePromptOverride={updatePromptOverride}
         onGoReview={goReview}
         focusRequest={focusRequest}
+      />
+    ),
+    handoff: (
+      <HandoffPage
+        projectForm={projectForm}
+        storyboardBriefs={storyboardBriefs}
+        generationRuns={generationRuns}
+        onBack={() => navigateTo('generation', 'generation')}
+        onSubmit={submitForOpsReview}
       />
     ),
     review: (
@@ -8116,6 +9746,7 @@ function WorkspaceApp({ session, onLogout }) {
         reviewDecisions={reviewDecisions}
         generationRuns={generationRuns}
         onUpdateReview={updateReviewDecision}
+        userRole={session.user.role}
         onManageLedger={() => navigateTo('ledger', 'ledger')}
         focusRequest={focusRequest}
       />
@@ -8129,137 +9760,94 @@ function WorkspaceApp({ session, onLogout }) {
         generationRuns={generationRuns}
         exportSelections={exportSelections}
         onUpdateExportSelection={updateExportSelection}
+        userRole={session.user.role}
         focusRequest={focusRequest}
       />
     )
   };
 
   return (
-    <main className="app-shell">
-      <div className="dot-grid" aria-hidden="true" />
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark">
-            <BrandLogo size={26} />
+    <main className={isSidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+      <aside className="sidebar workspace-sidebar">
+        <div className="sidebar-top-row">
+          <div className="brand">
+            <BrandLockup
+              inverse
+              className="sidebar-brand-lockup"
+              source={isSidebarCollapsed ? '/vistamz-mark-white.svg' : '/vistamz-lockup-h-white.svg'}
+            />
+            <div className="sidebar-copy">
+              <p>Amazon visual workflow</p>
+            </div>
           </div>
-          <div>
-            <h1>Vistamz</h1>
-            <p>Claim-based Amazon visuals</p>
-          </div>
+          <button className="sidebar-collapse-button" type="button" onClick={() => setIsSidebarCollapsed((value) => !value)} aria-label={isSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}>
+            <ChevronRight size={17} />
+          </button>
         </div>
 
-        <nav className="nav-list" aria-label="Workflow">
-          {visibleNavItems.map(({ id, label }) => {
-            const index = navItems.findIndex((item) => item.id === id);
-            const stepStatus = workflowGuideSteps[index]?.status || 'waiting';
-            const isActive = activeSection === id;
-            return (
-              <button
-                className={`nav-item ${stepStatus}${isActive ? ' active' : ''}`}
-                key={id}
-                onClick={() => setActiveSection(id)}
-              >
-                <span className="nav-step" aria-hidden="true">
-                  {stepStatus === 'done' ? <Check size={14} /> : index + 1}
-                </span>
-                <span className="nav-label">{label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <ProjectList
-          projects={projects}
-          activeProjectId={activeProjectId}
-          onSelectProject={selectProject}
-          onCreateProject={createNewProject}
-          onDeleteProject={deleteProject}
-          canCreate={canCreateProject}
-        />
-
-        <div className="sidebar-bottom">
-          {visibleGlobalNavItems.map(({ id, label, icon: Icon, subtitle }) => (
-            <button
-              className={activeSection === id ? 'global-nav-button active' : 'global-nav-button'}
-              key={id}
-              onClick={() => setActiveSection(id)}
-            >
-              <Icon size={17} />
-              <span>
-                <strong>{label}</strong>
-                <small>{subtitle}</small>
-              </span>
+        <nav className="workspace-nav" aria-label="主导航">
+          <p className="workspace-nav-label">工作区</p>
+          {workspaceNavItems.map(({ id, label, icon: Icon }) => (
+            <button className={activeSection === id ? 'workspace-nav-button active' : 'workspace-nav-button'} key={id} onClick={() => setActiveSection(id)} title={label}>
+              <Icon size={18} />
+              <span>{label}</span>
             </button>
           ))}
+        </nav>
 
-          <div className="sidebar-card">
-            <p className="eyebrow">当前身份 · {session.user.role === 'operator' ? '运营' : session.user.role === 'designer' ? '设计' : '管理员'}</p>
-            <h2>{getProjectTitle(projectForm)}</h2>
-            <div className="small-row">
-              <LockKeyhole size={14} />
-              {projectForm.sourceImageName || currentProject?.form?.sourceImageName || '等待上传白底图'}
+        <div className="sidebar-bottom-group">
+          {saveStatus && <div className="workspace-save-status workspace-sidebar-save-status" role="status">{saveStatus}</div>}
+          <div className="workspace-user">
+            <div className="workspace-user-copy">
+              <span>{session.user.displayName || '成员'}</span>
+              <small>{roleLabel}</small>
             </div>
-            <button className="sidebar-logout" type="button" onClick={onLogout}>退出登录</button>
+            <button className="sidebar-logout" type="button" onClick={onLogout} title="退出登录">退出登录</button>
           </div>
         </div>
       </aside>
 
-      <section className="workspace">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">{currentNav.eyebrow}</p>
-            <h2>{currentNav.title}</h2>
-            <p className="topbar-subtitle">{currentNav.subtitle}</p>
-          </div>
-          <div className="topbar-context">
-            <span>
-              <LockKeyhole size={15} />
-              {getProjectTitle(projectForm)}
-            </span>
-            <button className="secondary-button" onClick={() => navigateTo('project', 'image-upload')}>
-              <Upload size={17} />
-              更换产品图
-            </button>
-          </div>
-        </header>
+      <section className="workspace workspace-shell">
+        {isProjectWorkspace && (
+          <header className="workspace-project-header">
+            <button className="workspace-back-button" type="button" onClick={() => setActiveSection('projects')}><FolderOpen size={16} />项目中心</button>
+            <div className="workspace-project-title">
+              <small>{projectForm.sku || '当前项目'}</small>
+              <strong>{getProjectTitle(projectForm)}</strong>
+            </div>
+            <nav className="workspace-stage-nav" aria-label="项目步骤">
+              {projectStageItems.map((item) => {
+                const index = navItems.findIndex((candidate) => candidate.id === item.id);
+                const status = workflowGuideSteps[index]?.status;
+                return (
+                  <button key={item.id} className={`${activeSection === item.id ? 'active' : ''}${status === 'done' ? ' done' : ''}`} onClick={() => navigateTo(item.id, item.id)}>
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+          </header>
+        )}
 
-        {!isLoadingTeamProjects && <WorkflowGuide steps={visibleWorkflowGuideSteps} activeSection={activeSection} onNavigate={navigateTo} />}
-
-        <section className="status-strip" aria-label="项目状态">
-          <span><strong>{approvedCount}/{slotTotal}</strong> 人工通过</span>
-          <span><strong>{reviewCount + reworkCount}</strong> 待处理</span>
-          <span><strong>{blockedFacts}</strong> 禁用卖点</span>
-        </section>
+        {!isProjectWorkspace && activeSection !== 'projects' && (
+          <header className="workspace-simple-header">
+            <div><p className="eyebrow">{currentNav.eyebrow}</p><h2>{currentNav.title}</h2><p>{currentNav.subtitle}</p></div>
+          </header>
+        )}
 
         {pageMap[activeSection]}
       </section>
-
-      <nav className="mobile-tabbar" aria-label="工作流">
-        {visibleNavItems.map(({ id, icon: Icon }) => {
-          const index = navItems.findIndex((item) => item.id === id);
-          const stepStatus = workflowGuideSteps[index]?.status || 'waiting';
-          const isActive = activeSection === id;
-          return (
-            <button
-              className={`${isActive ? 'active' : ''}${stepStatus === 'done' ? ' done' : ''}`}
-              key={id}
-              onClick={() => setActiveSection(id)}
-            >
-              <Icon size={20} />
-              <span>{mobileTabLabels[id]}</span>
-            </button>
-          );
-        })}
-      </nav>
     </main>
   );
 }
 
 function App() {
   return (
-    <TeamAccessGate>
-      {({ session, onLogout }) => <WorkspaceApp session={session} onLogout={onLogout} />}
-    </TeamAccessGate>
+    <div className="vz-root">
+      <TeamAccessGate>
+        {({ session, onLogout }) => <WorkspaceApp session={session} onLogout={onLogout} />}
+      </TeamAccessGate>
+    </div>
   );
 }
 

@@ -1,0 +1,385 @@
+/* ==========================================================================
+   Vistamz Conformance Patch (CSS override layer)
+   载入顺序：必须在 src/styles.css 之后（最后 import）。
+   作用：把旧主题遗留的样式纠正到 Vistamz 规范。选择器/数值均对照
+        src/styles.css 现有规则得出，用 !important 确保赢过文件末尾的旧规则。
+   配套：normalize-vistamz.sh（批量修字重 + 旧橙→紫），见 patches/README.md。
+   ========================================================================== */
+
+/* 1) 页面标题：统一 Roboto Slab（展示体）+ 类型阶 + 字距 -2%
+      现状：.project-center-header h2 = Inter 30px；.new-project-heading h2 = Inter 27px（off-scale） */
+.vz-root .project-center-header h2,
+.vz-root .new-project-heading h2 {
+  font-family: "Roboto Slab", "Noto Serif SC", "Songti SC", Georgia, serif !important;
+  font-size: 32px !important;
+  line-height: 40px !important;
+  letter-spacing: -0.02em !important;
+}
+
+/* 2) “建议从这里继续” = 引导卡 → Vistamz Coral（这是 coral 的正确用途，只是把旧橙换成 coral token）
+      现状：border rgba(255,138,60,.28) / bg rgba(255,122,26,.08) / radius 9 / icon #ff9a57 / small #ffad7d */
+.vz-root .project-center-next {
+  border: 1px solid rgba(255, 117, 80, 0.30) !important; /* coral-500 @30% */
+  background: rgba(255, 117, 80, 0.08) !important;       /* coral-500 @8%  */
+  border-radius: 14px !important;                        /* 卡片圆角 12–20 */
+}
+.vz-root .project-center-next-icon {
+  background: rgba(255, 117, 80, 0.16) !important;
+  color: var(--vz-coral-600, #E85F3C) !important;
+}
+.vz-root .project-center-next small { color: var(--vz-coral-700, #C94A2C) !important; }
+
+/* 3) 其余“强调 / 激活 / 进度 / 焦点” = Vistamz Purple（primary），不是橙
+      现状：进度条 #ff7a1f；步骤 active #ff7a1f/#ffd9bf；行 hover rgba(255,138,60,.38) */
+.vz-root .project-center-progress i { background: var(--vz-purple-500, #7E49FE) !important; }
+.vz-root .project-center-row:hover  { border-color: rgba(126, 73, 254, 0.30) !important; }
+.vz-root .new-project-stepper span.active { color: var(--vz-purple-700, #572FB5) !important; }
+.vz-root .new-project-stepper .active b   { background: var(--vz-purple-500, #7E49FE) !important; color: #fff !important; }
+
+/* 4) “打开”按钮 → Vistamz small 次级按钮
+      现状：radius 6 / 34h / 12px / weight 750 / hover 旧橙 */
+.vz-root .project-open-button {
+  min-height: 32px !important;
+  border-radius: 9px !important;
+  border-color: var(--vz-border-default, #DED4E6) !important;
+  background: #FFFFFF !important;
+  color: var(--vz-ink, #200C28) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+.vz-root .project-open-button:hover {
+  border-color: var(--vz-purple-500, #7E49FE) !important;
+  background: var(--vz-purple-50, #F8F5FF) !important;
+  color: var(--vz-purple-700, #572FB5) !important;
+}
+
+/* 5) 搜索/输入尺寸对齐 spec（现状：38h / radius 6 / 12px） */
+.vz-root .project-search input {
+  min-height: 42px !important;
+  border-radius: 12px !important;
+  font-size: 15px !important;
+  border-color: var(--vz-border-default, #DED4E6) !important;
+}
+
+/* 6) 模式切换等小控件字重（sed 会全局处理 750/850；这里兜底显式项） */
+.vz-root .new-project-mode button,
+.vz-root .new-project-stepper span { font-weight: 600 !important; }
+
+/* ==========================================================================
+   Generation workspace v2
+   Single-screen decision layout: slots/queue | candidate | review/actions.
+   This layer changes composition only; generation and review controls keep
+   their existing event handlers and states in src/main.jsx.
+   ========================================================================== */
+
+.vz-root .generation-context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vz-space-3);
+}
+
+.vz-root .generation-context-head .eyebrow { margin: 0; }
+.vz-root .generation-context-mode {
+  flex: 0 0 auto;
+  border-color: var(--vz-purple-200);
+  background: var(--vz-purple-100);
+  color: var(--vz-text-brand);
+}
+
+@media (min-width: 1180px) {
+  .vz-root .workspace-shell > .generation-workspace {
+    grid-template-columns: 286px minmax(0, 1fr) !important;
+    grid-template-rows: minmax(0, 1fr) 58px;
+    gap: 0 !important;
+    height: calc(100dvh - 72px);
+    min-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+    background: var(--vz-surface-canvas);
+  }
+
+  .vz-root .generation-workspace > .generation-left-sticky {
+    grid-column: 1;
+    grid-row: 1;
+    position: static !important;
+    display: block !important;
+    min-height: 0;
+    max-height: none !important;
+    padding: var(--vz-space-3) !important;
+    overflow-y: auto;
+    border-right: 1px solid var(--vz-border-subtle);
+    background: var(--vz-surface-base);
+    box-shadow: none;
+  }
+
+  .vz-root .generation-left-sticky > .api-panel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .vz-root .generation-left-sticky .panel-header {
+    min-height: 48px;
+    padding: 0 0 var(--vz-space-2);
+    border-bottom: 1px solid var(--vz-border-subtle);
+  }
+
+  .vz-root .generation-left-sticky .panel-header h3 { font-size: 18px; }
+  .vz-root .generation-left-sticky .lock-label { min-height: 28px; padding: 0 8px; }
+  .vz-root .generation-left-sticky .panel-note { display: none; }
+
+  .vz-root .generation-workspace .generation-slot-list {
+    gap: 5px;
+    padding: var(--vz-space-2) 0 0;
+  }
+
+  .vz-root .generation-workspace .generation-slot {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: var(--vz-space-2);
+    min-height: 48px;
+    padding: 6px 8px;
+    border-color: var(--vz-border-subtle);
+    border-radius: var(--vz-radius-sm);
+    background: var(--vz-surface-base);
+  }
+
+  .vz-root .generation-workspace .generation-slot.active {
+    padding: 5px 7px;
+    border: 2px solid var(--vz-purple-500);
+    background: var(--vz-purple-50);
+  }
+
+  .vz-root .generation-workspace .generation-slot img { display: none; }
+  .vz-root .generation-workspace .generation-slot::before {
+    content: attr(data-slot-number);
+    display: grid;
+    place-items: center;
+    color: var(--vz-text-tertiary);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .vz-root .generation-workspace .generation-slot strong {
+    display: block;
+    overflow: hidden;
+    font-size: 12px;
+    line-height: 16px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .vz-root .generation-workspace .generation-slot small {
+    display: block;
+    overflow: hidden;
+    margin-top: 1px;
+    font-size: 10px;
+    line-height: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .vz-root .generation-workspace .generation-review-status {
+    width: auto;
+    min-width: 0;
+    padding: 4px 7px;
+    font-size: 9px;
+  }
+
+  .vz-root .generation-left-queue {
+    position: static !important;
+    gap: var(--vz-space-2);
+    margin-top: var(--vz-space-3) !important;
+    padding: var(--vz-space-3) 0 0 !important;
+    border: 0 !important;
+    border-top: 1px solid var(--vz-border-subtle) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .vz-root .generation-left-queue-list {
+    gap: 5px;
+    max-height: 166px;
+    padding: 0;
+  }
+  .vz-root .generation-left-queue-list button {
+    min-height: 48px;
+    padding: 7px 8px;
+    border-color: var(--vz-border-subtle);
+    border-radius: var(--vz-radius-sm);
+  }
+  .vz-root .generation-left-queue-list button.active {
+    border-color: var(--vz-purple-300);
+    background: var(--vz-purple-50);
+  }
+
+  .vz-root .generation-workspace > .right-column {
+    grid-column: 2;
+    grid-row: 1;
+    min-height: 0;
+    padding: var(--vz-space-3) var(--vz-space-4) !important;
+    overflow: hidden;
+  }
+
+  .vz-root .generation-workspace > .right-column > div { height: 100%; min-height: 0; }
+  .vz-root .generation-workspace .generation-panel {
+    display: grid !important;
+    grid-template-columns: minmax(520px, 1fr) clamp(360px, 28vw, 410px);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: none !important;
+    align-items: stretch;
+    gap: var(--vz-space-3);
+    width: 100%;
+    max-width: none !important;
+    height: 100%;
+    min-height: 0;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .vz-root .generation-workspace .generation-panel > .panel-header {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    min-height: 44px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .vz-root .generation-workspace .generation-panel > .panel-header h3 { font-size: 18px; }
+
+  .vz-root .generation-workspace .generation-panel > .candidate-block {
+    grid-column: 1;
+    grid-row: 2 / 5;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+    gap: var(--vz-space-2);
+    min-width: 0;
+    min-height: 0;
+    margin: 0;
+  }
+
+  .vz-root .generation-workspace .candidate-preview,
+  .vz-root .generation-workspace .candidate-preview-pending {
+    min-height: 0 !important;
+    height: 100%;
+    margin: 0;
+    padding: var(--vz-space-3);
+    overflow: hidden;
+    border-color: var(--vz-border-subtle);
+    border-radius: var(--vz-radius-md);
+    background: var(--vz-surface-subtle);
+  }
+  .vz-root .generation-workspace .candidate-preview > img,
+  .vz-root .generation-workspace .candidate-preview > .candidate-image-missing {
+    min-height: 0 !important;
+    max-height: 100%;
+    border-radius: var(--vz-radius-sm);
+    background: var(--vz-surface-base);
+    object-fit: contain;
+  }
+  .vz-root .generation-workspace .candidate-block .run-history {
+    min-height: 76px;
+    padding: var(--vz-space-2) var(--vz-space-3);
+    overflow-x: auto;
+    border: 1px solid var(--vz-border-subtle);
+    border-radius: var(--vz-radius-md);
+    background: var(--vz-surface-base);
+  }
+
+  .vz-root .generation-workspace .generation-panel > .generation-brief {
+    grid-column: 2;
+    grid-row: 2;
+    gap: var(--vz-space-2);
+    margin: 0;
+    padding: var(--vz-space-3);
+    border-color: var(--vz-border-subtle);
+    border-radius: var(--vz-radius-md);
+    box-shadow: var(--vz-shadow-sm);
+  }
+  .vz-root .generation-brief-summary { gap: 3px; }
+  .vz-root .generation-brief-summary > span { font-size: 10px; }
+  .vz-root .generation-brief-summary strong { font-size: 13px; line-height: 18px; }
+  .vz-root .generation-brief-summary p {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    font-size: 10px;
+    line-height: 15px;
+  }
+  .vz-root .generation-brief-details { margin-top: 6px; }
+  .vz-root .generation-brief-details > summary { min-height: 32px; }
+
+  .vz-root .generation-workspace .generation-panel > .generation-review-panel {
+    grid-column: 2;
+    grid-row: 3;
+    gap: var(--vz-space-2);
+    min-height: 0;
+    margin: 0;
+    padding: var(--vz-space-3);
+    overflow-y: auto;
+    border-color: var(--vz-border-subtle);
+    border-radius: var(--vz-radius-md);
+    box-shadow: var(--vz-shadow-sm);
+  }
+  .vz-root .generation-review-panel .candidate-review-summary strong { font-size: 16px; }
+  .vz-root .generation-review-panel .candidate-review-summary p { margin-top: 2px; }
+  .vz-root .generation-review-panel .quick-review-bar { gap: var(--vz-space-2); }
+  .vz-root .generation-review-panel .quick-review-actions button { min-height: 32px; }
+  .vz-root .generation-review-panel .quality-review-header { margin-bottom: 5px; }
+  .vz-root .generation-review-panel .reason-grid { gap: 5px; }
+  .vz-root .generation-review-panel .reason-grid button { min-height: 31px; }
+  .vz-root .generation-review-panel .candidate-local-edit-bar { padding: 9px; }
+
+  .vz-root .generation-workspace .generation-panel > .generation-setup {
+    grid-column: 2;
+    grid-row: 4;
+    gap: var(--vz-space-2);
+    margin: 0;
+    padding: var(--vz-space-3);
+    border-color: var(--vz-border-subtle);
+    border-radius: var(--vz-radius-md);
+    background: var(--vz-surface-base);
+    box-shadow: var(--vz-shadow-sm);
+  }
+  .vz-root .generation-setup .generation-method-grid { gap: var(--vz-space-2); }
+  .vz-root .generation-setup .generation-action-button {
+    min-height: 38px;
+    border: 0;
+    border-radius: var(--vz-radius-sm);
+    background: var(--vz-surface-brand);
+    color: var(--vz-text-inverse);
+  }
+  .vz-root .generation-setup .generation-action-button:hover:not(:disabled) { background: var(--vz-purple-600); color: var(--vz-text-inverse); }
+  .vz-root .generation-style-selector { margin-top: 0; padding: var(--vz-space-2); }
+  .vz-root .generation-style-selector > p { margin-bottom: 0; }
+
+  .vz-root .generation-panel.is-empty > .candidate-block { grid-row: 2 / 5; }
+  .vz-root .generation-panel.is-empty > .generation-setup { grid-row: 3; }
+
+  .vz-root .generation-workspace > .generation-submit-bar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    position: static !important;
+    align-self: stretch;
+    min-height: 58px;
+    margin: 0 !important;
+    padding: 8px var(--vz-space-5);
+    border: 0;
+    border-top: 1px solid var(--vz-border-subtle);
+    border-radius: 0;
+    background: var(--vz-surface-base);
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (max-width: 1179px) {
+  .vz-root .generation-context-head { align-items: flex-start; flex-direction: column; gap: var(--vz-space-2); }
+}

@@ -142,7 +142,34 @@ IMAGE_API_PROVIDER=gemini
 GEMINI_API_KEY=your-gemini-api-key
 GEMINI_TEXT_MODEL=gemini-3.5-flash
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
+DATABASE_URL=your-neon-postgres-url
+DATABASE_SSL=true
 ```
+
+Generated images and uploaded references must use durable object storage for multi-user beta. Cloudinary is the default beta provider:
+
+```text
+ASSET_STORAGE_PROVIDER=cloudinary
+CLOUDINARY_CLOUD_NAME=your-cloud-name
+CLOUDINARY_API_KEY=your-api-key
+CLOUDINARY_API_SECRET=your-api-secret
+CLOUDINARY_DELIVERY_TYPE=authenticated
+REQUIRE_DURABLE_ASSET_STORAGE=true
+```
+
+An S3-compatible provider remains available as an alternative:
+
+```text
+OBJECT_STORAGE_ENDPOINT=https://your-s3-compatible-endpoint
+OBJECT_STORAGE_REGION=auto
+OBJECT_STORAGE_BUCKET=your-bucket
+OBJECT_STORAGE_ACCESS_KEY_ID=your-access-key-id
+OBJECT_STORAGE_SECRET_ACCESS_KEY=your-secret-access-key
+OBJECT_STORAGE_FORCE_PATH_STYLE=false
+OBJECT_STORAGE_SIGNED_URL_TTL_SECONDS=21600
+```
+
+After adding these values, run `npm run storage:verify` in the same environment. The check writes a small file, reads it back, creates a signed URL, and removes the test file. `/api/health` then reports `internalBetaReadiness.ready: true` only when the database, model key, and durable object storage are all ready.
 
 Optional after the Vercel URL is known:
 
@@ -150,13 +177,10 @@ Optional after the Vercel URL is known:
 CORS_ORIGIN=https://your-vercel-app.vercel.app
 ```
 
-For the first beta, generated images and ZIP exports use the Render service filesystem. This is enough for smoke testing, but not a durable multi-user storage plan. Use object storage or a persistent disk before wider rollout.
+Without the object-storage variables, generated images fall back to the Render service filesystem. This fallback is only suitable for local or short smoke tests because files may disappear after a restart. In Cloudinary mode, approved images remain durable while ZIP files are packaged on demand and removed after 30 minutes.
 
 ## Known Gaps Before Wider Rollout
 
-- No account login yet.
-- No shared project database yet.
-- No per-user design / operation assignment yet.
-- No immutable audit log yet.
-- Brand library is still local storage.
-- Visual generation quality still depends on model output and prompt iteration.
+- Production Cloudinary storage is implemented and locally verified; Render configuration and cross-device acceptance remain.
+- Three real product categories still need full main-image and A+ acceptance runs.
+- Visual generation quality still depends on model output, reference coverage, and prompt iteration.

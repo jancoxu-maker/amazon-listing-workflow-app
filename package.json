@@ -5,12 +5,18 @@
     "start": "node api-server.mjs",
     "db:migrate": "node server/migrate.mjs",
     "db:seed-invites": "node server/seed-invites.mjs",
+    "db:seed-test-users": "node server/seed-test-users.mjs",
+    "storage:verify": "node server/verify-object-storage.mjs",
+    "test": "node --test server/*.test.mjs",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "node --check api-server.mjs && vite build"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1086.0",
+    "@aws-sdk/s3-request-presigner": "^3.1086.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "cloudinary": "^2.10.0",
     "lucide-react": "^0.468.0",
     "pg": "^8.22.0",
     "react": "^19.0.0",

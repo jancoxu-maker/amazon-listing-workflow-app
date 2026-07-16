@@ -2,16 +2,23 @@ const pages = {
   projects: 'projectsTemplate',
   'new-project': 'newProjectTemplate',
   content: 'contentTemplate',
+  plan: 'planTemplate',
   generate: 'generateTemplate',
+  handoff: 'handoffTemplate',
   'review-inbox': 'reviewInboxTemplate',
   'review-detail': 'reviewDetailTemplate',
+  'admin-release': 'adminReleaseTemplate',
+  'export-delivery': 'exportDeliveryTemplate',
   brands: 'brandsTemplate',
-  system: 'systemTemplate'
+  system: 'systemTemplate',
+  assignments: 'assignmentsTemplate',
+  logs: 'logsTemplate'
 };
 
 const root = document.querySelector('#pageRoot');
 const toast = document.querySelector('#toast');
 const localEditModal = document.querySelector('#localEditModal');
+const issueTuningModal = document.querySelector('#issueTuningModal');
 const loginScreen = document.querySelector('#loginScreen');
 const workspaceShell = document.querySelector('#workspaceShell');
 const roleBadge = document.querySelector('#roleBadge');
@@ -19,9 +26,9 @@ let currentPage = 'projects';
 let currentRole = null;
 
 const allowedPagesByRole = {
-  designer: ['projects', 'new-project', 'content', 'generate', 'brands'],
+  designer: ['projects', 'new-project', 'content', 'plan', 'generate', 'handoff', 'brands'],
   operator: ['review-inbox', 'review-detail'],
-  admin: ['system']
+  admin: ['system', 'assignments', 'logs', 'admin-release', 'export-delivery']
 };
 
 const defaultPageByRole = {
@@ -75,8 +82,9 @@ function updateNavigation(page) {
   document.querySelectorAll('.nav-item').forEach((item) => {
     const target = item.dataset.page;
     const active = target === page
-      || (target === 'projects' && ['new-project', 'content', 'generate'].includes(page))
-      || (target === 'review-inbox' && page === 'review-detail');
+      || (target === 'projects' && ['new-project', 'content', 'plan', 'generate', 'handoff'].includes(page))
+      || (target === 'review-inbox' && page === 'review-detail')
+      || (target === 'system' && ['assignments', 'logs', 'admin-release', 'export-delivery'].includes(page));
     item.classList.toggle('active', active);
   });
 }
@@ -166,21 +174,49 @@ function bindPageActions() {
   });
 
   root.querySelector('[data-action="submit-all-review"]')?.addEventListener('click', () => {
-    showToast('整套图片已提交运营审核');
+    if (currentPage === 'generate') {
+      renderPage('handoff');
+      return;
+    }
+    showToast('已提交运营审核，运营将在自己的审核队列中看到此项目。');
   });
 
-  root.querySelector('[data-action="generate-images"]')?.addEventListener('click', () => {
-    const suiteMode = root.querySelector('[data-generation-mode="suite"]')?.classList.contains('selected');
-    showToast(suiteMode ? '正在为整套图各生成 1 张候选图' : '正在为当前图槽生成 3 张候选图');
+  root.querySelectorAll('[data-action="generate-images"]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const suiteMode = button.dataset.generateScope === 'suite'
+        || root.querySelector('[data-generation-mode="suite"]')?.classList.contains('selected');
+      const rule = root.querySelector('#generationRule');
+      if (rule) rule.textContent = suiteMode
+        ? '整套图片固定为每个图槽生成 1 张，适合快速得到完整初稿。'
+        : '当前图槽固定生成 3 张候选图，用于比较后选定一张。';
+      showToast(suiteMode ? '正在为整套图各生成 1 张候选图' : '正在为当前图槽生成 3 张候选图');
+    });
   });
 
   root.querySelector('[data-action="approve-image"]')?.addEventListener('click', () => {
     showToast('图片已通过，正在进入下一张');
   });
 
+  root.querySelector('[data-action="export-final-images"]')?.addEventListener('click', () => {
+    showToast('正在准备最终图片 ZIP');
+  });
+
   root.querySelector('[data-action="open-local-edit"]')?.addEventListener('click', () => {
     localEditModal.classList.add('open');
     localEditModal.setAttribute('aria-hidden', 'false');
+  });
+
+  root.querySelector('[data-action="toggle-pre-review"]')?.addEventListener('click', (event) => {
+    const trigger = event.currentTarget;
+    const details = root.querySelector('.inline-pre-review-details');
+    const expanded = trigger.getAttribute('aria-expanded') === 'true';
+    trigger.setAttribute('aria-expanded', String(!expanded));
+    if (details) details.hidden = expanded;
+  });
+
+  root.querySelector('[data-action="open-issue-tuning"]')?.addEventListener('click', () => {
+    issueTuningModal.classList.add('open');
+    issueTuningModal.setAttribute('aria-hidden', 'false');
   });
 }
 
@@ -206,6 +242,19 @@ document.querySelectorAll('[data-action="close-local-edit"]').forEach((element) 
     localEditModal.classList.remove('open');
     localEditModal.setAttribute('aria-hidden', 'true');
   });
+});
+
+document.querySelectorAll('[data-action="close-issue-tuning"]').forEach((element) => {
+  element.addEventListener('click', () => {
+    issueTuningModal.classList.remove('open');
+    issueTuningModal.setAttribute('aria-hidden', 'true');
+  });
+});
+
+document.querySelector('[data-action="save-issue-tuning"]').addEventListener('click', () => {
+  issueTuningModal.classList.remove('open');
+  issueTuningModal.setAttribute('aria-hidden', 'true');
+  showToast('已记录问题，下一轮生成会带上对应限制条件');
 });
 
 document.querySelector('[data-action="generate-local-edit"]').addEventListener('click', () => {

@@ -1,11 +1,14 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { findInlineAsset } from './json-safety.mjs';
 
 const MEMBER_ROLES = new Set(['designer', 'operator']);
 const ALL_ROLES = new Set(['designer', 'operator', 'admin']);
 const SESSION_DAYS = Math.max(1, Number(process.env.AUTH_SESSION_DAYS || 14));
 const PASSWORD_MIN_LENGTH = 10;
 const scrypt = promisify(scryptCallback);
+
+const PROJECT_STATUSES = new Set(['draft', 'content', 'planning', 'design', 'review', 'rework', 'approved', 'exported', 'archived']);
 
 export class Stage1Error extends Error {
   constructor(message, status = 400, code = 'STAGE1_ERROR') {
@@ -57,6 +60,25 @@ function safeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function assertNoInlineAssets(value, label = '项目资料') {
+  const path = findInlineAsset(value);
+  if (path) {
+    throw new Stage1Error(`${label}包含内联图片，请先上传到对象存储。`, 413, 'INLINE_ASSET_NOT_ALLOWED');
+  }
+}
+
+function isProjectFullyApproved(projectData = {}) {
+  const decisions = Array.isArray(projectData.reviewDecisions) ? projectData.reviewDecisions : [];
+  const briefs = Array.isArray(projectData.storyboardBriefs) ? projectData.storyboardBriefs : [];
+  if (!decisions.length || !briefs.length) return false;
+  const activeSlotIds = new Set(briefs.map((brief) => Number(brief?.id)).filter(Number.isFinite));
+  if (!activeSlotIds.size) return false;
+  return Array.from(activeSlotIds).every((slotId) => {
+    const decision = decisions.find((item) => Number(item?.slotId) === slotId);
+    return decision?.opsStatus === 'approved' && decision?.finalStatus === 'approved';
+  });
+}
+
 function userRecord(row) {
   return {
     id: row.id,
@@ -105,6 +127,45 @@ export function createStage1Store(database) {
     const session = await getSession(token);
     if (!session) throw new Stage1Error('登录已失效，请重新进入。', 401, 'AUTH_REQUIRED');
     return session;
+  }
+
+  async function requireProjectAccess(user, projectId, options = {}) {
+    assertConfigured();
+    const id = String(projectId || '').trim();
+    if (!id) throw new Stage1Error('请求缺少项目编号。', 400, 'PROJECT_ID_REQUIRED');
+
+    const allowedRoles = Array.isArray(options.allowedRoles) ? options.allowedRoles : [];
+    if (allowedRoles.length && !allowedRoles.includes(user.role)) {
+      throw new Stage1Error('当前身份不能执行此操作。', 403, 'PROJECT_ACTION_FORBIDDEN');
+    }
+
+    const result = await database.query(
+      `SELECT p.id, p.status, p.brand_snapshot, p.project_data,
+        EXISTS(
+          SELECT 1 FROM project_assignments a
+          WHERE a.project_id = p.id
+            AND a.user_id = $2
+            AND a.assignment_role = $3
+        ) AS has_role_assignment
+       FROM projects p
+       WHERE p.id = $1 AND p.deleted_at IS NULL
+       LIMIT 1`,
+      [id, user.id, user.role]
+    );
+    if (!result.rowCount) throw new Stage1Error('项目不存在。', 404, 'PROJECT_NOT_FOUND');
+    const project = result.rows[0];
+    if (user.role !== 'admin' && !project.has_role_assignment) {
+      throw new Stage1Error('你没有操作这个项目的权限。', 403, 'PROJECT_ACCESS_FORBIDDEN');
+    }
+    if (options.requireApproved && !isProjectFullyApproved(safeObject(project.project_data))) {
+      throw new Stage1Error('项目尚未完成运营审核和管理员最终放行，不能导出。', 409, 'PROJECT_NOT_APPROVED');
+    }
+    return {
+      id: project.id,
+      status: project.status,
+      brandSnapshot: safeObject(project.brand_snapshot),
+      projectData: safeObject(project.project_data)
+    };
   }
 
   async function activateInvite({ inviteHash, displayName, email, requestedRole, password }) {
@@ -219,6 +280,7 @@ export function createStage1Store(database) {
           JOIN app_users creator ON creator.id = p.created_by
           LEFT JOIN project_assignments a ON a.project_id = p.id
           LEFT JOIN app_users assignee ON assignee.id = a.user_id
+          WHERE p.deleted_at IS NULL
           GROUP BY p.id, creator.display_name
           ORDER BY p.updated_at DESC
         `)
@@ -231,6 +293,7 @@ export function createStage1Store(database) {
           JOIN app_users creator ON creator.id = p.created_by
           LEFT JOIN project_assignments a_all ON a_all.project_id = p.id
           LEFT JOIN app_users assignee ON assignee.id = a_all.user_id
+          WHERE p.deleted_at IS NULL
           GROUP BY p.id, creator.display_name
           ORDER BY p.updated_at DESC
         `, [user.id]);
@@ -250,6 +313,123 @@ export function createStage1Store(database) {
     }));
   }
 
+  async function listTrashedProjects(user) {
+    assertConfigured();
+    if (!['designer', 'admin'].includes(user.role)) return [];
+    const result = user.role === 'admin'
+      ? await database.query(`
+          SELECT p.*, creator.display_name AS creator_name
+          FROM projects p
+          JOIN app_users creator ON creator.id = p.created_by
+          WHERE p.deleted_at IS NOT NULL
+          ORDER BY p.deleted_at DESC
+        `)
+      : await database.query(`
+          SELECT p.*, creator.display_name AS creator_name
+          FROM projects p
+          JOIN app_users creator ON creator.id = p.created_by
+          WHERE p.deleted_at IS NOT NULL AND p.created_by = $1
+          ORDER BY p.deleted_at DESC
+        `, [user.id]);
+    return result.rows.map((row) => ({
+      id: row.id,
+      projectName: row.project_name,
+      productName: row.product_name,
+      sku: row.sku,
+      outputType: row.output_type,
+      status: row.status,
+      previousStatus: row.status_before_delete || 'draft',
+      createdBy: { id: row.created_by, name: row.creator_name },
+      deletedAt: row.deleted_at,
+      purgeAfter: row.purge_after
+    }));
+  }
+
+  async function trashProject(user, projectId) {
+    assertConfigured();
+    if (!['designer', 'admin'].includes(user.role)) {
+      throw new Stage1Error('当前身份不能删除项目。', 403, 'PROJECT_DELETE_FORBIDDEN');
+    }
+    const id = String(projectId || '').trim();
+    const result = await database.transaction(async (client) => {
+      const current = await client.query(
+        `SELECT id, project_name, created_by, status
+         FROM projects
+         WHERE id = $1 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [id]
+      );
+      if (!current.rowCount) throw new Stage1Error('项目不存在或已在回收站。', 404, 'PROJECT_NOT_FOUND');
+      const project = current.rows[0];
+      if (user.role !== 'admin' && project.created_by !== user.id) {
+        throw new Stage1Error('设计师只能删除自己创建的项目。', 403, 'PROJECT_DELETE_FORBIDDEN');
+      }
+      if (user.role !== 'admin' && !['draft', 'content', 'planning', 'design', 'rework'].includes(project.status)) {
+        throw new Stage1Error('已进入审核或已导出的项目需要管理员移入回收站。', 409, 'PROJECT_DELETE_REQUIRES_ADMIN');
+      }
+      await client.query(
+        `UPDATE projects
+         SET status_before_delete = status,
+             status = 'archived',
+             deleted_at = NOW(),
+             deleted_by = $2,
+             purge_after = NOW() + INTERVAL '30 days',
+             updated_at = NOW()
+         WHERE id = $1`,
+        [id, user.id]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
+         VALUES ($1, $2, $3, 'project.trashed', $4::jsonb)`,
+        [createId('audit'), user.id, id, JSON.stringify({ previousStatus: project.status, purgeAfterDays: 30 })]
+      );
+      return project;
+    });
+    return { id: result.id, projectName: result.project_name, deleted: true };
+  }
+
+  async function restoreProject(user, projectId) {
+    assertConfigured();
+    if (!['designer', 'admin'].includes(user.role)) {
+      throw new Stage1Error('当前身份不能恢复项目。', 403, 'PROJECT_RESTORE_FORBIDDEN');
+    }
+    const id = String(projectId || '').trim();
+    return database.transaction(async (client) => {
+      const current = await client.query(
+        `SELECT id, project_name, created_by, status_before_delete
+         FROM projects
+         WHERE id = $1 AND deleted_at IS NOT NULL
+         FOR UPDATE`,
+        [id]
+      );
+      if (!current.rowCount) throw new Stage1Error('回收站中没有这个项目。', 404, 'TRASHED_PROJECT_NOT_FOUND');
+      const project = current.rows[0];
+      if (user.role !== 'admin' && project.created_by !== user.id) {
+        throw new Stage1Error('设计师只能恢复自己创建的项目。', 403, 'PROJECT_RESTORE_FORBIDDEN');
+      }
+      const restoredStatus = PROJECT_STATUSES.has(project.status_before_delete) && project.status_before_delete !== 'archived'
+        ? project.status_before_delete
+        : 'draft';
+      await client.query(
+        `UPDATE projects
+         SET status = $2,
+             status_before_delete = NULL,
+             deleted_at = NULL,
+             deleted_by = NULL,
+             purge_after = NULL,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [id, restoredStatus]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
+         VALUES ($1, $2, $3, 'project.restored', $4::jsonb)`,
+        [createId('audit'), user.id, id, JSON.stringify({ restoredStatus })]
+      );
+      return { id, projectName: project.project_name, status: restoredStatus, restored: true };
+    });
+  }
+
   async function createProject(user, payload = {}) {
     assertConfigured();
     if (!['designer', 'admin'].includes(user.role)) {
@@ -261,6 +441,8 @@ export function createStage1Store(database) {
     const outputType = payload.outputType === 'a-plus' ? 'a-plus' : 'main-image';
     const projectData = safeObject(payload.projectData);
     const brandSnapshot = safeObject(payload.brandSnapshot);
+    assertNoInlineAssets(projectData);
+    assertNoInlineAssets(brandSnapshot, '品牌快照');
 
     await database.transaction(async (client) => {
       await client.query(
@@ -279,34 +461,73 @@ export function createStage1Store(database) {
       );
     });
 
-    return { id: projectId, projectName, outputType, status: 'draft' };
+    return { id: projectId, projectName, outputType, status: 'draft', brandSnapshot };
   }
 
   async function updateProject(user, projectId, payload = {}) {
     assertConfigured();
     const id = String(projectId || '').trim();
     const project = await database.query(
-      `SELECT p.id,
+      `SELECT p.id, p.project_name, p.product_name, p.sku, p.output_type, p.status, p.brand_snapshot, p.project_data,
         EXISTS(
           SELECT 1 FROM project_assignments a
-          WHERE a.project_id = p.id AND a.user_id = $2
-        ) AS is_assigned
+          WHERE a.project_id = p.id AND a.user_id = $2 AND a.assignment_role = $3
+        ) AS has_role_assignment
        FROM projects p
-       WHERE p.id = $1
+       WHERE p.id = $1 AND p.deleted_at IS NULL
        LIMIT 1`,
-      [id, user.id]
+      [id, user.id, user.role]
     );
     if (!project.rowCount) throw new Stage1Error('项目不存在。', 404, 'PROJECT_NOT_FOUND');
-    if (user.role !== 'admin' && !project.rows[0].is_assigned) {
+    if (user.role !== 'admin' && !project.rows[0].has_role_assignment) {
       throw new Stage1Error('你没有编辑这个项目的权限。', 403, 'PROJECT_UPDATE_FORBIDDEN');
+    }
+
+    const current = project.rows[0];
+    if (user.role === 'operator') {
+      const incomingData = safeObject(payload.projectData);
+      const currentData = safeObject(current.project_data);
+      const reviewDecisions = Array.isArray(incomingData.reviewDecisions)
+        ? incomingData.reviewDecisions
+        : currentData.reviewDecisions;
+      const nextStatus = ['review', 'rework', 'approved'].includes(payload.status)
+        ? payload.status
+        : current.status;
+      const nextProjectData = {
+        ...currentData,
+        reviewDecisions: Array.isArray(reviewDecisions) ? reviewDecisions : []
+      };
+      assertNoInlineAssets(nextProjectData);
+      await database.transaction(async (client) => {
+        await client.query(
+          `UPDATE projects
+           SET status = $2, project_data = $3::jsonb, updated_at = NOW()
+           WHERE id = $1`,
+          [id, nextStatus, JSON.stringify(nextProjectData)]
+        );
+        await client.query(
+          `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
+           VALUES ($1, $2, $3, 'project.review_updated', $4::jsonb)`,
+          [createId('audit'), user.id, id, JSON.stringify({ status: nextStatus })]
+        );
+      });
+      return {
+        id,
+        projectName: current.project_name,
+        outputType: current.output_type,
+        status: nextStatus,
+        brandSnapshot: current.brand_snapshot || {}
+      };
     }
 
     const projectName = normalizeName(payload.projectName);
     if (projectName.length < 2) throw new Stage1Error('请输入项目名称。', 400, 'PROJECT_NAME_REQUIRED');
     const outputType = payload.outputType === 'a-plus' ? 'a-plus' : 'main-image';
-    const status = ['draft', 'content', 'planning', 'design', 'review', 'rework', 'approved', 'exported', 'archived'].includes(payload.status)
+    const status = PROJECT_STATUSES.has(payload.status)
       ? payload.status
       : 'draft';
+    assertNoInlineAssets(payload.projectData);
+    assertNoInlineAssets(payload.brandSnapshot, '品牌快照');
 
     await database.transaction(async (client) => {
       await client.query(
@@ -338,7 +559,13 @@ export function createStage1Store(database) {
       );
     });
 
-    return { id, projectName, outputType, status };
+    return {
+      id,
+      projectName,
+      outputType,
+      status,
+      brandSnapshot: safeObject(payload.brandSnapshot)
+    };
   }
 
   async function assignProject(user, projectId, { userId, assignmentRole }) {
@@ -402,7 +629,7 @@ export function createStage1Store(database) {
         const event = safeObject(item);
         await client.query(
           `INSERT INTO audit_logs (id, actor_id, project_id, event_name, level, trace_id, step, payload, client)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb)`,
+           VALUES ($1, $2, (SELECT id FROM projects WHERE id = $3), $4, $5, $6, $7, $8::jsonb, $9::jsonb)`,
           [
             createId('audit'),
             actor?.id || null,
@@ -423,12 +650,16 @@ export function createStage1Store(database) {
   return {
     getSession,
     requireSession,
+    requireProjectAccess,
     activateInvite,
     login,
     revokeSession,
     listProjects,
+    listTrashedProjects,
     createProject,
     updateProject,
+    trashProject,
+    restoreProject,
     assignProject,
     listActiveUsers,
     appendAuditEvents

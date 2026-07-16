@@ -1,0 +1,66 @@
+/* ==========================================================================
+   Vistamz Conformance Patch (CSS override layer)
+   载入顺序：必须在 src/styles.css 之后（最后 import）。
+   作用：把旧主题遗留的样式纠正到 Vistamz 规范。选择器/数值均对照
+        src/styles.css 现有规则得出，用 !important 确保赢过文件末尾的旧规则。
+   配套：normalize-vistamz.sh（批量修字重 + 旧橙→紫），见 patches/README.md。
+   ========================================================================== */
+
+/* 1) 页面标题：统一 Roboto Slab（展示体）+ 类型阶 + 字距 -2%
+      现状：.project-center-header h2 = Inter 30px；.new-project-heading h2 = Inter 27px（off-scale） */
+.vz-root .project-center-header h2,
+.vz-root .new-project-heading h2 {
+  font-family: "Roboto Slab", "Noto Serif SC", "Songti SC", Georgia, serif !important;
+  font-size: 32px !important;
+  line-height: 40px !important;
+  letter-spacing: -0.02em !important;
+}
+
+/* 2) “建议从这里继续” = 引导卡 → Vistamz Coral（这是 coral 的正确用途，只是把旧橙换成 coral token）
+      现状：border rgba(255,138,60,.28) / bg rgba(255,122,26,.08) / radius 9 / icon #ff9a57 / small #ffad7d */
+.vz-root .project-center-next {
+  border: 1px solid rgba(255, 117, 80, 0.30) !important; /* coral-500 @30% */
+  background: rgba(255, 117, 80, 0.08) !important;       /* coral-500 @8%  */
+  border-radius: 14px !important;                        /* 卡片圆角 12–20 */
+}
+.vz-root .project-center-next-icon {
+  background: rgba(255, 117, 80, 0.16) !important;
+  color: var(--vz-coral-600, #E85F3C) !important;
+}
+.vz-root .project-center-next small { color: var(--vz-coral-700, #C94A2C) !important; }
+
+/* 3) 其余“强调 / 激活 / 进度 / 焦点” = Vistamz Purple（primary），不是橙
+      现状：进度条 #ff7a1f；步骤 active #ff7a1f/#ffd9bf；行 hover rgba(255,138,60,.38) */
+.vz-root .project-center-progress i { background: var(--vz-purple-500, #7E49FE) !important; }
+.vz-root .project-center-row:hover  { border-color: rgba(126, 73, 254, 0.30) !important; }
+.vz-root .new-project-stepper span.active { color: var(--vz-purple-700, #572FB5) !important; }
+.vz-root .new-project-stepper .active b   { background: var(--vz-purple-500, #7E49FE) !important; color: #fff !important; }
+
+/* 4) “打开”按钮 → Vistamz small 次级按钮
+      现状：radius 6 / 34h / 12px / weight 750 / hover 旧橙 */
+.vz-root .project-open-button {
+  min-height: 32px !important;
+  border-radius: 9px !important;
+  border-color: var(--vz-border-default, #DED4E6) !important;
+  background: #FFFFFF !important;
+  color: var(--vz-ink, #200C28) !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+}
+.vz-root .project-open-button:hover {
+  border-color: var(--vz-purple-500, #7E49FE) !important;
+  background: var(--vz-purple-50, #F8F5FF) !important;
+  color: var(--vz-purple-700, #572FB5) !important;
+}
+
+/* 5) 搜索/输入尺寸对齐 spec（现状：38h / radius 6 / 12px） */
+.vz-root .project-search input {
+  min-height: 42px !important;
+  border-radius: 12px !important;
+  font-size: 15px !important;
+  border-color: var(--vz-border-default, #DED4E6) !important;
+}
+
+/* 6) 模式切换等小控件字重（sed 会全局处理 750/850；这里兜底显式项） */
+.vz-root .new-project-mode button,
+.vz-root .new-project-stepper span { font-weight: 600 !important; }

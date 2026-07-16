@@ -1,0 +1,352 @@
+{
+  "$schema": "https://vistamz.design/schema/agent-ui-spec-1.json",
+  "meta": {
+    "name": "Vistamz UI System — Agent Build Spec",
+    "version": "1.0.0",
+    "basedOn": "Vistamz_UI_Guideline_v1.0 (16-page guideline + design tokens)",
+    "purpose": "Single source of truth for an AI/code agent (Codex, Claude, etc.) to reproduce the Vistamz look-and-feel accurately without seeing the PDF.",
+    "language": "Values are literal and ready to use; token names are provided for reference. Chinese notes are copied from the guideline intent.",
+    "baseGridPx": 8
+  },
+
+  "_agentInstructions": {
+    "howToUse": [
+      "Treat every literal value here as authoritative — do not invent colors, radii, spacing, or shadows outside these scales.",
+      "Prefer semantic roles (color.roles, color.semantic) over raw primitives when styling UI.",
+      "When a component recipe exists under `components`, follow it exactly (sizes, states, colors, radius). Only fall back to primitives for cases not covered.",
+      "Always implement ALL listed states for interactive components: Default, Hover, Pressed, Focus, Disabled, Loading, Error (where applicable).",
+      "Respect the color usage ratio (color.usage.ratio) — surfaces are mostly white/lilac; purple is the primary identity; coral is a rare 5% accent.",
+      "Never use forbidden color pairs (color.usage.forbidden). White text on coral is banned for text.",
+      "Accessibility rules (section `accessibility`) are non-negotiable and outrank decoration."
+    ],
+    "nonNegotiables": [
+      "One primary button per screen region.",
+      "Coral is for high-value, NON-destructive actions only; destructive actions use the danger/error red.",
+      "Status is never conveyed by color alone — always pair with icon + text.",
+      "Labels are always external to inputs; placeholders never replace the field name.",
+      "Focus ring is a visible 3px semi-transparent purple that does not change layout size; never remove it.",
+      "Minimum touch target 44×44px; button text is 14px / weight 600.",
+      "One H1 per page; buttons start with a verb (e.g. 保存更改 / 邀请成员).",
+      "The wordmark/logo is a custom asset — never re-typeset it with fonts."
+    ],
+    "applicationOrder": [
+      "1. Set surfaces: canvas #FBF9FD, base #FFFFFF, subtle #F7F3FE.",
+      "2. Set text: primary #200C28, secondary #6A5C70; body 16/24, weight 400.",
+      "3. Lay out on 8pt grid with the responsive columns/gutters in `layout`.",
+      "4. Apply components from `components` with correct sizes/states.",
+      "5. Use purple for primary actions/focus, coral for a single high-value accent, semantic colors for states.",
+      "6. Verify accessibility checklist before shipping."
+    ]
+  },
+
+  "principles": [
+    { "id": "bold-identity", "title": "大胆识别 / Bold identity", "rule": "高纯度紫色建立主识别；重要动作清晰聚焦，避免大面积同时争抢注意力。" },
+    { "id": "warm-tone", "title": "友好温度 / Warm tone", "rule": "珊瑚橙用于高价值提示、庆祝和引导，让数据型界面保持亲和。" },
+    { "id": "clear-structure", "title": "结构清晰 / Clear structure", "rule": "以 8pt 网格、有限层级和一致间距组织信息；组件可组合与复用。" },
+    { "id": "usable-first", "title": "可用优先 / Usable first", "rule": "对比度、焦点、触控目标和状态反馈优先于装饰；一致性服务于任务完成。" }
+  ],
+
+  "brandVoice": {
+    "tone": "简明、有判断、不过度承诺",
+    "rules": [
+      "标题用结论，说明用动作语言。",
+      "避免『点击这里』『可能也许』等含糊表达。",
+      "成功反馈强调完成结果；错误反馈说明原因与下一步。"
+    ]
+  },
+
+  "color": {
+    "primitives": {
+      "purple": { "50": "#F8F5FF", "100": "#F2ECFF", "200": "#E5DBFF", "300": "#CFB9FF", "400": "#A984FF", "500": "#7E49FE", "600": "#6C3EDA", "700": "#572FB5", "800": "#43248F", "900": "#301A68", "950": "#21103F" },
+      "coral": { "50": "#FFF7F5", "100": "#FFF0EC", "200": "#FFD8CD", "300": "#FFB9A6", "400": "#FF9172", "500": "#FF7550", "600": "#E85F3C", "700": "#C94A2C", "800": "#A33A25", "900": "#7E2E21", "950": "#4E1B16" },
+      "neutral": { "0": "#FFFFFF", "50": "#FBF9FD", "100": "#F7F3FE", "200": "#EEE8F4", "300": "#DED4E6", "400": "#B9ABBF", "500": "#8A7B90", "600": "#6A5C70", "700": "#4B3D51", "800": "#34213B", "900": "#200C28" }
+    },
+    "brandCore": {
+      "purple": { "hex": "#7E49FE", "name": "Vistamz Purple", "use": "主操作 · 品牌强调 · 焦点" },
+      "coral": { "hex": "#FF7550", "name": "Vistamz Coral", "use": "高价值提示 · 引导 · 庆祝" },
+      "lilac": { "hex": "#F7F3FE", "name": "Soft Lilac", "use": "次级表面 · 分区 · 选中态" },
+      "ink": { "hex": "#200C28", "name": "Deep Ink", "use": "主文字 · 反向表面 · 强边界" },
+      "paper": { "hex": "#FFFFFF", "name": "Paper White", "use": "主要表面色" }
+    },
+    "roles": {
+      "surface": { "canvas": "#FBF9FD", "base": "#FFFFFF", "subtle": "#F7F3FE", "inverse": "#200C28", "brand": "#7E49FE", "accent": "#FF7550" },
+      "text": { "primary": "#200C28", "secondary": "#6A5C70", "tertiary": "#8A7B90", "inverse": "#FFFFFF", "brand": "#572FB5", "link": "#572FB5", "onAccent": "#200C28", "disabled": "#B9ABBF" },
+      "border": { "subtle": "#EEE8F4", "default": "#DED4E6", "strong": "#B9ABBF", "brand": "#7E49FE", "danger": "#C83D4B" },
+      "darkUiText": { "primary": "rgba(255,255,255,0.88)", "secondary": "rgba(255,255,255,0.64)" }
+    },
+    "semantic": {
+      "note": "语义色负责状态；必须同时配合图标与文字，不可只用颜色。",
+      "success": { "solid": "#238A5E", "bg": "#EAF8F1", "border": "#A9DFC5", "text": "#166846", "use": "保存完成、任务成功" },
+      "warning": { "solid": "#C57A12", "bg": "#FFF6E5", "border": "#F2CF8D", "text": "#855400", "use": "风险提示、需确认" },
+      "error": { "solid": "#C83D4B", "bg": "#FFF0F2", "border": "#F3B5BE", "text": "#982A39", "use": "失败、阻断、危险操作" },
+      "info": { "solid": "#4B61C8", "bg": "#EEF1FF", "border": "#BDC7F7", "text": "#34459D", "use": "说明、进度、系统消息" }
+    },
+    "usage": {
+      "ratio": { "surfaceWhiteLilac": "60%", "brandPurple": "25%", "inkTextStructure": "10%", "coralAccent": "5%" },
+      "decisionRules": {
+        "primaryButton": "Purple 500 背景 + White 文字",
+        "accentButton": "Coral 500 背景 + Ink 文字",
+        "bodyText": "Ink primary / secondary",
+        "link": "Purple 700",
+        "disabled": "Neutral 200 背景 / 400 文字",
+        "darkSurfaceText": "White 88% / 64%"
+      },
+      "contrastPairs": [
+        { "pair": "Ink / White", "ratio": "18.35:1", "normalText": "AAA", "largeOrGraphic": "AAA" },
+        { "pair": "Ink / Lilac", "ratio": "16.78:1", "normalText": "AAA", "largeOrGraphic": "AAA" },
+        { "pair": "Ink / Coral", "ratio": "6.91:1", "normalText": "AA", "largeOrGraphic": "AAA" },
+        { "pair": "White / Purple", "ratio": "4.92:1", "normalText": "AA", "largeOrGraphic": "AAA" },
+        { "pair": "Purple / Lilac", "ratio": "4.50:1", "normalText": "AA", "largeOrGraphic": "AAA" },
+        { "pair": "Ink / Purple", "ratio": "3.73:1", "normalText": "仅大字/Large only", "largeOrGraphic": "AA" },
+        { "pair": "White / Coral", "ratio": "2.65:1", "normalText": "禁用/Forbidden", "largeOrGraphic": "禁用/Forbidden" }
+      ],
+      "forbidden": [
+        "White on Coral：白色文字放在珊瑚橙上（对比 2.65:1）——任何文字都禁用。珊瑚橙上的文字/按钮字请用 Ink #200C28（6.91:1）。",
+        "Ink on Purple 作为正文/小字：对比仅 3.73:1，仅限大字、Logo 或非文本图形；功能小字与按钮文字在品牌紫上改用白色。"
+      ]
+    }
+  },
+
+  "typography": {
+    "families": {
+      "display": "\"Roboto Slab\", \"Noto Serif CJK SC\", serif",
+      "ui": "\"Inter\", \"Noto Sans CJK SC\", system-ui, sans-serif",
+      "mono": "\"JetBrains Mono\", \"Noto Sans Mono CJK SC\", monospace",
+      "note": "品牌/展示标题用 Slab Serif；产品界面用 Inter。中文回退：思源宋体/思源黑体。"
+    },
+    "weights": { "regular": 400, "medium": 500, "semibold": 600, "bold": 700, "black": 800 },
+    "scale": [
+      { "token": "display", "usage": "品牌级主标题", "sizePx": 56, "lineHeightPx": 64, "weight": 700, "family": "display" },
+      { "token": "h1", "usage": "页面标题", "sizePx": 40, "lineHeightPx": 48, "weight": 700, "family": "display" },
+      { "token": "h2", "usage": "模块标题", "sizePx": 32, "lineHeightPx": 40, "weight": 700, "family": "display" },
+      { "token": "h3", "usage": "卡片标题", "sizePx": 24, "lineHeightPx": 32, "weight": 700, "family": "ui" },
+      { "token": "h4", "usage": "小标题", "sizePx": 20, "lineHeightPx": 28, "weight": 600, "family": "ui" },
+      { "token": "bodyLg", "usage": "大正文", "sizePx": 18, "lineHeightPx": 28, "weight": 400, "family": "ui" },
+      { "token": "body", "usage": "正文", "sizePx": 16, "lineHeightPx": 24, "weight": 400, "family": "ui" },
+      { "token": "bodySm", "usage": "辅助说明 / 表格", "sizePx": 14, "lineHeightPx": 20, "weight": 400, "family": "ui" },
+      { "token": "caption", "usage": "METADATA / LABEL", "sizePx": 12, "lineHeightPx": 16, "weight": 600, "family": "ui" }
+    ],
+    "rules": {
+      "bodyLineWidth": "45–75 字符",
+      "cjkPunctuation": "全角",
+      "numbers": "数字/金额使用 tabular（等宽数字）",
+      "headingTracking": "-2% (-0.02em)",
+      "paragraphSpacing": "0.75× 行高",
+      "buttonText": "14px / weight 600",
+      "logo": "Logo 字标是定制图形资产，禁止用字体重新输入。"
+    }
+  },
+
+  "space": {
+    "scale": { "0": 0, "0.5": 4, "1": 8, "1.5": 12, "2": 16, "3": 24, "4": 32, "5": 40, "6": 48, "8": 64, "10": 80, "12": 96 },
+    "grid": "8pt 基准网格；必要时使用 4pt 半步。"
+  },
+
+  "radius": { "none": 0, "sm": 6, "md": 12, "lg": 20, "xl": 28, "pill": 999, "appIcon": "22%", "note": "默认卡片 12–20px。" },
+  "borderWidth": { "hairline": 1, "strong": 2 },
+  "shadow": {
+    "sm": "0 2px 8px rgba(32, 12, 40, 0.08)",
+    "md": "0 12px 30px rgba(32, 12, 40, 0.12)",
+    "lg": "0 24px 60px rgba(32, 12, 40, 0.16)",
+    "focus": "0 0 0 3px rgba(126, 73, 254, 0.24)",
+    "rule": "同一层级只使用一种阴影。"
+  },
+
+  "motion": {
+    "duration": { "fast": "120ms", "normal": "200ms", "slow": "320ms" },
+    "easing": { "standard": "cubic-bezier(0.2, 0, 0, 1)", "emphasized": "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+    "reduceMotion": "尊重系统 prefers-reduced-motion：减少位移/缩放，保留必要的渐隐与状态过渡。"
+  },
+
+  "layout": {
+    "container": { "sm": 640, "md": 768, "lg": 1024, "xl": 1200, "maxContent": 1200 },
+    "breakpoints": [
+      { "name": "mobile", "minPx": 360, "columns": 4, "gutterPx": 16, "pageMarginPx": 16 },
+      { "name": "tablet", "minPx": 768, "columns": 8, "gutterPx": 24 },
+      { "name": "desktop", "minPx": 1024, "columns": 12, "gutterPx": 32 },
+      { "name": "wide", "minPx": 1280, "columns": 12, "gutterPx": 32, "note": "内容最大宽度 1200，居中" }
+    ],
+    "rule": "复杂数据表在 1024px 以下优先转为卡片或横向滚动。"
+  },
+
+  "iconography": {
+    "canvasPx": 24,
+    "strokePx": "1.5–2px",
+    "cornerStyle": "圆角线条",
+    "rule": "不混用实心/线性与不同视觉重量；陌生图标必须带文字或 Tooltip。"
+  },
+
+  "components": {
+    "button": {
+      "rules": [
+        "一个界面区域最多只出现一个主按钮。",
+        "珊瑚橙 accent 用于高价值但非危险的动作（升级/庆祝/引导）。",
+        "危险/破坏性操作必须用 danger（语义红），并二次确认。",
+        "按钮文案动词开头；加载态保留原始按钮宽度。"
+      ],
+      "text": { "sizePx": 14, "weight": 600, "lineHeightPx": 20 },
+      "iconGapPx": 8,
+      "minWidthPx": 88,
+      "sizes": {
+        "small": { "heightPx": 32, "paddingXPx": 12, "radiusPx": 9 },
+        "medium": { "heightPx": 40, "paddingXPx": 16, "radiusPx": 12 },
+        "large": { "heightPx": 48, "paddingXPx": 20, "radiusPx": 14 }
+      },
+      "variants": {
+        "primary": { "bg": "#7E49FE", "text": "#FFFFFF", "border": "transparent", "hover": { "bg": "#6C3EDA" }, "pressed": { "bg": "#572FB5" }, "use": "主操作，如『创建项目』" },
+        "accent": { "bg": "#FF7550", "text": "#200C28", "border": "transparent", "hover": { "bg": "#E85F3C" }, "pressed": { "bg": "#C94A2C" }, "use": "高价值非危险动作，如『立即升级』" },
+        "secondary": { "bg": "#FFFFFF", "text": "#200C28", "border": "1px solid #DED4E6", "hover": { "bg": "#F7F3FE", "border": "1px solid #B9ABBF" }, "pressed": { "bg": "#EEE8F4" }, "use": "次级动作，如『查看详情』" },
+        "ghost": { "bg": "transparent", "text": "#572FB5", "border": "transparent", "hover": { "bg": "#F2ECFF" }, "pressed": { "bg": "#E5DBFF" }, "use": "低强调，如『取消』" },
+        "danger": { "bg": "#C83D4B", "text": "#FFFFFF", "border": "transparent", "hover": { "bg": "#A5323D" }, "pressed": { "bg": "#982A39" }, "use": "破坏性动作，如『删除』；hover/pressed 为派生的更深红。" }
+      },
+      "states": {
+        "disabled": { "bg": "#EEE8F4", "text": "#B9ABBF", "cursor": "not-allowed" },
+        "focus": { "ring": "0 0 0 3px rgba(126, 73, 254, 0.24)", "note": "键盘焦点可见，不改变布局尺寸。" },
+        "loading": { "note": "显示 spinner，保留原始宽度，阻止重复提交。" }
+      }
+    },
+
+    "input": {
+      "rules": [
+        "标签始终外置，不用 placeholder 代替字段名。",
+        "错误信息必须说明如何修正；提交后将焦点移至首个错误字段。",
+        "帮助文本放在字段下方（如字数上限）。"
+      ],
+      "sizes": { "compact": 36, "default": 42, "comfortable": 48 },
+      "radiusPx": 12,
+      "resting": { "bg": "#FFFFFF", "border": "1px solid #DED4E6", "text": "#200C28", "placeholder": "#8A7B90" },
+      "hover": { "border": "1px solid #B9ABBF" },
+      "focus": { "border": "1px solid #7E49FE", "ring": "0 0 0 3px rgba(126, 73, 254, 0.24)" },
+      "error": { "border": "1px solid #C83D4B", "icon": true, "text": "#982A39", "note": "边框 + 图标 + 明确文字三者同时。" },
+      "success": { "note": "仅在确有确认价值时展示，避免每个字段都显示绿色。" },
+      "disabled": { "bg": "#F7F3FE", "text": "#B9ABBF", "note": "如『当前账号不可修改』" },
+      "helpText": { "size": 12, "color": "#6A5C70" }
+    },
+
+    "textarea": { "radiusPx": 12, "counter": "右下角显示 已输入/上限，如 0 / 240", "resize": "vertical" },
+
+    "select": { "note": "外置标签 + 下拉指示（⌄）；键盘可达；聚焦态与 input 一致。" },
+
+    "selectionControls": {
+      "minTouchTargetPx": 44,
+      "checkbox": { "use": "多选", "checkedColor": "#7E49FE" },
+      "radio": { "use": "互斥单选", "checkedColor": "#7E49FE" },
+      "switch": { "use": "即时生效的二元设置", "onColor": "#7E49FE" }
+    },
+
+    "tag": {
+      "rules": ["标签只表达类别或状态，不承担主要操作。", "状态标签必须有文字，不仅使用色点。"],
+      "shape": "pill 或 radius 6；小号 caption 12/600。",
+      "statusMapping": {
+        "success": { "bg": "#EAF8F1", "text": "#166846", "border": "#A9DFC5" },
+        "warning": { "bg": "#FFF6E5", "text": "#855400", "border": "#F2CF8D" },
+        "error": { "bg": "#FFF0F2", "text": "#982A39", "border": "#F3B5BE" },
+        "info": { "bg": "#EEF1FF", "text": "#34459D", "border": "#BDC7F7" },
+        "neutral": { "bg": "#F7F3FE", "text": "#4B3D51", "border": "#DED4E6" }
+      }
+    },
+
+    "card": {
+      "rules": ["卡片用于形成分组，不是给每个内容块都加边框。", "同一层级只用一种阴影。"],
+      "radiusPx": "12–20",
+      "paddingPx": "16 / 20 / 24",
+      "bg": "#FFFFFF",
+      "border": "1px solid #EEE8F4",
+      "shadow": "0 2px 8px rgba(32, 12, 40, 0.08)",
+      "featured": { "note": "重点卡可用品牌紫表面 (#7E49FE) + 白字，或浅紫 (#F7F3FE) 分区。" }
+    },
+
+    "statCard": {
+      "note": "KPI 数据卡：大号数值 + 标签 + 变化量。",
+      "value": { "size": 32, "weight": 700, "numeric": "tabular" },
+      "label": { "size": 12, "weight": 600, "color": "#6A5C70", "case": "可用大写" },
+      "delta": { "positive": { "symbol": "↑", "color": "#238A5E" }, "negative": { "symbol": "↓", "color": "#C83D4B" } }
+    },
+
+    "table": {
+      "rules": ["数字右对齐，文本左对齐。", "表头可排序时显示方向。", "行高不低于 44px。", "保持对齐、可扫描；高密度信息提供筛选与排序。"],
+      "rowHeightMinPx": 44,
+      "header": { "size": 12, "weight": 600, "color": "#6A5C70", "border": "1px solid #EEE8F4" },
+      "cell": { "size": 14, "color": "#200C28", "border": "1px solid #F7F3FE" }
+    },
+
+    "nav": {
+      "topbar": { "primaryItems": "3–6 个一级入口", "currentState": "必须同时通过颜色、形状或位置表达", "activeColor": "#7E49FE" },
+      "sidebar": { "use": "复杂产品承载模块", "activeItem": { "bg": "#F2ECFF", "text": "#572FB5", "marker": "左侧色条或高亮" } },
+      "breadcrumb": { "use": "深度 ≥ 3 层", "currentPage": "不可点击", "mobile": "可折叠中间层级" },
+      "tabs": { "use": "同一上下文切换内容", "max": 6, "note": "不作为跨模块主导航", "activeUnderline": "#7E49FE" },
+      "pagination": { "use": "列表超过 50 条或加载成本高时", "note": "连续滚动必须保留当前位置" }
+    },
+
+    "feedback": {
+      "matchRiskToTask": "轻量信息用 Toast；页面级问题用 Alert；需要决策用 Dialog；危险操作必须二次确认。",
+      "toast": { "use": "轻量、临时信息", "style": "白底 + 语义色左边条/图标 + 关闭按钮", "autoDismiss": true },
+      "alert": { "use": "页面级持续提示", "variants": ["info", "success", "warning", "error"], "anatomy": "图标 + 标题 + 说明 + 关闭；错误说明原因与下一步。" },
+      "dialog": { "use": "需要用户决策", "radiusPx": 20, "shadow": "0 24px 60px rgba(32, 12, 40, 0.16)", "overlay": "rgba(32,12,40,0.4)", "mobile": "优先使用底部抽屉 (bottom sheet)" },
+      "confirmDestructive": { "note": "危险操作二次确认：要求输入项目名等以确认；主动作用 danger 红。", "primaryAction": "danger", "example": "『删除“夏季发布”项目？该操作无法撤销…』输入项目名以确认。" },
+      "emptyState": { "anatomy": "插画/图标 + 一句话说明 + 一个明确主操作", "example": "还没有项目 → 创建第一个项目开始协作。" },
+      "loading": { "note": "骨架屏或 spinner；尊重 reduce-motion。" },
+      "progress": { "note": "显示百分比 + 具体量 + 预计剩余，如 72% · 3.6MB / 5MB · 约 12 秒。", "trackColor": "#EEE8F4", "fillColor": "#7E49FE" }
+    }
+  },
+
+  "accessibility": {
+    "keyboardFocus": "所有交互可通过 Tab 访问；焦点环 3px 半透明紫 rgba(126,73,254,0.24)；不能仅依赖浏览器默认或移除；焦点环不改变布局尺寸。",
+    "touchTargetPx": 44,
+    "adjacentDangerSpacingPx": 8,
+    "contrast": "普通文本 ≥ 4.5:1；大字/图形 ≥ 3:1。",
+    "statusNotColorAlone": "错误与成功同时包含图标、标题和可执行建议。",
+    "structure": ["页面只保留一个 H1。", "表单错误关联对应字段。", "按钮使用动词开头。"],
+    "iconLabels": "陌生图标必须带文字或 Tooltip；删除/分享等关键动作始终提供可访问名称。"
+  },
+
+  "content": {
+    "buttons": "动词开头，如『保存更改』『邀请成员』；不用『点击这里』。",
+    "errors": "说明原因 + 下一步，如『上传失败。文件超过 50MB，请压缩后重试。』",
+    "success": "强调完成结果，而非过程。",
+    "headings": "标题给结论，正文用动作语言。"
+  },
+
+  "responsive": {
+    "mobile": {
+      "pageMarginPx": 16,
+      "cardRadiusPx": "16–20",
+      "formFieldHeightPx": 48,
+      "bottomNav": { "maxItems": 4, "requires": "图标 + 文字同时存在", "safeArea": "底部安全区单独预留" },
+      "dialogs": "优先底部抽屉 (bottom sheet)",
+      "rules": [
+        "信息优先级重排：桌面四列 KPI 合并为一张摘要卡；辅助趋势延后到详情页，首屏只保留当前任务。",
+        "核心任务在单手可触达区域内完成；触控目标 ≥ 44px。",
+        "品牌色控制：紫色用于核心摘要与主操作，珊瑚橙只保留一个高价值入口；避免连续大色块造成视觉疲劳。"
+      ]
+    }
+  },
+
+  "logo": {
+    "usage": "优先使用完整横版组合 (lockup)；空间受限时使用独立图形标 (mark)。字标是定制资产，不用系统字体重新拼写。",
+    "clearSpace": "安全区 x = 图形标宽度的 1/4。",
+    "minSize": { "lockupDigitalPx": 120, "lockupPrintMm": 32, "markPx": 24, "note": "图形标低于 32px 时避免复杂背景。" },
+    "variants": ["Primary / Light (Ink on white)", "Reverse / Purple (white on purple)", "Accent / Coral", "Inverse / Ink"],
+    "donts": ["不可拉伸或压缩", "不可使用非规范底色", "不可添加描边/阴影", "珊瑚橙上禁用白色文字/字标"],
+    "note": "深墨色 Logo 可在品牌紫上用于大尺寸品牌展示；功能性小字与按钮文字应改用白色。"
+  },
+
+  "assets": {
+    "dir": "assets/",
+    "appIcon": {
+      "cornerRadius": "22% (iOS squircle 近似)",
+      "files": ["vistamz-app-icon-coral.svg", "vistamz-app-icon-purple.svg", "vistamz-app-icon-ink.svg", "vistamz-app-icon-*-512.png", "vistamz-app-icon-*-1024.png"]
+    },
+    "lockup": ["vistamz-lockup-dark.svg", "vistamz-lockup-white.svg", "vistamz-lockup-currentcolor.svg", "vistamz-lockup-dark.png", "vistamz-lockup-white.png"],
+    "mark": ["vistamz-mark-dark.svg", "vistamz-mark-white.svg", "vistamz-mark-currentcolor.svg", "vistamz-mark-dark.png", "vistamz-mark-white.png"],
+    "favicon": ["vistamz-favicon-64.png"],
+    "note": "SVG 由 PNG 参考轮廓矢量化；若有官方矢量源应替换以保证字形精度。"
+  },
+
+  "deliveryChecklist": {
+    "design": "使用令牌而非手填数值：颜色/间距/圆角/阴影优先绑定共享样式。",
+    "accessibility": "发布前完成检查：键盘、焦点、对比度、触控目标、错误文案、读屏名称。",
+    "engineering": "组件状态必须完整：Default / Hover / Pressed / Focus / Disabled / Loading / Error。",
+    "versioning": "语义化版本：新增向后兼容升级 Minor；令牌删除或行为改变升级 Major。"
+  }
+}
