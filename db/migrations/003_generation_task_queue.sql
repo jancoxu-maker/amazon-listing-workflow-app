@@ -9,3 +9,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS generation_tasks_idempotency_idx
 
 CREATE INDEX IF NOT EXISTS generation_tasks_queue_idx
   ON generation_tasks(status, next_attempt_at, created_at);
+

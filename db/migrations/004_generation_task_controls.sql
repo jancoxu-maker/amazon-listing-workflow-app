@@ -4,3 +4,4 @@ ALTER TABLE generation_tasks
 
 CREATE INDEX IF NOT EXISTS generation_tasks_requester_daily_idx
   ON generation_tasks(requested_by, created_at DESC);
+
