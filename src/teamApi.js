@@ -151,11 +151,38 @@ export async function deleteTeamBrand(brandId) {
   await request(`/api/brands/${encodeURIComponent(brandId)}`, { method: 'DELETE' });
 }
 
+export async function listTeamBrandVersions(brandId) {
+  const result = await request(`/api/brands/${encodeURIComponent(brandId)}/versions`);
+  return result.versions || [];
+}
+
+export async function getTeamBrandVersion(brandId, version) {
+  const result = await request(`/api/brands/${encodeURIComponent(brandId)}/versions/${encodeURIComponent(version)}`);
+  return result.brand;
+}
+
+export async function cloneTeamBrand(brandId, { name, version } = {}) {
+  const result = await request(`/api/brands/${encodeURIComponent(brandId)}/clone`, {
+    method: 'POST',
+    body: JSON.stringify({ name, version })
+  });
+  return result.brand;
+}
+
 export async function uploadTeamBrandLogo({ brandId, assetId, imageDataUrl }) {
   const result = await request('/api/brand-assets', {
     method: 'POST',
     timeoutMs: 60000,
     body: JSON.stringify({ brandId, assetId, imageDataUrl })
+  });
+  return result.asset;
+}
+
+export async function uploadTeamBrandExample({ brandId, assetId, imageDataUrl }) {
+  const result = await request('/api/brand-assets', {
+    method: 'POST',
+    timeoutMs: 60000,
+    body: JSON.stringify({ brandId, assetId, assetType: 'example', imageDataUrl })
   });
   return result.asset;
 }

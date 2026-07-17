@@ -15,7 +15,15 @@ const brandedProject = {
     rules: {
       name: 'Cosyland',
       colors: [{ hex: '#FFFFFF', ratio: 70, role: 'background', scope: 'aplus-only' }],
-      titleColor: '#20362C'
+      titleColor: '#20362C',
+      iconStyle: 'outline',
+      annotationStyle: 'soft-curve',
+      cornerStyle: 'soft-8',
+      labelStyle: 'soft-box',
+      exampleImages: [
+        { id: 'example-1', storageKey: 'brands/cosyland/examples/one.png' },
+        { id: 'example-2', storageKey: 'brands/cosyland/examples/two.png' }
+      ]
     }
   },
   projectData: { form: { brandId: 'cosyland', projectName: 'Frozen project' } }
@@ -41,6 +49,9 @@ test('replaces client brand data with the frozen project snapshot', () => {
   assert.match(result.prompt, /role background/);
   assert.match(result.prompt, /scope aplus-only/);
   assert.match(result.prompt, /never print swatches, percentages, or HEX codes/i);
+  assert.match(result.prompt, /Icon style: outline/);
+  assert.match(result.prompt, /Annotation-line style: soft-curve/);
+  assert.match(result.prompt, /2 frozen brand visual examples/);
   assert.doesNotMatch(result.prompt, /Local cache/);
 });
 

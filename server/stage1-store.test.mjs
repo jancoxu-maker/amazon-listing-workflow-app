@@ -42,6 +42,45 @@ test('operator cannot access designer generation actions', async () => {
   );
 });
 
+test('assigned operator cannot access a project before the designer submits it', async () => {
+  const store = createStage1Store(createProjectDatabase({
+    id: 'prj_draft',
+    status: 'design',
+    project_data: {},
+    has_role_assignment: true
+  }));
+  await assert.rejects(
+    store.requireProjectAccess(operator, 'prj_draft', { allowedRoles: ['operator', 'admin'] }),
+    (error) => error instanceof Stage1Error && error.status === 404 && error.code === 'PROJECT_NOT_SUBMITTED_FOR_REVIEW'
+  );
+});
+
+test('assigned operator can access a submitted review project', async () => {
+  const store = createStage1Store(createProjectDatabase({
+    id: 'prj_review',
+    status: 'review',
+    project_data: {},
+    has_role_assignment: true
+  }));
+  const project = await store.requireProjectAccess(operator, 'prj_review', { allowedRoles: ['operator', 'admin'] });
+  assert.equal(project.id, 'prj_review');
+});
+
+test('operator project list only queries submitted review-visible statuses', async () => {
+  let queryText = '';
+  const store = createStage1Store({
+    configured: true,
+    async query(sql) {
+      queryText = sql;
+      return { rowCount: 0, rows: [] };
+    }
+  });
+  const projects = await store.listProjects(operator);
+  assert.deepEqual(projects, []);
+  assert.match(queryText, /assignment_role = 'operator'/);
+  assert.match(queryText, /p\.status IN \('review', 'approved', 'exported'\)/);
+});
+
 test('unassigned member cannot access another project', async () => {
   const store = createStage1Store(createProjectDatabase({
     id: 'prj_two',
@@ -100,4 +139,100 @@ test('export is allowed after every planned slot is fully approved', async () =>
   }));
   const project = await store.requireProjectAccess(admin, 'prj_five', { allowedRoles: ['admin'], requireApproved: true });
   assert.equal(project.id, 'prj_five');
+});
+
+test('designer cannot submit review until every planned slot has a usable image', async () => {
+  const database = {
+    configured: true,
+    async query(sql) {
+      if (sql.includes('FROM projects p')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'prj_incomplete',
+            project_name: 'Incomplete project',
+            product_name: 'Product',
+            sku: 'SKU-1',
+            output_type: 'main-image',
+            status: 'design',
+            brand_snapshot: {},
+            project_data: {},
+            has_role_assignment: true
+          }]
+        };
+      }
+      throw new Error(`Unexpected query in test: ${sql}`);
+    },
+    async transaction() {
+      throw new Error('transaction should not run for an incomplete submission');
+    }
+  };
+  const store = createStage1Store(database);
+  await assert.rejects(
+    store.updateProject(designer, 'prj_incomplete', {
+      projectName: 'Incomplete project',
+      productName: 'Product',
+      sku: 'SKU-1',
+      outputType: 'main-image',
+      status: 'review',
+      brandSnapshot: {},
+      projectData: {
+        storyboardBriefs: [{ id: 1 }, { id: 2 }],
+        generationRuns: [{ slotId: 1, verdict: 'usable' }]
+      }
+    }),
+    (error) => error instanceof Stage1Error && error.status === 409 && error.code === 'PROJECT_REVIEW_SUBMISSION_INCOMPLETE'
+  );
+});
+
+test('designer can submit review when every planned slot has a usable image', async () => {
+  const writes = [];
+  const database = {
+    configured: true,
+    async query(sql) {
+      if (sql.includes('FROM projects p')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'prj_complete',
+            project_name: 'Complete project',
+            product_name: 'Product',
+            sku: 'SKU-2',
+            output_type: 'main-image',
+            status: 'design',
+            brand_snapshot: {},
+            project_data: {},
+            has_role_assignment: true
+          }]
+        };
+      }
+      throw new Error(`Unexpected query in test: ${sql}`);
+    },
+    async transaction(callback) {
+      return callback({
+        async query(sql, params) {
+          writes.push({ sql, params });
+          return { rowCount: 1, rows: [] };
+        }
+      });
+    }
+  };
+  const store = createStage1Store(database);
+  const project = await store.updateProject(designer, 'prj_complete', {
+    projectName: 'Complete project',
+    productName: 'Product',
+    sku: 'SKU-2',
+    outputType: 'main-image',
+    status: 'review',
+    brandSnapshot: {},
+    projectData: {
+      storyboardBriefs: [{ id: 1 }, { id: 2 }],
+      generationRuns: [
+        { slotId: 1, verdict: 'usable' },
+        { slotId: 2, verdict: 'usable' }
+      ]
+    }
+  });
+  assert.equal(project.status, 'review');
+  assert.equal(writes.some((write) => write.sql.includes("'project.submitted_for_review'")), true);
 });

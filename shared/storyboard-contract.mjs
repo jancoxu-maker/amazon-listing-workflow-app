@@ -128,6 +128,10 @@ export function normalizeStoryboardSlotContract({
       allowedColors,
       titleColor: normalizeHex(brandSource.titleColor || brand.titleColor),
       arrowStyle: toText(brandSource.arrowStyle || brand.arrowStyle),
+      iconStyle: toText(brandSource.iconStyle || brand.iconStyle),
+      annotationStyle: toText(brandSource.annotationStyle || brand.annotationStyle),
+      cornerStyle: toText(brandSource.cornerStyle || brand.cornerStyle),
+      labelStyle: toText(brandSource.labelStyle || brand.labelStyle),
       logoPolicy: isWhiteMain || outputPresetId !== 'aplus'
         ? '禁止使用 Logo'
         : toText(brandSource.logoPolicy || brand.logoPolicy) || '仅按品牌规则使用已上传 Logo'
@@ -164,7 +168,7 @@ export function formatStoryboardSlotContract(contract = {}) {
     scene.requiredElements?.length ? `Required visual elements: ${scene.requiredElements.join('; ')}.` : '',
     scene.forbiddenElements?.length ? `Forbidden visual elements or implications: ${scene.forbiddenElements.join('; ')}.` : '',
     scene.physicalLogic ? `Physical logic contract: ${scene.physicalLogic}` : '',
-    `Brand contract: mode=${brand.mode || 'baseline'}; colors=${brand.allowedColors?.join(', ') || 'neutral only'}; titleColor=${brand.titleColor || 'not specified'}; arrowStyle=${brand.arrowStyle || 'not specified'}; logo=${brand.logoPolicy || 'not allowed'}.`,
+    `Brand contract: mode=${brand.mode || 'baseline'}; colors=${brand.allowedColors?.join(', ') || 'neutral only'}; titleColor=${brand.titleColor || 'not specified'}; arrowStyle=${brand.arrowStyle || 'not specified'}; iconStyle=${brand.iconStyle || 'not specified'}; annotationStyle=${brand.annotationStyle || 'not specified'}; cornerStyle=${brand.cornerStyle || 'not specified'}; labelStyle=${brand.labelStyle || 'not specified'}; logo=${brand.logoPolicy || 'not allowed'}.`,
     `Output contract: ${output.presetId || ''} ${output.size || ''} ${output.aspectRatio || ''}; background=${output.backgroundRule || ''}; title=${output.titlePlacement || ''}; logoAllowed=${Boolean(output.logoAllowed)}.`,
     contract.complianceRules?.length ? `Compliance contract: ${contract.complianceRules.join('; ')}.` : ''
   ].filter(Boolean).join(' ');

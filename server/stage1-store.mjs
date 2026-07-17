@@ -9,6 +9,7 @@ const PASSWORD_MIN_LENGTH = 10;
 const scrypt = promisify(scryptCallback);
 
 const PROJECT_STATUSES = new Set(['draft', 'content', 'planning', 'design', 'review', 'rework', 'approved', 'exported', 'archived']);
+const OPERATOR_VISIBLE_PROJECT_STATUSES = new Set(['review', 'approved', 'exported']);
 
 export class Stage1Error extends Error {
   constructor(message, status = 400, code = 'STAGE1_ERROR') {
@@ -77,6 +78,24 @@ function isProjectFullyApproved(projectData = {}) {
     const decision = decisions.find((item) => Number(item?.slotId) === slotId);
     return decision?.opsStatus === 'approved' && decision?.finalStatus === 'approved';
   });
+}
+
+function getReviewSubmissionState(projectData = {}) {
+  const data = safeObject(projectData);
+  const briefs = Array.isArray(data.storyboardBriefs) ? data.storyboardBriefs : [];
+  const runs = Array.isArray(data.generationRuns) ? data.generationRuns : [];
+  const slotIds = Array.from(new Set(
+    briefs.map((brief) => Number(brief?.id)).filter(Number.isFinite)
+  ));
+  const submittedSlotIds = slotIds.filter((slotId) => runs.some((run) => (
+    Number(run?.slotId) === slotId && run?.verdict === 'usable'
+  )));
+  return {
+    slotIds,
+    submittedSlotIds,
+    missingSlotIds: slotIds.filter((slotId) => !submittedSlotIds.includes(slotId)),
+    ready: slotIds.length > 0 && submittedSlotIds.length === slotIds.length
+  };
 }
 
 function userRecord(row) {
@@ -156,6 +175,9 @@ export function createStage1Store(database) {
     const project = result.rows[0];
     if (user.role !== 'admin' && !project.has_role_assignment) {
       throw new Stage1Error('你没有操作这个项目的权限。', 403, 'PROJECT_ACCESS_FORBIDDEN');
+    }
+    if (user.role === 'operator' && !OPERATOR_VISIBLE_PROJECT_STATUSES.has(project.status)) {
+      throw new Stage1Error('项目尚未由设计提交运营审核。', 404, 'PROJECT_NOT_SUBMITTED_FOR_REVIEW');
     }
     if (options.requireApproved && !isProjectFullyApproved(safeObject(project.project_data))) {
       throw new Stage1Error('项目尚未完成运营审核和管理员最终放行，不能导出。', 409, 'PROJECT_NOT_APPROVED');
@@ -284,7 +306,25 @@ export function createStage1Store(database) {
           GROUP BY p.id, creator.display_name
           ORDER BY p.updated_at DESC
         `)
-      : await database.query(`
+      : user.role === 'operator'
+        ? await database.query(`
+          SELECT p.*, creator.display_name AS creator_name,
+            COALESCE(json_agg(json_build_object('userId', a_all.user_id, 'role', a_all.assignment_role, 'name', assignee.display_name))
+              FILTER (WHERE a_all.user_id IS NOT NULL), '[]'::json) AS assignments
+          FROM projects p
+          JOIN project_assignments visible_assignment
+            ON visible_assignment.project_id = p.id
+            AND visible_assignment.user_id = $1
+            AND visible_assignment.assignment_role = 'operator'
+          JOIN app_users creator ON creator.id = p.created_by
+          LEFT JOIN project_assignments a_all ON a_all.project_id = p.id
+          LEFT JOIN app_users assignee ON assignee.id = a_all.user_id
+          WHERE p.deleted_at IS NULL
+            AND p.status IN ('review', 'approved', 'exported')
+          GROUP BY p.id, creator.display_name
+          ORDER BY p.updated_at DESC
+        `, [user.id])
+        : await database.query(`
           SELECT p.*, creator.display_name AS creator_name,
             COALESCE(json_agg(json_build_object('userId', a_all.user_id, 'role', a_all.assignment_role, 'name', assignee.display_name))
               FILTER (WHERE a_all.user_id IS NOT NULL), '[]'::json) AS assignments
@@ -485,6 +525,9 @@ export function createStage1Store(database) {
 
     const current = project.rows[0];
     if (user.role === 'operator') {
+      if (!OPERATOR_VISIBLE_PROJECT_STATUSES.has(current.status)) {
+        throw new Stage1Error('项目尚未由设计提交运营审核。', 404, 'PROJECT_NOT_SUBMITTED_FOR_REVIEW');
+      }
       const incomingData = safeObject(payload.projectData);
       const currentData = safeObject(current.project_data);
       const reviewDecisions = Array.isArray(incomingData.reviewDecisions)
@@ -526,6 +569,18 @@ export function createStage1Store(database) {
     const status = PROJECT_STATUSES.has(payload.status)
       ? payload.status
       : 'draft';
+    if (status === 'review' && current.status !== 'review') {
+      const submission = getReviewSubmissionState(payload.projectData);
+      if (!submission.ready) {
+        throw new Stage1Error(
+          submission.slotIds.length
+            ? `还有 ${submission.missingSlotIds.length} 个图槽未选定可用图片，不能提交运营审核。`
+            : '图片方案尚未完成，不能提交运营审核。',
+          409,
+          'PROJECT_REVIEW_SUBMISSION_INCOMPLETE'
+        );
+      }
+    }
     assertNoInlineAssets(payload.projectData);
     assertNoInlineAssets(payload.brandSnapshot, '品牌快照');
 
@@ -557,6 +612,14 @@ export function createStage1Store(database) {
          VALUES ($1, $2, $3, 'project.updated', $4::jsonb)`,
         [createId('audit'), user.id, id, JSON.stringify({ status, outputType })]
       );
+      if (status === 'review' && current.status !== 'review') {
+        const submission = getReviewSubmissionState(payload.projectData);
+        await client.query(
+          `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
+           VALUES ($1, $2, $3, 'project.submitted_for_review', $4::jsonb)`,
+          [createId('audit'), user.id, id, JSON.stringify({ slotCount: submission.slotIds.length })]
+        );
+      }
     });
 
     return {

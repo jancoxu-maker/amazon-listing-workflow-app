@@ -57,12 +57,15 @@ import {
   activateTeamInvite,
   assignTeamProject,
   cancelGenerationTask,
+  cloneTeamBrand,
   createTeamBrand,
   createTeamProject,
   deleteTeamBrand,
   getAccessToken,
+  getTeamBrandVersion,
   listAdminGenerationTasks,
   listGenerationTasks,
+  listTeamBrandVersions,
   listTeamBrands,
   listTeamUsers,
   listTeamProjects,
@@ -74,6 +77,7 @@ import {
   restoreTrashedTeamProject,
   trashTeamProject,
   uploadTeamBrandLogo,
+  uploadTeamBrandExample,
   uploadTeamProjectAsset,
   updateTeamBrand,
   updateTeamProject,
@@ -88,6 +92,11 @@ const PROJECTS_STORAGE_KEY = 'listingflow.projects.v1';
 const BRAND_LIBRARY_STORAGE_KEY = 'listingflow.brands.v1';
 const INVITE_ACCESS_STORAGE_KEY = 'vistamz.inviteAccess.v1';
 const IMAGE_API_BASE_URL = import.meta.env.VITE_IMAGE_API_BASE_URL || 'http://localhost:5174';
+const OPERATOR_VISIBLE_PROJECT_STATUSES = new Set(['review', 'approved', 'exported']);
+
+function isOperatorVisibleProject(project = {}) {
+  return OPERATOR_VISIBLE_PROJECT_STATUSES.has(project.cloud?.status);
+}
 
 function authenticatedJsonHeaders() {
   const token = getAccessToken();
@@ -1005,7 +1014,9 @@ function formatBrandColorPalette(brand = {}, outputPresetId = 'main-image', slot
 
 function validateBrandProfileForSave(brand = {}) {
   const colors = normalizeBrandColors(brand.colors);
+  const exampleImages = Array.isArray(brand.exampleImages) ? brand.exampleImages : [];
   if (!String(brand.name || '').trim()) return '请填写品牌名。';
+  if (exampleImages.length < 2 || exampleImages.length > 5) return '请上传 2–5 张品牌示例图。';
   if (!colors.length) return '请至少添加一个品牌色。';
   if (getBrandColorRatioTotal(colors) !== 100) return '品牌色使用比例合计必须等于 100%。';
   if (!colors.some((color) => color.role === 'background' || color.role === 'neutral')) {
@@ -1037,6 +1048,50 @@ const brandArrowStyleOptions = [
     prompt: 'Avoid arrows whenever possible. Prefer proximity, crops, labels, circles, subtle lines, or composition to connect text and product features.'
   }
 ];
+
+const brandIconStyleOptions = [
+  { id: 'outline', label: '简洁线性', prompt: 'Use consistent minimal outline icons with even stroke weight and no decorative fills.' },
+  { id: 'solid', label: '简洁填充', prompt: 'Use simple solid icons with clear silhouettes, limited detail, and consistent optical size.' },
+  { id: 'duotone', label: '双色层次', prompt: 'Use restrained two-tone icons using only configured brand colors and consistent layer treatment.' },
+  { id: 'none', label: '尽量不用图标', prompt: 'Avoid decorative icons; rely on product evidence, typography, and layout.' }
+];
+
+const brandAnnotationStyleOptions = [
+  { id: 'thin-straight', label: '细直线标注', prompt: 'Use thin straight annotation lines with precise endpoints and restrained spacing.' },
+  { id: 'soft-curve', label: '柔和曲线标注', prompt: 'Use gentle curved annotation lines with clean endpoints and no visual clutter.' },
+  { id: 'bracket', label: '括号式标注', prompt: 'Use compact bracket-style measurement and feature callouts with consistent line weight.' },
+  { id: 'minimal', label: '极简短引线', prompt: 'Use only short minimal leader lines when proximity alone is insufficient.' }
+];
+
+const brandCornerStyleOptions = [
+  { id: 'square', label: '直角', prompt: 'Use square corners for graphic blocks and labels.' },
+  { id: 'soft-8', label: '轻圆角', prompt: 'Use restrained approximately 8px-equivalent visual corner rounding.' },
+  { id: 'rounded-16', label: '明显圆角', prompt: 'Use consistent medium rounded corners, never pill-shaped for long text.' }
+];
+
+const brandLabelStyleOptions = [
+  { id: 'plain', label: '纯文字标签', prompt: 'Use plain text labels without decorative containers whenever possible.' },
+  { id: 'soft-box', label: '浅色信息框', prompt: 'Use compact softly rounded information boxes with high contrast and generous internal spacing.' },
+  { id: 'solid-block', label: '品牌色块', prompt: 'Use compact solid brand-color label blocks with accessible contrasting text.' },
+  { id: 'underline', label: '下划线强调', prompt: 'Use clean underline or rule accents instead of enclosed badges.' }
+];
+
+function getBrandStyleOption(options, optionId) {
+  return options.find((option) => option.id === optionId) || options[0];
+}
+
+function normalizeBrandExampleImages(images = []) {
+  return (Array.isArray(images) ? images : [])
+    .map((image, index) => ({
+      id: image?.id || `example-${Date.now()}-${index}`,
+      name: String(image?.name || `品牌示例 ${index + 1}`).trim().slice(0, 80),
+      caption: String(image?.caption || '').trim().slice(0, 160),
+      storageKey: String(image?.storageKey || '').trim(),
+      preview: String(image?.preview || '').trim()
+    }))
+    .filter((image) => image.storageKey || image.preview)
+    .slice(0, 5);
+}
 
 function getBrandArrowStyle(optionId) {
   return brandArrowStyleOptions.find((option) => option.id === optionId) || brandArrowStyleOptions[0];
@@ -1114,6 +1169,9 @@ function normalizeBrandProfile(brand = {}) {
     name: brand.name || '未命名品牌',
     version: Number(brand.version || 0),
     updatedAt: brand.updatedAt || null,
+    createdAt: brand.createdAt || null,
+    createdBy: brand.createdBy || null,
+    createdByName: brand.createdByName || '',
     tone: brand.tone || '清晰、真实、产品优先的 Amazon 电商风格',
     colors: normalizeBrandColors(brand.colors),
     backgroundPolicy: brand.backgroundPolicy || '02-07 可使用干净背景、品牌色块或真实场景；01 白底主图不使用。',
@@ -1123,8 +1181,14 @@ function normalizeBrandProfile(brand = {}) {
       ? '不展示 Logo'
       : 'Logo 只允许出现在 A+ 模式图片；主图和非 A+ 图片一律不展示 Logo。',
     logoPreview: brand.logoPreview || '',
+    logoStorageKey: brand.logoStorageKey || '',
     arrowStyle: getBrandArrowStyle(brand.arrowStyle).id,
+    iconStyle: getBrandStyleOption(brandIconStyleOptions, brand.iconStyle).id,
+    annotationStyle: getBrandStyleOption(brandAnnotationStyleOptions, brand.annotationStyle).id,
+    cornerStyle: getBrandStyleOption(brandCornerStyleOptions, brand.cornerStyle).id,
+    labelStyle: getBrandStyleOption(brandLabelStyleOptions, brand.labelStyle).id,
     titleColor: normalizeHexColor(brand.titleColor) || '#18211F',
+    exampleImages: normalizeBrandExampleImages(brand.exampleImages),
     styleRules: Array.isArray(brand.styleRules) ? brand.styleRules : splitListText(brand.styleRules)
   };
 }
@@ -3982,6 +4046,13 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
       logoInstruction,
       `Visible title color rule: use ${brandTitleColor} as the consistent title color whenever a visible title or main heading appears. This HEX value is an internal art-direction rule only; do not print the HEX code.`,
       `Arrow and pointer style rule: ${brandArrowStyle.prompt}`,
+      `Icon style rule: ${getBrandStyleOption(brandIconStyleOptions, brand.iconStyle).prompt}`,
+      `Annotation-line rule: ${getBrandStyleOption(brandAnnotationStyleOptions, brand.annotationStyle).prompt}`,
+      `Corner treatment rule: ${getBrandStyleOption(brandCornerStyleOptions, brand.cornerStyle).prompt}`,
+      `Label treatment rule: ${getBrandStyleOption(brandLabelStyleOptions, brand.labelStyle).prompt}`,
+      brand.exampleImages?.length
+        ? `${brand.exampleImages.length} frozen brand example images are supplied as style references. Follow their visual language and composition rhythm, but never copy their products, claims, or text.`
+        : '',
       `Style rules: ${brand.styleRules.join('; ')}.`
     ].filter(Boolean).join(' ');
   const backgroundInstruction = isAPlusOutput
@@ -4625,7 +4696,8 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
   const [trashLoading, setTrashLoading] = useState(false);
   const [trashMessage, setTrashMessage] = useState('');
   const userRole = currentUser.role;
-  const filteredProjects = projects.filter((project) => {
+  const visibleProjects = userRole === 'operator' ? projects.filter(isOperatorVisibleProject) : projects;
+  const filteredProjects = visibleProjects.filter((project) => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return true;
     const form = project.form || {};
@@ -4663,7 +4735,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
         <div>
           <p className="eyebrow">{roleLabel}</p>
           <h2>{userRole === 'operator' ? '待我审核的项目' : '项目中心'}</h2>
-          <p>{userRole === 'operator' ? '这里只显示分配给你的项目，审核完成后自动进入管理员放行。' : '从一个项目开始，依次完成资料、卖点、图片方案和审核。'}</p>
+          <p>{userRole === 'operator' ? '这里只显示设计已完整提交、并分配给你的项目；未提交的设计稿不会提前出现。' : '从一个项目开始，依次完成资料、卖点、图片方案和审核。'}</p>
         </div>
         <div className="project-center-header-actions">
           {canCreate && <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={openTrash}><Archive size={17} />回收站</button>}
@@ -4691,15 +4763,15 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
         </section>
       )}
 
-      {!isLoading && projects.length > 0 && (
+      {!isLoading && visibleProjects.length > 0 && (
         <section className="project-center-next">
           <div className="project-center-next-icon"><Sparkles size={20} /></div>
           <div>
             <small>建议从这里继续</small>
-            <strong>{getProjectTitle(projects[0].form)} · {getProjectNextAction(projects[0], userRole).label}</strong>
-            <p>{getProjectNextAction(projects[0], userRole).detail}</p>
+            <strong>{getProjectTitle(visibleProjects[0].form)} · {getProjectNextAction(visibleProjects[0], userRole).label}</strong>
+            <p>{getProjectNextAction(visibleProjects[0], userRole).detail}</p>
           </div>
-          <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(projects[0].id, getProjectNextAction(projects[0], userRole).section)}>继续</button>
+          <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(visibleProjects[0].id, getProjectNextAction(visibleProjects[0], userRole).section)}>继续</button>
         </section>
       )}
 
@@ -4715,8 +4787,8 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
         {!isLoading && !filteredProjects.length && (
           <div className="project-center-empty">
             <FolderOpen size={25} />
-            <strong>{projects.length ? '没有匹配的项目' : userRole === 'operator' ? '还没有分配给你的项目' : '还没有项目'}</strong>
-            <p>{canCreate ? '创建第一个项目后，就可以开始上传产品资料。' : '管理员分配项目后，它会出现在这里。'}</p>
+            <strong>{visibleProjects.length ? '没有匹配的项目' : userRole === 'operator' ? '还没有设计提交给你的项目' : '还没有项目'}</strong>
+            <p>{canCreate ? '创建第一个项目后，就可以开始上传产品资料。' : '设计完成整套图片并提交审核后，项目会出现在这里。'}</p>
           </div>
         )}
         {filteredProjects.map((project) => {
@@ -5563,12 +5635,17 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
   const [saveState, setSaveState] = useState('saved');
   const [saveError, setSaveError] = useState('');
+  const [versionHistory, setVersionHistory] = useState([]);
+  const [historyState, setHistoryState] = useState('idle');
+  const [selectedHistoryVersion, setSelectedHistoryVersion] = useState(null);
+  const [cloneState, setCloneState] = useState('idle');
   const selectedBrand = getBrandProfile(selectedBrandId, brandLibrary);
   const editable = selectedBrand.id !== 'none';
   const brandColorTotal = getBrandColorRatioTotal(selectedBrand.colors);
   const managedBrands = brandLibrary.filter((brand) => brand.id !== 'none');
   const savedBrandCount = managedBrands.filter((brand) => brand.version).length;
   const logoBrandCount = managedBrands.filter((brand) => brand.logoPreview || brand.logoStorageKey).length;
+  const exampleReadyCount = managedBrands.filter((brand) => normalizeBrandExampleImages(brand.exampleImages).length >= 2).length;
   const paletteIssueCount = managedBrands.filter((brand) => getBrandColorRatioTotal(brand.colors) !== 100).length;
 
   useEffect(() => {
@@ -5583,6 +5660,29 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
     setSaveError('');
     setSaveState(selectedBrand.id === 'none' || selectedBrand.version ? 'saved' : 'dirty');
   }, [selectedBrand.id, selectedBrand.version]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSelectedHistoryVersion(null);
+    if (view !== 'editor' || !selectedBrand.version || selectedBrand.id === 'none') {
+      setVersionHistory([]);
+      setHistoryState('idle');
+      return () => { cancelled = true; };
+    }
+    setHistoryState('loading');
+    listTeamBrandVersions(selectedBrand.id)
+      .then((versions) => {
+        if (cancelled) return;
+        setVersionHistory(versions.map(normalizeBrandProfile));
+        setHistoryState('ready');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setHistoryState('error');
+        setSaveError(error instanceof Error ? error.message : '品牌版本历史读取失败。');
+      });
+    return () => { cancelled = true; };
+  }, [selectedBrand.id, selectedBrand.version, view]);
 
   const updateBrand = (patch) => {
     if (!editable) return;
@@ -5627,6 +5727,67 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
       updateBrand({ logoPreview: String(reader.result || '') });
     };
     reader.readAsDataURL(file);
+  };
+  const uploadBrandExamples = async (event) => {
+    const files = Array.from(event.target.files || []);
+    if (!files.length || !editable) return;
+    const current = normalizeBrandExampleImages(selectedBrand.exampleImages);
+    const available = Math.max(0, 5 - current.length);
+    if (!available) {
+      setSaveError('品牌示例图最多 5 张，请先移除一张。');
+      event.target.value = '';
+      return;
+    }
+    const selectedFiles = files.slice(0, available);
+    const additions = await Promise.all(selectedFiles.map((file, index) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve({
+        id: `example-${Date.now()}-${index}`,
+        name: file.name,
+        caption: '',
+        storageKey: '',
+        preview: String(reader.result || '')
+      });
+      reader.readAsDataURL(file);
+    })));
+    updateBrand({ exampleImages: [...current, ...additions] });
+    event.target.value = '';
+  };
+  const updateBrandExample = (index, patch) => {
+    updateBrand({
+      exampleImages: selectedBrand.exampleImages.map((image, imageIndex) => (
+        imageIndex === index ? { ...image, ...patch } : image
+      ))
+    });
+  };
+  const moveBrandExample = (index, direction) => {
+    const target = index + direction;
+    if (target < 0 || target >= selectedBrand.exampleImages.length) return;
+    const next = [...selectedBrand.exampleImages];
+    [next[index], next[target]] = [next[target], next[index]];
+    updateBrand({ exampleImages: next });
+  };
+  const removeBrandExample = (index) => {
+    updateBrand({ exampleImages: selectedBrand.exampleImages.filter((_, imageIndex) => imageIndex !== index) });
+  };
+  const cloneSelectedBrand = async () => {
+    if (!editable || !selectedBrand.version || cloneState === 'loading') return;
+    setCloneState('loading');
+    setSaveError('');
+    try {
+      const cloned = normalizeBrandProfile(await cloneTeamBrand(selectedBrand.id, {
+        version: selectedHistoryVersion?.version || selectedBrand.version,
+        name: `${selectedBrand.name} Copy`
+      }));
+      onUpdateBrands(normalizeBrandLibrary([...brandLibrary, cloned]));
+      setSelectedBrandId(cloned.id);
+      setSelectedHistoryVersion(null);
+      setSaveState('saved');
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : '克隆品牌失败。');
+    } finally {
+      setCloneState('idle');
+    }
   };
   const updateBrandColor = (index, patch) => {
     const nextColors = selectedBrand.colors.map((color, colorIndex) => (
@@ -5712,6 +5873,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             <span><strong>{managedBrands.length}</strong>品牌</span>
             <span><strong>{savedBrandCount}</strong>已保存版本</span>
             <span><strong>{logoBrandCount}</strong>Logo 素材</span>
+            <span><strong>{exampleReadyCount}</strong>示例图就绪</span>
             <span><strong>{paletteIssueCount}</strong>色彩待校准</span>
           </div>
           <div className="brand-card-list">
@@ -5775,6 +5937,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             <span><strong>{selectedBrand.version ? `v${selectedBrand.version}` : '未保存'}</strong>版本</span>
             <span className={brandColorTotal === 100 ? 'ok' : 'warn'}><strong>{brandColorTotal}%</strong>色彩比例</span>
             <span><strong>{selectedBrand.colors.length}</strong>品牌色</span>
+            <span className={selectedBrand.exampleImages.length >= 2 ? 'ok' : 'warn'}><strong>{selectedBrand.exampleImages.length}/5</strong>示例图</span>
             <span className={selectedBrand.logoPreview || selectedBrand.logoStorageKey ? 'ok' : 'warn'}><strong>{selectedBrand.logoPreview || selectedBrand.logoStorageKey ? '已上传' : '未上传'}</strong>Logo</span>
           </div>
           {saveError && <div className="brand-save-error" role="alert">{saveError}</div>}
@@ -5824,6 +5987,30 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
                 {brandArrowStyleOptions.map((option) => (
                   <option key={option.id} value={option.id}>{option.label}</option>
                 ))}
+              </select>
+            </label>
+            <label>
+              <span>图标样式</span>
+              <select disabled={!editable} value={selectedBrand.iconStyle} onChange={(event) => updateBrand({ iconStyle: event.target.value })}>
+                {brandIconStyleOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>标注线样式</span>
+              <select disabled={!editable} value={selectedBrand.annotationStyle} onChange={(event) => updateBrand({ annotationStyle: event.target.value })}>
+                {brandAnnotationStyleOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>图形圆角</span>
+              <select disabled={!editable} value={selectedBrand.cornerStyle} onChange={(event) => updateBrand({ cornerStyle: event.target.value })}>
+                {brandCornerStyleOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>信息标签样式</span>
+              <select disabled={!editable} value={selectedBrand.labelStyle} onChange={(event) => updateBrand({ labelStyle: event.target.value })}>
+                {brandLabelStyleOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
               </select>
             </label>
             <div className="brand-color-editor">
@@ -5978,6 +6165,96 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             <input id="brand-logo-upload" type="file" accept="image/*" disabled={!editable} onChange={uploadLogo} />
           </div>
         </section>
+
+        <section className="vz-card panel brand-example-panel">
+          <div className="panel-header compact">
+            <div>
+              <p className="eyebrow">Visual Examples</p>
+              <h3>品牌示例图</h3>
+              <small>上传 2–5 张最能代表品牌构图、字体层级和标注方式的图片。</small>
+            </div>
+            <label className={editable && selectedBrand.exampleImages.length < 5 ? 'vz-btn vz-btn--secondary secondary-button upload-button' : 'vz-btn vz-btn--secondary secondary-button upload-button disabled'} htmlFor="brand-example-upload">
+              <ImagePlus size={16} />添加示例图
+            </label>
+            <input id="brand-example-upload" type="file" accept="image/*" multiple disabled={!editable || selectedBrand.exampleImages.length >= 5} onChange={uploadBrandExamples} />
+          </div>
+          <div className={`brand-example-readiness ${selectedBrand.exampleImages.length >= 2 ? 'ready' : 'waiting'}`}>
+            <strong>{selectedBrand.exampleImages.length >= 2 ? '可用于品牌生图' : `还需 ${2 - selectedBrand.exampleImages.length} 张`}</strong>
+            <span>示例图只控制视觉语言，不会复制其中的产品、文案或卖点。</span>
+          </div>
+          {selectedBrand.exampleImages.length ? (
+            <div className="brand-example-grid">
+              {selectedBrand.exampleImages.map((image, index) => (
+                <article className="brand-example-card" key={image.id}>
+                  <div className="brand-example-preview">
+                    {image.preview ? <img src={image.preview} alt={image.caption || image.name} /> : <FileImage size={28} />}
+                    <span>{String(index + 1).padStart(2, '0')}</span>
+                  </div>
+                  <div className="brand-example-fields">
+                    <strong>{image.name}</strong>
+                    <input
+                      aria-label={`示例图 ${index + 1} 说明`}
+                      disabled={!editable}
+                      placeholder="例如：标题层级、留白与细线标注"
+                      value={image.caption}
+                      onChange={(event) => updateBrandExample(index, { caption: event.target.value })}
+                    />
+                  </div>
+                  <div className="brand-example-actions">
+                    <button className="vz-btn vz-btn--secondary vz-btn--icon" disabled={!editable || index === 0} onClick={() => moveBrandExample(index, -1)} type="button" aria-label="前移示例图"><ArrowLeft size={15} /></button>
+                    <button className="vz-btn vz-btn--secondary vz-btn--icon" disabled={!editable || index === selectedBrand.exampleImages.length - 1} onClick={() => moveBrandExample(index, 1)} type="button" aria-label="后移示例图"><ArrowRight size={15} /></button>
+                    <button className="vz-btn vz-btn--secondary vz-btn--icon danger" disabled={!editable} onClick={() => removeBrandExample(index)} type="button" aria-label="移除示例图"><Trash2 size={15} /></button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : <div className="brand-example-empty"><ImagePlus size={26} /><strong>还没有品牌示例图</strong><span>先选择 2 张最典型的历史成图。</span></div>}
+        </section>
+
+        {editable && selectedBrand.version > 0 && (
+          <section className="vz-card panel brand-version-panel">
+            <div className="panel-header compact">
+              <div>
+                <p className="eyebrow">Version History</p>
+                <h3>版本历史</h3>
+                <small>每次保存都会生成不可覆盖的新版本，已有项目继续使用原锁定版本。</small>
+              </div>
+              <button className="vz-btn vz-btn--secondary secondary-button" disabled={cloneState === 'loading'} onClick={cloneSelectedBrand} type="button">
+                <Layers size={16} />{cloneState === 'loading' ? '克隆中…' : `克隆${selectedHistoryVersion ? ` v${selectedHistoryVersion.version}` : '当前版本'}`}
+              </button>
+            </div>
+            {historyState === 'loading' && <div className="brand-version-state">正在读取版本历史…</div>}
+            {historyState === 'error' && <div className="brand-version-state error">版本历史暂时不可用。</div>}
+            {historyState === 'ready' && (
+              <div className="brand-version-layout">
+                <div className="brand-version-list">
+                  {versionHistory.map((version) => (
+                    <button className={selectedHistoryVersion?.version === version.version ? 'active' : ''} key={version.version} onClick={() => setSelectedHistoryVersion(version)} type="button">
+                      <span><strong>v{version.version}</strong>{version.version === selectedBrand.version && <em>当前</em>}</span>
+                      <small>{version.createdAt ? new Date(version.createdAt).toLocaleString('zh-CN') : '保存时间未知'}</small>
+                    </button>
+                  ))}
+                </div>
+                <div className="brand-version-detail">
+                  {selectedHistoryVersion ? (
+                    <>
+                      <div><strong>{selectedHistoryVersion.name} · v{selectedHistoryVersion.version}</strong><span>{selectedHistoryVersion.createdByName || '团队成员'} 创建</span></div>
+                      <dl>
+                        <div><dt>示例图</dt><dd>{selectedHistoryVersion.exampleImages.length} 张</dd></div>
+                        <div><dt>色彩</dt><dd>{selectedHistoryVersion.colors.length} 个</dd></div>
+                        <div><dt>图标</dt><dd>{getBrandStyleOption(brandIconStyleOptions, selectedHistoryVersion.iconStyle).label}</dd></div>
+                        <div><dt>标签</dt><dd>{getBrandStyleOption(brandLabelStyleOptions, selectedHistoryVersion.labelStyle).label}</dd></div>
+                      </dl>
+                      <div className="brand-version-thumbs">
+                        {selectedHistoryVersion.exampleImages.map((image) => image.preview && <img key={image.id} src={image.preview} alt="" />)}
+                      </div>
+                    </>
+                  ) : <div className="brand-version-placeholder"><Clock3 size={22} /><span>选择一个版本查看规则与示例图，也可以从该版本克隆新品牌。</span></div>}
+                </div>
+              </div>
+            )}
+          </section>
+        )}
       </div>
       }
     </section>
@@ -7733,6 +8010,7 @@ function GenerationPage({
         brandId: runBrand?.id || 'none',
         brandVersion: Number(runBrand?.version || 0),
         outputPresetId: runOutputPreset.id,
+        editType: localEdit ? 'local' : 'full',
         prompt,
         sourceImageDataUrl,
         sourceImages,
@@ -8873,7 +9151,7 @@ function AdminReleasePage({ projects, onOpenProject }) {
   );
 }
 
-function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, onSubmit }) {
+function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, onSubmit, isSubmitting = false }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
   const selectedRuns = activeSlots
     .map((slot) => ({ slot, run: getBestRunForSlot(slot.id, generationRuns) }))
@@ -8906,12 +9184,12 @@ function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, on
       </section>
 
       <label className="handoff-note-field"><span>给运营的说明（可选）</span><textarea placeholder="例如：已核对第 3 张人物与产品比例；第 6 张的尺寸数据来自说明书。" /></label>
-      <footer className="handoff-actions"><button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={onBack}>返回继续修改</button><button className="vz-btn vz-btn--primary primary-button" disabled={!ready} type="button" onClick={onSubmit}><ClipboardCheck size={16} />提交 {selectedRuns.length} 张给运营审核</button></footer>
+      <footer className="handoff-actions"><button className="vz-btn vz-btn--secondary secondary-button" disabled={isSubmitting} type="button" onClick={onBack}>返回继续修改</button><button className="vz-btn vz-btn--primary primary-button" disabled={!ready || isSubmitting} type="button" onClick={onSubmit}><ClipboardCheck size={16} />{isSubmitting ? '正在提交...' : `提交 ${selectedRuns.length} 张给运营审核`}</button></footer>
     </section>
   );
 }
 
-function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns, onUpdateReview, onManageLedger, focusRequest, userRole }) {
+function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns, onUpdateReview, onManageLedger, focusRequest, userRole, brandSnapshot, brandVersionState }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
   const activeRole = userRole === 'admin' ? 'admin' : 'ops';
   const decisions = activeSlots.map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs));
@@ -8919,6 +9197,11 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
   const rework = decisions.filter((decision) => decision.status === 'rework' || decision.status === 'blocked').length;
   const pending = Math.max(0, activeSlots.length - approved - rework);
   const [selectedSlotId, setSelectedSlotId] = useState(() => activeSlots[0]?.id || 1);
+  const [reviewBrand, setReviewBrand] = useState(() => (
+    brandSnapshot?.brandId && brandSnapshot.brandId !== 'none'
+      ? normalizeBrandProfile(brandSnapshot.rules || { id: brandSnapshot.brandId, name: brandSnapshot.brandName })
+      : null
+  ));
   const selectedSlot = activeSlots.find((slot) => slot.id === selectedSlotId) || activeSlots[0] || getFallbackSlot(1);
   const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
   const selectedDecision = getReviewDecision(reviewDecisions, selectedSlot.id, storyboardBriefs);
@@ -8927,6 +9210,27 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
   useEffect(() => {
     if (!activeSlots.some((slot) => slot.id === selectedSlotId) && activeSlots[0]) setSelectedSlotId(activeSlots[0].id);
   }, [activeSlots, selectedSlotId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!brandSnapshot?.brandId || brandSnapshot.brandId === 'none' || !brandSnapshot.brandVersion) {
+      setReviewBrand(null);
+      return () => { cancelled = true; };
+    }
+    setReviewBrand(normalizeBrandProfile(brandSnapshot.rules || {
+      id: brandSnapshot.brandId,
+      name: brandSnapshot.brandName,
+      version: brandSnapshot.brandVersion
+    }));
+    getTeamBrandVersion(brandSnapshot.brandId, brandSnapshot.brandVersion)
+      .then((brand) => {
+        if (!cancelled) setReviewBrand(normalizeBrandProfile(brand));
+      })
+      .catch(() => {
+        // The frozen snapshot remains authoritative when signed previews are temporarily unavailable.
+      });
+    return () => { cancelled = true; };
+  }, [brandSnapshot?.brandId, brandSnapshot?.brandVersion]);
 
   return (
     <section className={activeRole === 'ops' ? 'review-workspace operator-review-workspace' : 'review-workspace'}>
@@ -8958,6 +9262,36 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
 
       <aside className="review-action-panel">
         <div className="review-action-head"><p className="eyebrow">YOUR DECISION</p><h3>{activeRole === 'admin' ? '管理员最终放行' : '运营审核'}</h3><p>{activeRole === 'admin' ? '确认运营已通过后，决定是否允许导出。' : '核对产品、卖点、文字和物理逻辑。'}</p></div>
+        <section className="review-brand-context">
+          <div className="review-brand-context-head">
+            <span><Palette size={16} /><strong>{reviewBrand?.name || '基线模式'}</strong></span>
+            {reviewBrand ? <em>项目锁定 v{brandSnapshot?.brandVersion || reviewBrand.version}</em> : <em>不套品牌</em>}
+          </div>
+          {reviewBrand ? (
+            <>
+              {brandVersionState?.latestVersion && brandVersionState.latestVersion !== brandSnapshot?.brandVersion && (
+                <div className="review-brand-version-note">品牌库当前 v{brandVersionState.latestVersion}，本项目仍按 v{brandSnapshot?.brandVersion} 审核。</div>
+              )}
+              <div className="review-brand-style-summary">
+                <span>{getBrandStyleOption(brandIconStyleOptions, reviewBrand.iconStyle).label}</span>
+                <span>{getBrandStyleOption(brandAnnotationStyleOptions, reviewBrand.annotationStyle).label}</span>
+                <span>{getBrandStyleOption(brandCornerStyleOptions, reviewBrand.cornerStyle).label}</span>
+                <span>{getBrandStyleOption(brandLabelStyleOptions, reviewBrand.labelStyle).label}</span>
+              </div>
+              <div className="review-brand-examples">
+                <strong>品牌示例对照</strong>
+                <div>
+                  {reviewBrand.exampleImages.length ? reviewBrand.exampleImages.map((image, index) => (
+                    <figure key={image.id} title={image.caption || image.name}>
+                      {image.preview ? <img src={image.preview} alt={image.caption || `品牌示例 ${index + 1}`} /> : <FileImage size={18} />}
+                      <figcaption>{index + 1}</figcaption>
+                    </figure>
+                  )) : <small>锁定版本没有示例图。</small>}
+                </div>
+              </div>
+            </>
+          ) : <p className="review-brand-baseline">本项目使用统一商业基线，不需要核对品牌示例。</p>}
+        </section>
         <RoleChecklist decision={selectedDecision} />
         <ReviewActions decision={selectedDecision} activeRole={activeRole} onUpdateReview={onUpdateReview} />
         <div className="review-checklist-mini"><strong>本张审核要点</strong>{auditItems.slice(0, 4).map((item) => <span key={item.label}>{item.state === 'pass' ? <Check size={14} /> : <MessageSquareWarning size={14} />}{item.label}</span>)}</div>
@@ -9210,7 +9544,7 @@ function WorkspaceApp({ session, onLogout }) {
   const [selectedSlot, setSelectedSlot] = useState(() => getActiveSlots(initialProject.storyboardBriefs || [])[0] || slots[0]);
   const [activeTab, setActiveTab] = useState('storyboard');
   const [activeSection, setActiveSection] = useState(() => (
-    session.user.role === 'admin' ? 'system' : session.user.role === 'operator' ? 'review' : 'projects'
+    session.user.role === 'admin' ? 'system' : 'projects'
   ));
   const [projects, setProjects] = useState(initialProjects);
   const [brandLibrary, setBrandLibrary] = useState(initialBrands);
@@ -9228,6 +9562,7 @@ function WorkspaceApp({ session, onLogout }) {
   const [isLoadingTeamProjects, setIsLoadingTeamProjects] = useState(true);
   const [focusRequest, setFocusRequest] = useState(null);
   const [isPlanningStoryboard, setIsPlanningStoryboard] = useState(false);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [isUpgradingBrandSnapshot, setIsUpgradingBrandSnapshot] = useState(false);
   const [regeneratingSlotId, setRegeneratingSlotId] = useState(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -9285,7 +9620,10 @@ function WorkspaceApp({ session, onLogout }) {
     listTeamProjects()
       .then((remoteProjects) => {
         if (!mounted) return;
-        const nextProjects = remoteProjects.map(mapTeamProjectToWorkspaceProject);
+        const mappedProjects = remoteProjects.map(mapTeamProjectToWorkspaceProject);
+        const nextProjects = session.user.role === 'operator'
+          ? mappedProjects.filter(isOperatorVisibleProject)
+          : mappedProjects;
         appLogger.log('team.projects.metadata_loaded', {
           projectCount: nextProjects.length,
           durationMs: Math.round(performance.now() - projectLoadStartedAt)
@@ -9301,7 +9639,7 @@ function WorkspaceApp({ session, onLogout }) {
           setPromptOverrides({});
           setExportSelections({});
           setSelectedSlot(slots[0]);
-          setActiveSection(session.user.role === 'admin' ? 'system' : session.user.role === 'operator' ? 'review' : 'projects');
+          setActiveSection(session.user.role === 'admin' ? 'system' : 'projects');
           setSaveStatus(session.user.role === 'operator' ? '暂无分配给你的项目。' : '暂无云端项目，可以创建一个新项目开始。');
           setIsLoadingTeamProjects(false);
           return;
@@ -9317,7 +9655,7 @@ function WorkspaceApp({ session, onLogout }) {
         setGenerationRuns(normalizeGenerationRuns(nextActive.generationRuns));
         setPromptOverrides(nextActive.promptOverrides || {});
         setExportSelections(nextActive.exportSelections || {});
-        setActiveSection(session.user.role === 'admin' ? 'system' : session.user.role === 'operator' ? 'review' : 'projects');
+        setActiveSection(session.user.role === 'admin' ? 'system' : 'projects');
         setSaveStatus(`已载入 ${nextProjects.length} 个团队项目，图片正在后台恢复`);
         setIsLoadingTeamProjects(false);
 
@@ -9541,7 +9879,7 @@ function WorkspaceApp({ session, onLogout }) {
       setSelectedSlot(activeSlots[0]);
     }
   }, [activeSlots, selectedSlot.id]);
-  const syncProjectToTeam = async (project) => {
+  const syncProjectToTeam = async (project, { throwOnError = false } = {}) => {
     if (!project?.cloud?.remote) return;
     try {
       const projectWithAssets = await uploadInlineProjectReferences(project);
@@ -9566,9 +9904,10 @@ function WorkspaceApp({ session, onLogout }) {
     } catch (error) {
       appLogger.error('team.project.sync_failed', error, { projectId: project.id, step: activeSection });
       setSaveStatus('已保存在本机，但团队同步暂时失败。');
+      if (throwOnError) throw error;
     }
   };
-  const persistProjects = (nextProjects, remoteProjectId = activeProjectId) => {
+  const persistProjects = (nextProjects, remoteProjectId = activeProjectId, syncOptions = {}) => {
     const normalizedProjects = nextProjects.map((project) => {
       const previous = projects.find((item) => item.id === project.id);
       return {
@@ -9580,7 +9919,7 @@ function WorkspaceApp({ session, onLogout }) {
     setProjects(normalizedProjects);
     storeProjects(normalizedProjects);
     const remoteProject = normalizedProjects.find((project) => project.id === remoteProjectId);
-    return remoteProject?.cloud?.remote ? syncProjectToTeam(remoteProject) : Promise.resolve();
+    return remoteProject?.cloud?.remote ? syncProjectToTeam(remoteProject, syncOptions) : Promise.resolve();
   };
   const updateBrandLibrary = (nextBrands) => {
     const normalized = normalizeBrandLibrary(nextBrands);
@@ -9602,10 +9941,28 @@ function WorkspaceApp({ session, onLogout }) {
       });
       brandForSave = { ...brand, logoStorageKey: asset.storageKey, logoPreview: '' };
     }
+    const uploadedExampleImages = [];
+    for (const [index, image] of normalizeBrandExampleImages(brandForSave.exampleImages).entries()) {
+      if (isInlineImageSource(image.preview)) {
+        const asset = await uploadTeamBrandExample({
+          brandId: brand.id,
+          assetId: `${Date.now()}-${index + 1}`,
+          imageDataUrl: image.preview
+        });
+        uploadedExampleImages.push({ ...image, storageKey: asset.storageKey, preview: '' });
+      } else {
+        uploadedExampleImages.push({ ...image, preview: '' });
+      }
+    }
+    brandForSave = { ...brandForSave, exampleImages: uploadedExampleImages };
     const saved = brandForSave.version
       ? await updateTeamBrand(brandForSave)
       : await createTeamBrand(brandForSave);
     if (brandForSave.logoStorageKey && !saved.logoPreview) saved.logoPreview = brand.logoPreview;
+    saved.exampleImages = normalizeBrandExampleImages(saved.exampleImages).map((image) => ({
+      ...image,
+      preview: brand.exampleImages?.find((candidate) => candidate.id === image.id)?.preview || image.preview
+    }));
     const normalizedSaved = normalizeBrandProfile(saved);
     const normalized = normalizeBrandLibrary([
       ...brandLibrary.filter((item) => item.id !== brand.id && item.id !== normalizedSaved.id),
@@ -9854,6 +10211,11 @@ function WorkspaceApp({ session, onLogout }) {
   const selectProject = (projectId, destination = 'project') => {
     const selectedProject = projects.find((project) => project.id === projectId);
     if (!selectedProject) return;
+    if (session.user.role === 'operator' && !isOperatorVisibleProject(selectedProject)) {
+      setSaveStatus('设计尚未提交整套图片，当前项目不能进入运营审核。');
+      setActiveSection('projects');
+      return;
+    }
     setActiveProjectId(projectId);
     setProjectForm({ ...blankProjectForm, ...selectedProject.form });
     setLedgerFacts(selectedProject.ledgerFacts);
@@ -10416,18 +10778,30 @@ function WorkspaceApp({ session, onLogout }) {
     setActiveSection('review');
     navigateTo('review', 'review');
   };
-  const submitForOpsReview = () => {
+  const submitForOpsReview = async () => {
+    if (isSubmittingReview) return;
+    const previousProjects = projects;
     const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
     nextProject.cloud = { ...(currentProject?.cloud || {}), status: 'review' };
     const nextProjects = projects.some((project) => project.id === activeProjectId)
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
-    persistProjects(nextProjects);
-    appLogger.log('workflow.review.submitted', {
-      selectedRunCount: activeSlots.filter((slot) => getBestRunForSlot(slot.id, generationRuns)?.verdict === 'usable').length
-    }, { projectId: activeProjectId, step: 'handoff' });
-    setSaveStatus('已提交运营审核。运营负责人将在自己的审核队列中看到该项目。');
-    setActiveSection('projects');
+    setIsSubmittingReview(true);
+    setSaveStatus('正在提交整套图片给运营审核...');
+    try {
+      await persistProjects(nextProjects, nextProject.id, { throwOnError: true });
+      appLogger.log('workflow.review.submitted', {
+        selectedRunCount: activeSlots.filter((slot) => getBestRunForSlot(slot.id, generationRuns)?.verdict === 'usable').length
+      }, { projectId: activeProjectId, step: 'handoff' });
+      setSaveStatus('已提交运营审核。运营负责人现在可以在自己的审核队列中看到该项目。');
+      setActiveSection('projects');
+    } catch (error) {
+      setProjects(previousProjects);
+      storeProjects(previousProjects);
+      setSaveStatus(error instanceof Error ? `提交失败：${error.message}` : '提交失败，请稍后重试。');
+    } finally {
+      setIsSubmittingReview(false);
+    }
   };
   const trashProjectFromCenter = async (project) => {
     const title = getProjectTitle(project.form);
@@ -10591,6 +10965,7 @@ function WorkspaceApp({ session, onLogout }) {
         generationRuns={generationRuns}
         onBack={() => navigateTo('generation', 'generation')}
         onSubmit={submitForOpsReview}
+        isSubmitting={isSubmittingReview}
       />
     ),
     review: (
@@ -10601,6 +10976,8 @@ function WorkspaceApp({ session, onLogout }) {
         generationRuns={generationRuns}
         onUpdateReview={updateReviewDecision}
         userRole={session.user.role}
+        brandSnapshot={currentProject?.brandSnapshot || null}
+        brandVersionState={projectBrandVersionState}
         onManageLedger={() => navigateTo('ledger', 'ledger')}
         focusRequest={focusRequest}
       />

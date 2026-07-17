@@ -154,6 +154,39 @@ async function attachBrandSnapshot(payload = {}, currentSnapshot = null) {
   return { ...payload, brandSnapshot: { ...snapshot, outputPresetId } };
 }
 
+async function hydrateBrandAssetUrls(brand = {}) {
+  const hydrated = { ...brand };
+  if (hydrated.logoStorageKey) {
+    hydrated.logoPreview = await assetStorage.getUrl(hydrated.logoStorageKey);
+  }
+  const exampleImages = Array.isArray(hydrated.exampleImages) ? hydrated.exampleImages : [];
+  hydrated.exampleImages = await Promise.all(exampleImages.map(async (image, index) => ({
+    ...image,
+    id: image.id || `example-${index + 1}`,
+    preview: image.storageKey ? await assetStorage.getUrl(image.storageKey) : image.preview || ''
+  })));
+  return hydrated;
+}
+
+function getBrandExampleSourceImages(brandSnapshot = {}, payload = {}) {
+  const isPrimaryWhite = brandSnapshot.outputPresetId === 'main-image' && Number(payload.slotId || 1) === 1;
+  const isLocalEdit = payload.editType === 'local';
+  if (isPrimaryWhite || isLocalEdit) return [];
+  const examples = Array.isArray(brandSnapshot?.rules?.exampleImages)
+    ? brandSnapshot.rules.exampleImages
+    : [];
+  return examples
+    .filter((image) => image?.storageKey)
+    .slice(0, 5)
+    .map((image, index) => ({
+      id: image.id || `brand-example-${index + 1}`,
+      label: `Brand visual example ${index + 1}. Use only its visual language, layout rhythm, typography hierarchy, icon and callout treatment. Never copy its product or claims.`,
+      name: image.name || image.caption || `Brand example ${index + 1}`,
+      storageKey: image.storageKey,
+      brandReference: true
+    }));
+}
+
 function readJsonBody(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -334,6 +367,13 @@ function dataUrlToInlineData(dataUrl) {
 }
 
 async function imageInputToInlineData(input) {
+  if (input && typeof input === 'object' && input.storageKey) {
+    const stored = await assetStorage.getObject(input.storageKey);
+    return {
+      mimeType: stored.contentType || 'image/jpeg',
+      base64: stored.data.toString('base64')
+    };
+  }
   const value = typeof input === 'string'
     ? input
     : input?.dataUrl || input?.sourceImageDataUrl || input?.imageDataUrl || input?.imageUrl || '';
@@ -1144,6 +1184,13 @@ function buildStoryboardPlannerPrompt(payload) {
     'If a logo exists, it may be planned only for A+ output. For all non-A+ listing images, do not display, imitate, or invent a logo.',
     `Visible title color rule: use ${normalizePromptHexColor(brand.titleColor)} as the consistent title color whenever a visible title or main heading appears. This HEX value is an internal art-direction rule only; do not print the HEX code.`,
     `Arrow and pointer style rule: ${getBrandArrowStylePrompt(brand)}`,
+    `Icon style rule: ${brand.iconStyle || 'outline'} — keep icon family, stroke/fill treatment, and optical size consistent across the full set.`,
+    `Annotation line rule: ${brand.annotationStyle || 'thin-straight'} — use one consistent leader-line and endpoint treatment.`,
+    `Graphic corner rule: ${brand.cornerStyle || 'soft-8'} — apply consistently to information blocks and labels; never force long text into pills.`,
+    `Information label rule: ${brand.labelStyle || 'soft-box'} — keep label hierarchy, padding, and contrast consistent across the set.`,
+    Array.isArray(brand.exampleImages) && brand.exampleImages.length
+      ? `${brand.exampleImages.length} frozen brand example images belong to this exact project brand version. Use them only to guide art direction, composition rhythm, typography hierarchy, icon family, callout treatment, spacing, and image treatment. Never copy their products, claims, visible copy, or factual content.`
+      : 'No frozen brand visual examples are available; use the structured brand rules only.',
     `Style rules: ${Array.isArray(brand.styleRules) ? brand.styleRules.join('; ') : brand.styleRules || 'Keep ecommerce visuals clean, realistic, and product-led.'}`,
     '',
     'Ledger facts:',
@@ -1177,6 +1224,10 @@ function buildStoryboardPlannerPrompt(payload) {
             allowedColors: ['configured HEX colors only'],
             titleColor: 'configured title HEX color',
             arrowStyle: 'configured arrow style',
+            iconStyle: 'configured icon family',
+            annotationStyle: 'configured leader-line treatment',
+            cornerStyle: 'configured graphic corner treatment',
+            labelStyle: 'configured information label treatment',
             logoPolicy: 'whether and how the uploaded logo may appear'
           },
           outputSpec: {
@@ -1925,11 +1976,7 @@ const server = http.createServer(async (request, response) => {
     try {
       await requireStage1Actor(request);
       const brands = await brandStore.listBrands();
-      await Promise.all(brands.map(async (brand) => {
-        if (!brand.logoStorageKey) return;
-        brand.logoPreview = await assetStorage.getUrl(brand.logoStorageKey);
-      }));
-      sendJson(response, 200, { ok: true, brands });
+      sendJson(response, 200, { ok: true, brands: await Promise.all(brands.map(hydrateBrandAssetUrls)) });
     } catch (error) {
       sendStage1Error(response, error);
     }
@@ -1945,7 +1992,7 @@ const server = http.createServer(async (request, response) => {
         step: 'brands',
         payload: { brandId: brand.id, brandName: brand.name, brandVersion: brand.version }
       }, session.user);
-      sendJson(response, 201, { ok: true, brand });
+      sendJson(response, 201, { ok: true, brand: await hydrateBrandAssetUrls(brand) });
     } catch (error) {
       sendStage1Error(response, error);
     }
@@ -1961,13 +2008,64 @@ const server = http.createServer(async (request, response) => {
       const payload = await readJsonBody(request);
       const brandId = sanitizeFilenamePart(payload.brandId || 'new-brand');
       const assetId = sanitizeFilenamePart(payload.assetId || Date.now());
+      const assetType = payload.assetType === 'example' ? 'example' : 'logo';
       const parsed = parseInlineImage(payload.imageDataUrl);
       const extension = getImageExtension(parsed.contentType);
       const stored = await saveUploadedAsset({
         imageDataUrl: payload.imageDataUrl,
-        storageKey: `brands/${brandId}/logo-${assetId}.${extension}`
+        storageKey: assetType === 'example'
+          ? `brands/${brandId}/examples/${assetId}.${extension}`
+          : `brands/${brandId}/logo-${assetId}.${extension}`
       });
-      sendJson(response, 201, { ok: true, asset: { storageKey: stored.storageKey, url: stored.url } });
+      sendJson(response, 201, { ok: true, asset: { storageKey: stored.storageKey, url: stored.url, assetType } });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  const brandVersionsMatch = /^\/api\/brands\/([^/]+)\/versions$/.exec(requestPath);
+  if (request.method === 'GET' && brandVersionsMatch) {
+    try {
+      await requireStage1Actor(request);
+      const versions = await brandStore.listBrandVersions(decodeURIComponent(brandVersionsMatch[1]));
+      sendJson(response, 200, { ok: true, versions: await Promise.all(versions.map(hydrateBrandAssetUrls)) });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  const brandVersionMatch = /^\/api\/brands\/([^/]+)\/versions\/(\d+)$/.exec(requestPath);
+  if (request.method === 'GET' && brandVersionMatch) {
+    try {
+      await requireStage1Actor(request);
+      const brand = await brandStore.getBrandVersion(
+        decodeURIComponent(brandVersionMatch[1]),
+        Number(brandVersionMatch[2])
+      );
+      sendJson(response, 200, { ok: true, brand: await hydrateBrandAssetUrls(brand) });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
+  const brandCloneMatch = /^\/api\/brands\/([^/]+)\/clone$/.exec(requestPath);
+  if (request.method === 'POST' && brandCloneMatch) {
+    try {
+      const session = await requireStage1Actor(request);
+      const brand = await brandStore.cloneBrand(
+        session.user,
+        decodeURIComponent(brandCloneMatch[1]),
+        await readJsonBody(request)
+      );
+      await stage1Store.appendAuditEvents({
+        event: 'brand.cloned',
+        step: 'brands',
+        payload: { sourceBrandId: decodeURIComponent(brandCloneMatch[1]), brandId: brand.id, brandVersion: brand.version }
+      }, session.user);
+      sendJson(response, 201, { ok: true, brand: await hydrateBrandAssetUrls(brand) });
     } catch (error) {
       sendStage1Error(response, error);
     }
@@ -1988,7 +2086,7 @@ const server = http.createServer(async (request, response) => {
         step: 'brands',
         payload: { brandId: brand.id, brandName: brand.name, brandVersion: brand.version }
       }, session.user);
-      sendJson(response, 200, { ok: true, brand });
+      sendJson(response, 200, { ok: true, brand: await hydrateBrandAssetUrls(brand) });
     } catch (error) {
       sendStage1Error(response, error);
     }
@@ -2179,8 +2277,15 @@ const server = http.createServer(async (request, response) => {
       const payload = await readJsonBody(request);
       const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
       const authoritativePayload = getAuthoritativeProjectPayload(payload, project, { prependPrompt: true });
+      const brandExampleSources = getBrandExampleSourceImages(authoritativePayload.brandSnapshot, authoritativePayload);
+      const authoritativeSourceImages = [
+        ...(Array.isArray(authoritativePayload.sourceImages) ? authoritativePayload.sourceImages : []),
+        ...brandExampleSources
+      ];
       const task = await generationTaskStore.createTask(session.user, {
         ...authoritativePayload,
+        sourceImages: authoritativeSourceImages,
+        brandExampleCount: brandExampleSources.length,
         requestedBy: session.user.id
       });
       void auditProjectAction(session.user, payload.projectId, 'pipeline.generation.task_created', {
@@ -2190,6 +2295,7 @@ const server = http.createServer(async (request, response) => {
         slotId: payload.slotId || null,
         brandId: authoritativePayload.brandId,
         brandVersion: authoritativePayload.brandVersion,
+        brandExampleCount: brandExampleSources.length,
         outputPresetId: authoritativePayload.outputPresetId
       }).catch((error) => console.warn(`Generation task audit unavailable: ${error instanceof Error ? error.message : String(error)}`));
       void runGenerationWorkerOnce();

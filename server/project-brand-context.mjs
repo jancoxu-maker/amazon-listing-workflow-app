@@ -52,11 +52,18 @@ function buildBrandPromptContract(snapshot, baselineMode, slotId = 1) {
     colors ? `Palette: ${colors}. These are hidden art-direction constraints; never print swatches, percentages, or HEX codes.` : '',
     rules.titleColor ? `Title color: ${rules.titleColor}.` : '',
     rules.arrowStyle ? `Arrow style: ${rules.arrowStyle}.` : '',
+    rules.iconStyle ? `Icon style: ${rules.iconStyle}.` : '',
+    rules.annotationStyle ? `Annotation-line style: ${rules.annotationStyle}.` : '',
+    rules.cornerStyle ? `Corner style: ${rules.cornerStyle}.` : '',
+    rules.labelStyle ? `Label style: ${rules.labelStyle}.` : '',
     rules.backgroundPolicy ? `Background policy: ${rules.backgroundPolicy}.` : '',
     Array.isArray(rules.scenes) && rules.scenes.length ? `Scene cues: ${rules.scenes.join(', ')}.` : '',
     Array.isArray(rules.forbiddenStyles) && rules.forbiddenStyles.length ? `Forbidden styles: ${rules.forbiddenStyles.join(', ')}.` : '',
     rules.logoPolicy ? `Logo policy: ${rules.logoPolicy}.` : '',
     Array.isArray(rules.styleRules) && rules.styleRules.length ? `Style rules: ${rules.styleRules.join('; ')}.` : '',
+    Array.isArray(rules.exampleImages) && rules.exampleImages.length
+      ? `${rules.exampleImages.length} frozen brand visual examples are attached server-side for style reference only. Copy their visual language, never their products, claims, or text.`
+      : '',
     'Do not replace these rules with client cache, default brand data, or inferred styling.'
   ].filter(Boolean).join('\n');
 }

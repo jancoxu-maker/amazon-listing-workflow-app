@@ -30,8 +30,21 @@ function mapBrand(row) {
     ...rules,
     id: row.id,
     name: row.name,
-    version: Number(row.current_version || row.version || 1),
+    version: Number(row.version || row.current_version || 1),
     updatedAt: row.updated_at || row.created_at || null
+  };
+}
+
+function mapBrandVersion(row) {
+  const rules = safeObject(row.rules);
+  return {
+    ...rules,
+    id: row.brand_id,
+    name: row.name || rules.name || '',
+    version: Number(row.version || 1),
+    createdAt: row.created_at || null,
+    createdBy: row.created_by || null,
+    createdByName: row.created_by_name || ''
   };
 }
 
@@ -55,26 +68,61 @@ export function createBrandStore(database) {
     return result.rows.map(mapBrand);
   }
 
-  async function getBrandSnapshot(brandId) {
+  async function getBrandSnapshot(brandId, requestedVersion = null) {
     assertConfigured();
     const id = String(brandId || '').trim();
     if (!id || id === 'none') return {};
+    const version = Number(requestedVersion || 0);
     const result = await database.query(`
-      SELECT p.id, p.name, p.current_version, p.updated_at, v.rules
+      SELECT p.id, p.name, p.current_version, p.updated_at, v.version, v.rules
       FROM brand_profiles p
       JOIN brand_profile_versions v
-        ON v.brand_id = p.id AND v.version = p.current_version
+        ON v.brand_id = p.id AND v.version = CASE WHEN $2::int > 0 THEN $2::int ELSE p.current_version END
       WHERE p.id = $1 AND p.status = 'active'
       LIMIT 1
-    `, [id]);
+    `, [id, version]);
     if (!result.rowCount) throw new Stage1Error('所选品牌不存在或已停用。', 404, 'BRAND_NOT_FOUND');
     const brand = mapBrand(result.rows[0]);
     return {
       brandId: brand.id,
-      brandVersion: brand.version,
+      brandVersion: Number(result.rows[0].version || brand.version),
       brandName: brand.name,
       rules: brand
     };
+  }
+
+  async function listBrandVersions(brandId) {
+    assertConfigured();
+    const id = String(brandId || '').trim();
+    const result = await database.query(`
+      SELECT v.brand_id, p.name, v.version, v.rules, v.created_by, v.created_at,
+             u.display_name AS created_by_name
+      FROM brand_profile_versions v
+      JOIN brand_profiles p ON p.id = v.brand_id
+      LEFT JOIN app_users u ON u.id = v.created_by
+      WHERE v.brand_id = $1
+      ORDER BY v.version DESC
+    `, [id]);
+    if (!result.rowCount) throw new Stage1Error('品牌版本不存在。', 404, 'BRAND_VERSION_NOT_FOUND');
+    return result.rows.map(mapBrandVersion);
+  }
+
+  async function getBrandVersion(brandId, version) {
+    assertConfigured();
+    const id = String(brandId || '').trim();
+    const versionNumber = Number(version || 0);
+    if (!id || !versionNumber) throw new Stage1Error('品牌版本参数无效。', 400, 'BRAND_VERSION_REQUIRED');
+    const result = await database.query(`
+      SELECT v.brand_id, p.name, v.version, v.rules, v.created_by, v.created_at,
+             u.display_name AS created_by_name
+      FROM brand_profile_versions v
+      JOIN brand_profiles p ON p.id = v.brand_id
+      LEFT JOIN app_users u ON u.id = v.created_by
+      WHERE v.brand_id = $1 AND v.version = $2
+      LIMIT 1
+    `, [id, versionNumber]);
+    if (!result.rowCount) throw new Stage1Error('品牌版本不存在。', 404, 'BRAND_VERSION_NOT_FOUND');
+    return mapBrandVersion(result.rows[0]);
   }
 
   async function createBrand(user, payload = {}) {
@@ -139,6 +187,27 @@ export function createBrandStore(database) {
     return { ...normalizedRules, version };
   }
 
+  async function cloneBrand(user, brandId, payload = {}) {
+    assertConfigured();
+    assertEditor(user);
+    const source = await getBrandVersion(brandId, payload.version || 0).catch(async (error) => {
+      if (error?.code !== 'BRAND_VERSION_REQUIRED') throw error;
+      const snapshot = await getBrandSnapshot(brandId);
+      return { ...snapshot.rules, version: snapshot.brandVersion };
+    });
+    const clonedName = normalizeName(payload.name || `${source.name || 'Brand'} Copy`);
+    const clonedRules = {
+      ...source,
+      id: undefined,
+      version: undefined,
+      createdAt: undefined,
+      createdBy: undefined,
+      createdByName: undefined,
+      name: clonedName
+    };
+    return createBrand(user, { name: clonedName, rules: clonedRules });
+  }
+
   async function deleteBrand(user, brandId) {
     assertConfigured();
     if (user?.role !== 'admin') {
@@ -155,5 +224,14 @@ export function createBrandStore(database) {
     return { id };
   }
 
-  return { listBrands, getBrandSnapshot, createBrand, updateBrand, deleteBrand };
+  return {
+    listBrands,
+    getBrandSnapshot,
+    listBrandVersions,
+    getBrandVersion,
+    createBrand,
+    updateBrand,
+    cloneBrand,
+    deleteBrand
+  };
 }
