@@ -568,6 +568,93 @@ export function createStage1Store(database) {
     };
   }
 
+  async function upgradeProjectBrandSnapshot(user, projectId, payload = {}) {
+    assertConfigured();
+    if (!['designer', 'admin'].includes(user.role)) {
+      throw new Stage1Error('当前身份不能升级项目品牌版本。', 403, 'PROJECT_BRAND_UPGRADE_FORBIDDEN');
+    }
+    const id = String(projectId || '').trim();
+    const nextSnapshot = safeObject(payload.brandSnapshot);
+    const nextProjectData = safeObject(payload.projectData);
+    const nextStatus = PROJECT_STATUSES.has(payload.status) ? payload.status : 'content';
+    assertNoInlineAssets(nextSnapshot, '品牌快照');
+    assertNoInlineAssets(nextProjectData);
+
+    return database.transaction(async (client) => {
+      const result = await client.query(
+        `SELECT p.id, p.project_name, p.output_type, p.status, p.brand_snapshot,
+          EXISTS(
+            SELECT 1 FROM project_assignments a
+            WHERE a.project_id = p.id AND a.user_id = $2 AND a.assignment_role = $3
+          ) AS has_role_assignment
+         FROM projects p
+         WHERE p.id = $1 AND p.deleted_at IS NULL
+         FOR UPDATE`,
+        [id, user.id, user.role]
+      );
+      if (!result.rowCount) throw new Stage1Error('项目不存在。', 404, 'PROJECT_NOT_FOUND');
+      const current = result.rows[0];
+      if (user.role !== 'admin' && !current.has_role_assignment) {
+        throw new Stage1Error('你没有编辑这个项目的权限。', 403, 'PROJECT_UPDATE_FORBIDDEN');
+      }
+      const oldSnapshot = safeObject(current.brand_snapshot);
+      if (!oldSnapshot.brandId || oldSnapshot.brandId === 'none') {
+        throw new Stage1Error('基线项目没有可升级的品牌快照。', 409, 'PROJECT_BRAND_BASELINE');
+      }
+      if (nextSnapshot.brandId !== oldSnapshot.brandId) {
+        throw new Stage1Error('升级后的品牌与项目当前品牌不一致。', 409, 'PROJECT_BRAND_MISMATCH');
+      }
+      const fromVersion = Number(oldSnapshot.brandVersion || 0);
+      const toVersion = Number(nextSnapshot.brandVersion || 0);
+      if (!toVersion || toVersion <= fromVersion) {
+        throw new Stage1Error('项目已经使用当前品牌的最新版本。', 409, 'PROJECT_BRAND_ALREADY_CURRENT');
+      }
+
+      await client.query(
+        `UPDATE projects
+         SET brand_snapshot = $2::jsonb,
+             project_data = $3::jsonb,
+             status = $4,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [id, JSON.stringify(nextSnapshot), JSON.stringify(nextProjectData), nextStatus]
+      );
+      const cancelled = await client.query(
+        `UPDATE generation_tasks
+         SET status = 'cancelled', cancelled_at = NOW(), finished_at = NOW(), lease_until = NULL,
+             error_code = 'BRAND_SNAPSHOT_UPGRADED',
+             error_message = $2,
+             updated_at = NOW()
+         WHERE project_id = $1 AND status IN ('queued', 'running')
+         RETURNING id`,
+        [id, `Project brand snapshot upgraded from v${fromVersion} to v${toVersion}.`]
+      );
+      await client.query(
+        `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
+         VALUES ($1, $2, $3, 'project.brand_snapshot_upgraded', $4::jsonb)`,
+        [createId('audit'), user.id, id, JSON.stringify({
+          brandId: nextSnapshot.brandId,
+          fromVersion,
+          toVersion,
+          cancelledTaskCount: cancelled.rowCount,
+          invalidated: nextProjectData.brandUpgrade?.invalidated || []
+        })]
+      );
+      return {
+        id,
+        projectName: current.project_name,
+        outputType: current.output_type,
+        status: nextStatus,
+        brandSnapshot: nextSnapshot,
+        projectData: nextProjectData,
+        upgraded: true,
+        fromVersion,
+        toVersion,
+        cancelledTaskCount: cancelled.rowCount
+      };
+    });
+  }
+
   async function assignProject(user, projectId, { userId, assignmentRole }) {
     assertConfigured();
     if (user.role !== 'admin') throw new Stage1Error('只有管理员可以分配项目。', 403, 'PROJECT_ASSIGN_FORBIDDEN');
@@ -658,6 +745,7 @@ export function createStage1Store(database) {
     listTrashedProjects,
     createProject,
     updateProject,
+    upgradeProjectBrandSnapshot,
     trashProject,
     restoreProject,
     assignProject,

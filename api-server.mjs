@@ -6,6 +6,20 @@ import { createStage1Store, getBearerToken, Stage1Error } from './server/stage1-
 import { createAssetStorage } from './server/asset-storage.mjs';
 import { createGenerationTaskStore } from './server/generation-task-store.mjs';
 import { createBrandStore } from './server/brand-store.mjs';
+import { applyAuthoritativeProjectContext, ProjectBrandContextError } from './server/project-brand-context.mjs';
+import {
+  getProjectStatusAfterBrandUpgrade,
+  invalidateProjectDataForBrandUpgrade
+} from './server/project-brand-upgrade.mjs';
+import {
+  getShortCopyDescription,
+  getVisibleCopyLanguageInstruction,
+  normalizeProjectLanguageFields
+} from './shared/output-language.mjs';
+import {
+  formatStoryboardSlotContract,
+  normalizeStoryboardSlotContract
+} from './shared/storyboard-contract.mjs';
 
 function loadLocalEnv() {
   if (!existsSync('.env.local')) return;
@@ -103,6 +117,17 @@ async function auditProjectAction(actor, projectId, eventName, payload = {}) {
     traceId: payload.traceId || '',
     payload
   }, actor);
+}
+
+function getAuthoritativeProjectPayload(payload, project, options = {}) {
+  try {
+    return applyAuthoritativeProjectContext(payload, project, options);
+  } catch (error) {
+    if (error instanceof ProjectBrandContextError) {
+      throw new Stage1Error(error.message, error.status, error.code);
+    }
+    throw error;
+  }
 }
 
 function getRequestedBrandId(payload = {}) {
@@ -820,7 +845,7 @@ function getDefaultVisualProof(visualType = 'benefits', primaryClaim = '') {
 
 const slotQualityGuardrails = {
   main: 'Primary image must preserve the original product as the hero on pure white, with no text, props, badges, lifestyle scene, colored background, or added accessories.',
-  benefits: 'Core benefits image may use no more than three short English callouts; each must point to a visible product feature or visually demonstrated benefit, not become a text poster.',
+  benefits: 'Core benefits image may use no more than three short callouts in the project target language; each must point to a visible product feature or visually demonstrated benefit, not become a text poster.',
   lifestyle: 'Lifestyle image must prove the primary claim through real use, believable scale, natural contact points, and correct product placement.',
   detail: 'Detail image must show the exact part, material, texture, finish, accessory, or construction detail that proves the primary claim; do not invent hidden layers or parts.',
   state: 'Function-state image may only show states proven by uploaded references or confirmed facts; never invent open, folded, assembled, transformed, or storage states.',
@@ -876,7 +901,7 @@ function getNoPrimaryClaimInstruction(visualType = 'benefits') {
 
 const listingImageStrategyRules = [
   'First principle: each image must visually prove the selected selling point. Use scene, product detail, physical state, comparison, scale, or structure as evidence before relying on explanatory text.',
-  'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short English title or a few short labels over paragraphs.',
+  'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short title or a few short labels in the project target language over paragraphs.',
   'Blocked or forbidden claims must not be stated, suggested, implied, staged, symbolized, or visually hinted as a benefit. Neutral factual product appearance or ordinary use is allowed only when it does not communicate the blocked claim.',
   'For standard listing images, if an image includes a title, place the title consistently at the top of the image. A+ content is an exception: title placement may follow the module layout and does not have to be at the top.',
   'Across the full standard listing image set, maintain one unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and ecommerce art direction.',
@@ -900,6 +925,7 @@ function normalizeStoryboardPlan(plan, payload) {
   const blockedClaims = normalizeStringArray(payload?.ledgerFacts
     ?.filter((fact) => fact.state === 'blocked' || fact.allowed === false)
     ?.map((fact) => fact.claim), 12);
+  const languageFields = normalizeProjectLanguageFields(payload?.projectForm || {});
 
   return slots.map((slot, index) => {
     const id = index + 1;
@@ -920,6 +946,21 @@ function normalizeStoryboardPlan(plan, payload) {
     const title = String(slot.title || `Image ${id}`).trim();
     const goal = String(slot.goal || '图片方案').trim();
     const composition = String(slot.composition || '根据产品参考图和 Ledger 生成电商图片。').trim();
+    const outputPresetSize = payload?.outputPresetSize || (isAPlusOutput ? '1464 x 600' : '2000 x 2000');
+    const slotContract = normalizeStoryboardSlotContract({
+      slot,
+      id,
+      visualType,
+      primaryClaim,
+      visualProof,
+      composition,
+      outputPresetId,
+      outputPresetSize,
+      projectForm: payload?.projectForm || {},
+      brand: payload?.brandProfile || {},
+      blockedClaims,
+      guardrails
+    });
     return {
       id,
       title,
@@ -927,12 +968,15 @@ function normalizeStoryboardPlan(plan, payload) {
       composition,
       outputPresetId,
       outputPresetLabel: payload?.outputPresetLabel || (isAPlusOutput ? 'A+' : '主图'),
-      outputPresetSize: payload?.outputPresetSize || (isAPlusOutput ? '1464 x 600' : '2000 x 2000'),
+      outputPresetSize,
+      ...languageFields,
+      ...slotContract,
       roleType,
       visualType,
       productType: String(plan?.productType || 'ai-detected-product').trim(),
       brandId: String(payload?.brandProfile?.id || payload?.projectForm?.brandId || 'none').trim(),
       brandName: String(payload?.brandProfile?.name || payload?.projectForm?.brandName || '').trim(),
+      brandVersion: Number(payload?.brandProfile?.version || payload?.brandVersion || 0),
       productName: String(plan?.productName || payload?.projectForm?.productName || payload?.projectForm?.projectName || 'Current product').trim(),
       usableClaims,
       needsEvidence,
@@ -948,9 +992,11 @@ function normalizeStoryboardPlan(plan, payload) {
           ? 'Output type: Amazon A+ content module. Do not use the primary white-background rule. Headings may follow the module layout. Related allowed Ledger claims may be combined into richer content blocks.'
           : 'Output type: Standard Amazon listing image set. Slot 01 is the white-background main image; standard listing images keep title placement and visual system consistent.',
         `Listing image strategy rules: ${getListingImageStrategyText()}`,
+        getVisibleCopyLanguageInstruction(payload?.projectForm || {}),
         composition,
         primaryClaim ? `Primary claim to prove visually: ${primaryClaim}.` : getNoPrimaryClaimInstruction(visualType),
         `Visual proof plan: ${visualProof}`,
+        formatStoryboardSlotContract(slotContract),
         `Slot quality guardrail: ${getSlotQualityGuardrailText(visualType)}.`,
         usableClaims.length ? `Allowed claims: ${usableClaims.join('; ')}.` : 'No allowed claims assigned yet.',
         needsEvidence.length ? `Claims needing evidence before final export: ${needsEvidence.join('; ')}.` : '',
@@ -1014,6 +1060,8 @@ function normalizeAiImageReview(review = {}) {
 
 function buildStoryboardPlannerPrompt(payload) {
   const project = payload.projectForm || {};
+  const visibleCopyLanguageInstruction = getVisibleCopyLanguageInstruction(project);
+  const shortCopyDescription = getShortCopyDescription(project);
   const brand = payload.brandProfile || {};
   const ledgerFacts = Array.isArray(payload.ledgerFacts) ? payload.ledgerFacts : [];
   const strategyRules = normalizeStringArray(payload.strategyRules, 8);
@@ -1048,7 +1096,7 @@ function buildStoryboardPlannerPrompt(payload) {
     'Ledger facts and user keywords may be written in Chinese, English, or mixed language. Understand them semantically.',
     'Core strategy for every slot: prove the selling point primarily through the image itself. The visual evidence may be the product detail, scene action, physical state, scale, structure, comparison, or verified specification layout.',
     'Use as little visible explanatory copy as possible while preserving clarity. Text is allowed, but the image should not become a poster full of words.',
-    'If any final image slot includes visible copy, labels, badges, callouts, or claim text, that visible copy must be natural Amazon-ready English only. Never plan Chinese visible text for generated images.',
+    visibleCopyLanguageInstruction,
     isAPlusOutput
       ? 'For A+ output, headings are optional and may follow the module layout; they do not have to be at the top. Plan richer editorial modules with brand consistency, product evidence, and clean hierarchy.'
       : 'For standard listing output, if a slot uses a title, the title must sit at the top of the image.',
@@ -1108,13 +1156,36 @@ function buildStoryboardPlannerPrompt(payload) {
       slots: [
         {
           id: 1,
-          title: 'short English title',
+          title: `short internal slot title; use ${shortCopyDescription} if it will also appear in the image`,
           goal: 'short Chinese goal',
           roleType: 'main | hero_with_claim | feature_callout | scale_human_ref | dimension_spec | material_macro | use_scenario | comparison | before_after | bundle_contents | durability_proof | cleaning_ease | safety_cert | brand_hero | benefit_story | lifestyle_module | detail_proof | function_module | structure_specs | care_guide | trust_proof',
           visualType: 'main | benefits | lifestyle | detail | state | structure | dimensions',
           composition: 'Chinese visual direction',
           primaryClaim: 'single most important claim this slot proves',
           visualProof: 'Chinese explanation of how the image visually proves the primary claim',
+          evidenceMap: [{ claim: 'same primary claim', evidence: 'specific visible proof in the composition' }],
+          allowedCopy: [`up to 5 short phrases in ${shortCopyDescription}; empty when no visible copy is needed`],
+          copyPolicy: 'Chinese instruction describing how little text may be used',
+          scenePlan: {
+            type: 'studio-white | product-led-layout | real-use | product-detail | function-state | specification-layout',
+            environment: 'Chinese description of the exact setting or background',
+            requiredElements: ['visible elements required to prove the claim'],
+            forbiddenElements: ['objects, implications, or states that must not appear'],
+            physicalLogic: 'Chinese physical-logic rule for this product and scene'
+          },
+          brandRules: {
+            allowedColors: ['configured HEX colors only'],
+            titleColor: 'configured title HEX color',
+            arrowStyle: 'configured arrow style',
+            logoPolicy: 'whether and how the uploaded logo may appear'
+          },
+          outputSpec: {
+            size: 'selected output size',
+            aspectRatio: 'selected output ratio',
+            backgroundRule: 'slot-specific background rule',
+            titlePlacement: 'slot-specific title placement'
+          },
+          complianceRules: ['slot-specific Amazon and claim restrictions'],
           usableClaims: ['claims allowed in image'],
           needsEvidence: ['claims that need evidence before final export'],
           reviewClaims: ['uncertain claims to review'],
@@ -1202,13 +1273,14 @@ async function planStoryboardWithGemini(payload) {
 function buildImageReviewPrompt(payload) {
   const brief = payload.brief || {};
   const run = payload.run || {};
+  const visibleCopyReviewInstruction = getVisibleCopyLanguageInstruction(payload.projectForm || {}, { review: true });
   const isAPlusOutput = String(run.outputPresetId || '').includes('aplus') || String(run.outputPresetLabel || '').includes('A+');
   const isWhiteMainImage = Number(run.slotId || brief.id || 0) === 1 && String(run.outputPresetLabel || '').includes('主图');
   return [
     'You are an AI pre-reviewer for Amazon ecommerce image production.',
     'Compare the generated candidate image against the uploaded original product reference images and the slot brief.',
     'Act as a strict production gate, not a helpful copywriter. A false pass is worse than a false rejection.',
-    'Your job is to flag every visible risk before humans spend time reviewing. Be strict about product drift, impossible physics, wrong scale, invented parts, unsupported claims, non-English visible copy, garbled text, and internal prompt leakage.',
+    'Your job is to flag every visible risk before humans spend time reviewing. Be strict about product drift, impossible physics, wrong scale, invented parts, unsupported claims, copy that violates the project target language, garbled text, and internal prompt leakage.',
     'Judge the candidate image itself. Prompt intent cannot excuse a visual mismatch. If you are uncertain, use warn or fail, never pass.',
     'Do not approve an image just because it looks attractive. Product consistency, physical logic, and visual proof come first.',
     'Return JSON only. No markdown.',
@@ -1219,11 +1291,13 @@ function buildImageReviewPrompt(payload) {
     `Composition: ${brief.composition || ''}`,
     `Primary claim: ${brief.primaryClaim || ''}`,
     `Visual proof requirement: ${brief.visualProof || ''}`,
+    `Structured slot contract: ${formatStoryboardSlotContract(brief)}`,
     `Allowed claims: ${normalizeStringArray(brief.usableClaims, 8).join('; ') || 'none'}`,
     `Needs evidence: ${normalizeStringArray(brief.needsEvidence, 8).join('; ') || 'none'}`,
     `Blocked claims: ${normalizeStringArray(brief.blockedClaims, 12).join('; ') || 'none'}`,
     payload.productLock ? `Structured product lock: ${JSON.stringify(payload.productLock).slice(0, 5000)}` : '',
     `Prompt snapshot: ${String(run.prompt || payload.prompt || '').slice(0, 1800)}`,
+    visibleCopyReviewInstruction,
     '',
     isAPlusOutput
       ? 'Background/layout rule: this is A+ content, not the Amazon primary image. It does not need a pure white background, and headings do not have to sit at the top. Richer editorial layout, brand color fields, lifestyle context, detail crops, and combined related allowed claims are acceptable if truthful and visually supported. The A+ module must still fit the same brand visual system as the rest of the A+ set: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
@@ -1243,7 +1317,7 @@ function buildImageReviewPrompt(payload) {
     '1b. mainImageCoverage: For slot 1 primary image only, does the product occupy roughly 80-85% of the canvas and at least about 75% while staying complete, centered, uncropped, and undeformed? Too-small product is warn/fail; cropped, stretched, deformed, or missing product parts are fail.',
     '2. scalePhysicalLogic: Are scale, contact points, shadows, scene placement, use state, and physical logic believable? Floating parts, object intersections, impossible supports, strange perspective, wrong human/product scale, or arrows that imply impossible motion are fail/warn risks.',
     '3. claimAccuracy: Are visible claims and visual implications supported by the brief/Ledger, and does the image actually prove the primary claim instead of merely stating it as text? Invented numbers, certifications, accessories, dimensions, blocked claims, or unproven benefits are fail risks.',
-    '4. textRisk: Is any visible text, badge, logo, number, or claim garbled, misspelled, too tiny, invented, non-English, or risky? Final generated image copy must be short English only; Chinese visible text is a fail unless it is part of a photographed product label in the original reference.',
+    '4. textRisk: Is any visible text, badge, logo, number, or claim garbled, misspelled, too tiny, invented, written in the wrong language, mixed across languages, or otherwise risky? Apply the authoritative project target-language rule above. Original photographed product labels are allowed only when preserved from the reference.',
     '4b. promptLeakRisk: Visible internal prompt metadata is a fail. Fail textRisk if the image shows HEX color codes, color usage percentages, palette swatches, color cards, design-token labels, style-guide panels, prompt words, model notes, or generation instructions.',
     '5. aesthetics: Is the composition commercially usable without being too plain, cluttered, cheap-looking, badly cropped, off-brand, inconsistent with the image set, inconsistent in typography/design language, or polluted by internal design-guide graphics?',
     '',
@@ -1314,42 +1388,51 @@ async function reviewImageWithGemini(payload) {
   const referenceParts = referencePartGroups.flat();
   const generated = await imageInputToInlineData(generatedImageDataUrl);
   const startedAt = Date.now();
-  const geminiResponse = await fetchGeminiWithTimeout(
-    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TEXT_MODEL}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'x-goog-api-key': GEMINI_API_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
-            { text: buildImageReviewPrompt(payload) },
-            ...referenceParts,
-            { text: 'Generated candidate image to review:' },
-            {
-              inline_data: {
-                mime_type: generated.mimeType,
-                data: generated.base64
+  const callGeminiReview = async (retryInstruction = '') => {
+    const response = await fetchGeminiWithTimeout(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_TEXT_MODEL}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'x-goog-api-key': GEMINI_API_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: buildImageReviewPrompt(payload) },
+              ...(retryInstruction ? [{ text: retryInstruction }] : []),
+              ...referenceParts,
+              { text: 'Generated candidate image to review:' },
+              {
+                inline_data: {
+                  mime_type: generated.mimeType,
+                  data: generated.base64
+                }
               }
-            }
-          ]
-        }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: imageReviewResponseSchema,
-          maxOutputTokens: 1536,
-          temperature: 0.1
-        }
-      })
-    },
-    GEMINI_REVIEW_TIMEOUT_MS,
-    '预审'
-  );
-  const requestId = geminiResponse.headers.get('x-request-id') || geminiResponse.headers.get('x-goog-request-id');
-  const result = await geminiResponse.json().catch(() => ({}));
+            ]
+          }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: imageReviewResponseSchema,
+            maxOutputTokens: 4096,
+            temperature: 0.1
+          }
+        })
+      },
+      GEMINI_REVIEW_TIMEOUT_MS,
+      '预审'
+    );
+    return {
+      response,
+      requestId: response.headers.get('x-request-id') || response.headers.get('x-goog-request-id'),
+      result: await response.json().catch(() => ({}))
+    };
+  };
+
+  let retryCount = 0;
+  let { response: geminiResponse, requestId, result } = await callGeminiReview();
 
   if (!geminiResponse.ok) {
     return {
@@ -1360,18 +1443,34 @@ async function reviewImageWithGemini(payload) {
     };
   }
 
-  const candidate = result?.candidates?.[0] || {};
-  const text = candidate?.content?.parts?.find((part) => part.text)?.text || '';
+  let candidate = result?.candidates?.[0] || {};
+  let text = candidate?.content?.parts?.find((part) => part.text)?.text || '';
   let review;
   try {
     review = normalizeAiImageReview(extractJsonObject(text));
   } catch (error) {
+    retryCount = 1;
+    ({ response: geminiResponse, requestId, result } = await callGeminiReview(
+      'The previous review response was incomplete. Return the complete JSON object now. Keep every string concise and include all required fields.'
+    ));
+    if (geminiResponse.ok) {
+      candidate = result?.candidates?.[0] || {};
+      text = candidate?.content?.parts?.find((part) => part.text)?.text || '';
+      try {
+        review = normalizeAiImageReview(extractJsonObject(text));
+      } catch {
+        review = null;
+      }
+    }
+  }
+  if (!review) {
     // Do not discard the successfully generated candidate just because its
     // independent review response was malformed or stopped early.
     const diagnostic = {
       finishReason: candidate.finishReason || 'unknown',
       textLength: text.length,
-      requestId
+      requestId,
+      retryCount
     };
     console.warn('[vistamz:image-review-incomplete]', diagnostic);
     return {
@@ -1390,6 +1489,7 @@ async function reviewImageWithGemini(payload) {
     requestId,
     model: GEMINI_TEXT_MODEL,
     durationMs: Date.now() - startedAt,
+    retryCount,
     review
   };
 }
@@ -1482,7 +1582,7 @@ async function generateWithGemini(payload) {
     const retryPrompt = [
       'Generate exactly one ecommerce product image now.',
       'Return an image output. Do not answer with text only. Do not describe the image instead of generating it.',
-      'If the original request includes text layout, render only short English text that is visually present in the image.',
+      `If the original request includes text layout, follow this project rule: ${getVisibleCopyLanguageInstruction(payload.projectForm || {})}`,
       'Preserve the provided product reference structure and do not invent a different product.',
       prompt
     ].join('\n\n');
@@ -1638,14 +1738,13 @@ let generationWorkerRetryAt = 0;
 async function runGenerationWorkerOnce() {
   if (!database.configured || generationWorkerBusy || Date.now() < generationWorkerRetryAt) return;
   generationWorkerBusy = true;
+  let taskClaimed = false;
   try {
-    // A worker or provider process may have stopped after claiming a task.
-    // Recover expired leases continuously so one orphan cannot block a project.
-    await generationTaskStore.recoverExpiredTasks();
     const task = await generationTaskStore.claimNextTask();
     generationWorkerFailureCount = 0;
     generationWorkerRetryAt = 0;
     if (!task) return;
+    taskClaimed = true;
     try {
       const generated = await generateImage(task.input);
       if (!generated?.ok) {
@@ -1663,7 +1762,10 @@ async function runGenerationWorkerOnce() {
         slotId: task.slotId,
         taskId: task.id,
         attemptCount: task.attemptCount,
-        estimatedCostUsd
+        estimatedCostUsd,
+        brandId: task.input.brandId || 'none',
+        brandVersion: Number(task.input.brandVersion || 0),
+        outputPresetId: task.input.outputPresetId || 'main-image'
       }).catch(() => undefined);
     } catch (error) {
       const estimatedCostUsd = generationTaskStore.estimatedCostPerCall * Math.max(1, Number(error?.estimatedCallCount || 1));
@@ -1679,6 +1781,10 @@ async function runGenerationWorkerOnce() {
     console.warn(`Generation worker unavailable; retrying in ${Math.ceil(delayMs / 1000)}s: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     generationWorkerBusy = false;
+    if (taskClaimed) {
+      const nextTimer = setTimeout(() => void runGenerationWorkerOnce(), 250);
+      nextTimer.unref();
+    }
   }
 }
 
@@ -1988,6 +2094,50 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  const projectBrandUpgradeMatch = /^\/api\/projects\/([^/]+)\/brand-snapshot\/upgrade$/.exec(requestPath);
+  if (request.method === 'POST' && projectBrandUpgradeMatch) {
+    try {
+      const session = await requireStage1Actor(request);
+      const projectId = decodeURIComponent(projectBrandUpgradeMatch[1]);
+      const currentProject = await stage1Store.requireProjectAccess(
+        session.user,
+        projectId,
+        { allowedRoles: ['designer', 'admin'] }
+      );
+      const currentSnapshot = currentProject.brandSnapshot || {};
+      if (!currentSnapshot.brandId || currentSnapshot.brandId === 'none') {
+        throw new Stage1Error('基线项目没有可升级的品牌快照。', 409, 'PROJECT_BRAND_BASELINE');
+      }
+      const latestSnapshot = await brandStore.getBrandSnapshot(currentSnapshot.brandId);
+      const fromVersion = Number(currentSnapshot.brandVersion || 0);
+      const toVersion = Number(latestSnapshot.brandVersion || 0);
+      if (!toVersion || toVersion <= fromVersion) {
+        throw new Stage1Error('项目已经使用当前品牌的最新版本。', 409, 'PROJECT_BRAND_ALREADY_CURRENT');
+      }
+      const upgradedAt = new Date().toISOString();
+      const nextProjectData = invalidateProjectDataForBrandUpgrade(currentProject.projectData, {
+        fromVersion,
+        toVersion,
+        upgradedAt
+      });
+      const nextSnapshot = {
+        ...latestSnapshot,
+        outputPresetId: currentSnapshot.outputPresetId
+          || currentProject.projectData?.form?.planOutputPresetId
+          || 'main-image'
+      };
+      const project = await stage1Store.upgradeProjectBrandSnapshot(session.user, projectId, {
+        brandSnapshot: nextSnapshot,
+        projectData: nextProjectData,
+        status: getProjectStatusAfterBrandUpgrade(nextProjectData)
+      });
+      sendJson(response, 200, { ok: true, project });
+    } catch (error) {
+      sendStage1Error(response, error);
+    }
+    return;
+  }
+
   if (request.method === 'DELETE' && projectUpdateMatch) {
     try {
       const session = await requireStage1Actor(request);
@@ -2027,17 +2177,21 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/generation-tasks') {
     try {
       const payload = await readJsonBody(request);
-      const { session } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
+      const authoritativePayload = getAuthoritativeProjectPayload(payload, project, { prependPrompt: true });
       const task = await generationTaskStore.createTask(session.user, {
-        ...payload,
+        ...authoritativePayload,
         requestedBy: session.user.id
       });
-      await auditProjectAction(session.user, payload.projectId, 'pipeline.generation.task_created', {
+      void auditProjectAction(session.user, payload.projectId, 'pipeline.generation.task_created', {
         step: 'generation',
         traceId: payload.runId || task.id,
         taskId: task.id,
-        slotId: payload.slotId || null
-      });
+        slotId: payload.slotId || null,
+        brandId: authoritativePayload.brandId,
+        brandVersion: authoritativePayload.brandVersion,
+        outputPresetId: authoritativePayload.outputPresetId
+      }).catch((error) => console.warn(`Generation task audit unavailable: ${error instanceof Error ? error.message : String(error)}`));
       void runGenerationWorkerOnce();
       sendJson(response, 202, { ok: true, task });
     } catch (error) {
@@ -2184,12 +2338,16 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/plan-storyboard') {
     try {
       const payload = await readJsonBody(request);
-      const { session } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
-      const result = await planStoryboardWithGemini(payload);
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
+      const authoritativePayload = getAuthoritativeProjectPayload(payload, project);
+      const result = await planStoryboardWithGemini(authoritativePayload);
       await auditProjectAction(session.user, payload.projectId, 'pipeline.storyboard.api_completed', {
         step: 'storyboard',
         ok: Boolean(result.ok),
-        provider: result.provider || 'gemini'
+        provider: result.provider || 'gemini',
+        brandId: authoritativePayload.brandId,
+        brandVersion: authoritativePayload.brandVersion,
+        outputPresetId: authoritativePayload.outputPresetId
       });
       sendJson(response, result.status || 200, result);
     } catch (error) {
@@ -2208,11 +2366,14 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/review-image') {
     try {
       const payload = await readJsonBody(request);
-      const { session } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'operator', 'admin'] });
-      const result = await reviewImageWithGemini(payload);
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'operator', 'admin'] });
+      const authoritativePayload = getAuthoritativeProjectPayload(payload, project);
+      const result = await reviewImageWithGemini(authoritativePayload);
       await auditProjectAction(session.user, payload.projectId, 'pipeline.ai_review.api_completed', {
         step: 'review',
         traceId: payload.run?.id || '',
+        brandId: authoritativePayload.brandId,
+        brandVersion: authoritativePayload.brandVersion,
         ok: Boolean(result.ok),
         verdict: result.review?.verdict || ''
       });
@@ -2275,11 +2436,14 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/save-export') {
     try {
       const payload = await readJsonBody(request);
-      const { session } = await requireProjectAction(request, payload, { allowedRoles: ['admin'], requireApproved: true });
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['admin'], requireApproved: true });
+      const authoritativePayload = getAuthoritativeProjectPayload(payload, project);
       const result = await saveExportFile(payload);
       await auditProjectAction(session.user, payload.projectId, 'pipeline.export_file.saved', {
         step: 'export',
-        filename: result.filename
+        filename: result.filename,
+        brandId: authoritativePayload.brandId,
+        brandVersion: authoritativePayload.brandVersion
       });
       sendJson(response, 200, {
         ok: true,
@@ -2301,12 +2465,15 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/export-images-zip') {
     try {
       const payload = await readJsonBody(request);
-      const { session } = await requireProjectAction(request, payload, { allowedRoles: ['admin'], requireApproved: true });
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['admin'], requireApproved: true });
+      const authoritativePayload = getAuthoritativeProjectPayload(payload, project);
       const result = await saveImagesZipFile(payload);
       await auditProjectAction(session.user, payload.projectId, 'pipeline.images_zip.saved', {
         step: 'export',
         filename: result.filename,
-        imageCount: result.count
+        imageCount: result.count,
+        brandId: authoritativePayload.brandId,
+        brandVersion: authoritativePayload.brandVersion
       });
       sendJson(response, 200, {
         ok: true,
@@ -2332,14 +2499,18 @@ const server = http.createServer(async (request, response) => {
 
   try {
     const payload = await readJsonBody(request);
-    const { session } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
-    const result = await generateImage(payload);
+    const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
+    const authoritativePayload = getAuthoritativeProjectPayload(payload, project, { prependPrompt: true });
+    const result = await generateImage(authoritativePayload);
     await auditProjectAction(session.user, payload.projectId, 'pipeline.generation.api_completed', {
       step: 'generation',
       traceId: payload.runId || '',
       slotId: payload.slotId || null,
       ok: Boolean(result.ok),
-      provider: result.provider || IMAGE_API_PROVIDER
+      provider: result.provider || IMAGE_API_PROVIDER,
+      brandId: authoritativePayload.brandId,
+      brandVersion: authoritativePayload.brandVersion,
+      outputPresetId: authoritativePayload.outputPresetId
     });
     sendJson(response, result.status || 200, result);
   } catch (error) {
@@ -2363,7 +2534,17 @@ server.listen(PORT, () => {
         if (count) console.log(`Recovered ${count} interrupted generation task(s).`);
       })
       .catch((error) => console.warn(`Generation task recovery unavailable: ${error instanceof Error ? error.message : String(error)}`));
-    const workerTimer = setInterval(() => void runGenerationWorkerOnce(), 1500);
+    // New tasks wake the worker immediately. This low-frequency timer is only a
+    // safety net, avoiding constant database traffic while the queue is empty.
+    const workerTimer = setInterval(() => void runGenerationWorkerOnce(), 10000);
     workerTimer.unref();
+    const recoveryTimer = setInterval(() => {
+      generationTaskStore.recoverExpiredTasks()
+        .then((count) => {
+          if (count) void runGenerationWorkerOnce();
+        })
+        .catch((error) => console.warn(`Generation task recovery unavailable: ${error instanceof Error ? error.message : String(error)}`));
+    }, 60000);
+    recoveryTimer.unref();
   }
 });

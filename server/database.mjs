@@ -17,7 +17,8 @@ function normalizeConnectionString(value) {
 export function createDatabase() {
   const connectionString = normalizeConnectionString(String(process.env.DATABASE_URL || '').trim());
   const useSsl = process.env.DATABASE_SSL === 'true';
-  const queryTimeoutMs = Math.max(1000, Number(process.env.DATABASE_QUERY_TIMEOUT_MS || 10000));
+  const queryTimeoutMs = Math.max(1000, Number(process.env.DATABASE_QUERY_TIMEOUT_MS || 20000));
+  const idleTransactionTimeoutMs = Math.max(5000, Number(process.env.DATABASE_IDLE_TRANSACTION_TIMEOUT_MS || 15000));
   const retryAttempts = Math.max(1, Math.min(6, Number(process.env.DATABASE_RETRY_ATTEMPTS || 3)));
   const retryBaseMs = Math.max(100, Number(process.env.DATABASE_RETRY_BASE_MS || 500));
   const retryMaxMs = Math.max(retryBaseMs, Number(process.env.DATABASE_RETRY_MAX_MS || 5000));
@@ -29,9 +30,15 @@ export function createDatabase() {
       connectionTimeoutMillis: Math.max(1000, Number(process.env.DATABASE_CONNECT_TIMEOUT_MS || 8000)),
       idleTimeoutMillis: Math.max(1000, Number(process.env.DATABASE_IDLE_TIMEOUT_MS || 30000)),
       query_timeout: queryTimeoutMs,
-      statement_timeout: queryTimeoutMs
+      statement_timeout: queryTimeoutMs,
+      idle_in_transaction_session_timeout: idleTransactionTimeoutMs,
+      application_name: process.env.DATABASE_APPLICATION_NAME || 'vistamz-api'
     })
     : null;
+
+  pool?.on('error', (error) => {
+    console.warn(`Database pool connection closed: ${error instanceof Error ? error.message : String(error)}`);
+  });
 
   function assertConfigured() {
     if (!pool) {
@@ -52,6 +59,8 @@ export function createDatabase() {
     return new Set(['08000', '08003', '08006', '08001', '08004', '57P01', '57P02', '57P03', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE']).has(code)
       || message.includes('connection terminated')
       || message.includes('connection timeout')
+      || message.includes('query read timeout')
+      || message.includes('read timeout')
       || message.includes('socket hang up')
       || message.includes('server closed the connection unexpectedly');
   }
@@ -86,16 +95,24 @@ export function createDatabase() {
     // Only retry acquiring a connection. Never replay a transaction because the
     // server may have committed before a connection error reached the client.
     const client = await withConnectionRetry(() => pool.connect());
+    let released = false;
     try {
       await client.query('BEGIN');
       const result = await handler(client);
       await client.query('COMMIT');
       return result;
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => undefined);
+      if (isRetryableConnectionError(error)) {
+        // A timed-out socket can leave PostgreSQL waiting inside a transaction.
+        // Destroy it instead of returning a poisoned connection to the pool.
+        client.release(true);
+        released = true;
+      } else {
+        await client.query('ROLLBACK').catch(() => undefined);
+      }
       throw error;
     } finally {
-      client.release();
+      if (!released) client.release();
     }
   }
 

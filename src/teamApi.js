@@ -202,6 +202,13 @@ export async function updateTeamProject(projectId, payload) {
   return result.project;
 }
 
+export async function upgradeTeamProjectBrandSnapshot(projectId) {
+  const result = await request(`/api/projects/${encodeURIComponent(projectId)}/brand-snapshot/upgrade`, {
+    method: 'POST'
+  });
+  return result.project;
+}
+
 export async function trashTeamProject(projectId) {
   const result = await request(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' });
   return result.project;

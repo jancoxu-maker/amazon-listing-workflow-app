@@ -16,6 +16,8 @@ function taskRecord(row = {}) {
     errorMessage: row.error_message || '',
     output: row.output_snapshot || {},
     runId: String(input.runId || ''),
+    batchId: String(input.batchId || ''),
+    batchIndex: Number.isFinite(Number(input.batchIndex)) ? Number(input.batchIndex) : null,
     slotTitle: String(input.slotTitle || ''),
     clientTaskId: String(input.clientTaskId || ''),
     requestedBy: row.requested_by || '',
@@ -32,13 +34,22 @@ function taskRecord(row = {}) {
 export function createGenerationTaskStore(database, options = {}) {
   const dailyTaskLimit = Math.max(1, Number(options.dailyTaskLimit || process.env.GENERATION_DAILY_USER_LIMIT || 60));
   const estimatedCostPerCall = Math.max(0, Number(options.estimatedCostPerCall ?? process.env.GENERATION_ESTIMATED_IMAGE_COST_USD ?? 0.04));
+  const createRetryAttempts = Math.max(1, Math.min(4, Number(options.createRetryAttempts || process.env.GENERATION_TASK_CREATE_RETRY_ATTEMPTS || 3)));
+
+  function isRetryableTaskCreateError(error) {
+    if (typeof database.isRetryableConnectionError === 'function') {
+      return database.isRetryableConnectionError(error);
+    }
+    const message = String(error?.message || '').toLowerCase();
+    return message.includes('query read timeout') || message.includes('connection timeout');
+  }
 
   async function createTask(user, payload = {}) {
     const projectId = String(payload.projectId || '').trim();
     const slotId = String(payload.slotId || '').trim();
     const idempotencyKey = String(payload.clientTaskId || payload.runId || '').trim().slice(0, 180);
     const taskId = createTaskId();
-    return database.transaction(async (client) => {
+    const createOnce = () => database.transaction(async (client) => {
       if (idempotencyKey) {
         const existing = await client.query(
           'SELECT * FROM generation_tasks WHERE project_id = $1 AND idempotency_key = $2 LIMIT 1',
@@ -67,6 +78,19 @@ export function createGenerationTaskStore(database, options = {}) {
       );
       return taskRecord(result.rows[0]);
     });
+    let lastError;
+    for (let attempt = 1; attempt <= createRetryAttempts; attempt += 1) {
+      try {
+        return await createOnce();
+      } catch (error) {
+        lastError = error;
+        // The unique idempotency key makes replay safe even when the first
+        // transaction committed but its response was lost on the network.
+        if (!idempotencyKey || attempt >= createRetryAttempts || !isRetryableTaskCreateError(error)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(2500, 350 * (2 ** (attempt - 1)))));
+      }
+    }
+    throw lastError;
   }
 
   async function getTask(taskId, projectId) {
@@ -148,7 +172,17 @@ export function createGenerationTaskStore(database, options = {}) {
                WHERE running.project_id = generation_tasks.project_id
                  AND running.status = 'running'
              )
-           ORDER BY created_at ASC
+             AND NOT EXISTS (
+               SELECT 1 FROM generation_tasks earlier
+               WHERE COALESCE(earlier.input_snapshot->>'batchId', '') <> ''
+                 AND earlier.input_snapshot->>'batchId' = generation_tasks.input_snapshot->>'batchId'
+                 AND COALESCE((earlier.input_snapshot->>'batchIndex')::int, 2147483647)
+                     < COALESCE((generation_tasks.input_snapshot->>'batchIndex')::int, 2147483647)
+                 AND earlier.status IN ('queued', 'running')
+             )
+           ORDER BY created_at ASC,
+             COALESCE((input_snapshot->>'batchIndex')::int, 2147483647) ASC,
+             id ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1
          )
@@ -156,7 +190,7 @@ export function createGenerationTaskStore(database, options = {}) {
          SET status = 'running',
              attempt_count = attempt_count + 1,
              started_at = COALESCE(started_at, NOW()),
-             lease_until = NOW() + INTERVAL '4 minutes',
+             lease_until = NOW() + INTERVAL '8 minutes',
              updated_at = NOW(),
              error_code = '',
              error_message = ''

@@ -39,6 +39,42 @@ test('idempotent generation request returns the existing task before charging qu
   assert.equal(queryCount, 1);
 });
 
+test('task creation safely retries a transient timeout with the same idempotency key', async () => {
+  let transactionCount = 0;
+  const database = {
+    isRetryableConnectionError(error) {
+      return String(error?.message || '').includes('Query read timeout');
+    },
+    async transaction(handler) {
+      transactionCount += 1;
+      if (transactionCount === 1) throw new Error('Query read timeout');
+      return handler({
+        async query(sql) {
+          assert.match(sql, /idempotency_key/);
+          return {
+            rowCount: 1,
+            rows: [taskRow({
+              input_snapshot: {
+                runId: 'run_batch',
+                slotTitle: 'Main Image',
+                batchId: 'batch_one',
+                batchIndex: 1
+              }
+            })]
+          };
+        }
+      });
+    }
+  };
+  const task = await createGenerationTaskStore(database, { createRetryAttempts: 2 }).createTask(
+    { id: 'usr_design', role: 'designer' },
+    { projectId: 'prj_one', slotId: '1', clientTaskId: 'stable-request' }
+  );
+  assert.equal(transactionCount, 2);
+  assert.equal(task.batchId, 'batch_one');
+  assert.equal(task.batchIndex, 1);
+});
+
 test('daily generation quota rejects a new task with a stable error code', async () => {
   const database = {
     async transaction(handler) {
@@ -110,6 +146,8 @@ test('claiming work keeps one active generation task per project', async () => {
   assert.equal(await store.claimNextTask(), null);
   assert.match(capturedSql, /NOT EXISTS/);
   assert.match(capturedSql, /running\.project_id = generation_tasks\.project_id/);
+  assert.match(capturedSql, /batchIndex/);
+  assert.match(capturedSql, /INTERVAL '8 minutes'/);
 });
 
 test('admin task summary reports active, failed, daily usage, and estimated cost', async () => {

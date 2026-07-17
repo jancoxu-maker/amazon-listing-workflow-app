@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
+  Bell,
   Check,
   ChevronRight,
   ClipboardCheck,
@@ -14,6 +15,7 @@ import {
   Eye,
   EyeOff,
   FileImage,
+  FileText,
   FolderOpen,
   ImagePlus,
   KeyRound,
@@ -39,6 +41,19 @@ import {
 } from 'lucide-react';
 import { appLogger, installGlobalErrorLogging } from './eventLogger.js';
 import {
+  MARKETPLACE_OPTIONS,
+  OUTPUT_LANGUAGE_OPTIONS,
+  getMarketplaceOption,
+  getOutputLanguageOption,
+  getShortCopyDescription,
+  getVisibleCopyLanguageInstruction,
+  normalizeProjectLanguageFields
+} from '../shared/output-language.mjs';
+import {
+  formatStoryboardSlotContract,
+  normalizeStoryboardSlotContract
+} from '../shared/storyboard-contract.mjs';
+import {
   activateTeamInvite,
   assignTeamProject,
   cancelGenerationTask,
@@ -61,7 +76,8 @@ import {
   uploadTeamBrandLogo,
   uploadTeamProjectAsset,
   updateTeamBrand,
-  updateTeamProject
+  updateTeamProject,
+  upgradeTeamProjectBrandSnapshot
 } from './teamApi.js';
 import './styles.css';
 import './vistamz-ui.css';
@@ -355,7 +371,7 @@ const aPlusStoryboardTemplates = [
     id: 1,
     title: 'A+ Brand Hero',
     goal: 'A+首屏内容模块',
-    composition: '用品牌化横幅版式展示产品核心定位，可使用场景、背景色、产品大图和短英文标题，不要求白底。',
+    composition: '用品牌化横幅版式展示产品核心定位，可使用场景、背景色、产品大图和项目目标语言的短标题，不要求白底。',
     preferred: ['material', 'design', 'feature', 'use', 'brand'],
     evidenceLimit: 2,
     visualType: 'benefits',
@@ -856,7 +872,7 @@ const globalNavItems = [
     icon: BarChart3,
     eyebrow: 'Quality',
     title: '质量 Console',
-    subtitle: '查看质量样本、失败原因、CSV 和图槽提示词调优。'
+    subtitle: '查看质量样本、失败原因和 CSV。'
   },
   {
     id: 'brands',
@@ -910,6 +926,31 @@ function normalizeHexColor(value = '') {
   return '';
 }
 
+const brandColorRoleOptions = [
+  { id: 'background', label: '背景/色块' },
+  { id: 'accent', label: '强调/箭头' },
+  { id: 'text', label: '标题/文字' },
+  { id: 'neutral', label: '中性留白' }
+];
+
+const brandColorScopeOptions = [
+  { id: 'secondary-and-aplus', label: '主图第 2-7 张 + A+' },
+  { id: 'main-secondary', label: '仅主图第 2-7 张' },
+  { id: 'aplus-only', label: '仅 A+' }
+];
+
+function getBrandColorRole(value, index = 0) {
+  const match = brandColorRoleOptions.find((option) => option.id === value);
+  if (match) return match;
+  if (index === 0) return brandColorRoleOptions.find((option) => option.id === 'background');
+  if (index === 1) return brandColorRoleOptions.find((option) => option.id === 'accent');
+  return brandColorRoleOptions.find((option) => option.id === 'neutral');
+}
+
+function getBrandColorScope(value) {
+  return brandColorScopeOptions.find((option) => option.id === value) || brandColorScopeOptions[0];
+}
+
 function normalizeBrandColorEntry(entry = {}, index = 0, fallbackRatio = 0) {
   if (typeof entry === 'string') {
     const match = entry.match(/(#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?|[a-zA-Z ]+)\s*(\d{1,3})?%?/);
@@ -918,7 +959,9 @@ function normalizeBrandColorEntry(entry = {}, index = 0, fallbackRatio = 0) {
     return {
       id: `color-${index}-${hex.replace('#', '')}`,
       hex,
-      ratio: Math.min(100, Math.max(1, Number(match?.[2]) || fallbackRatio || 1))
+      ratio: Math.min(100, Math.max(1, Number(match?.[2]) || fallbackRatio || 1)),
+      role: getBrandColorRole('', index).id,
+      scope: getBrandColorScope('').id
     };
   }
   const hex = normalizeHexColor(entry.hex || entry.value || entry.color);
@@ -926,7 +969,9 @@ function normalizeBrandColorEntry(entry = {}, index = 0, fallbackRatio = 0) {
   return {
     id: entry.id || `color-${index}-${hex.replace('#', '')}`,
     hex,
-    ratio: Math.min(100, Math.max(1, Number(entry.ratio) || fallbackRatio || 1))
+    ratio: Math.min(100, Math.max(1, Number(entry.ratio) || fallbackRatio || 1)),
+    role: getBrandColorRole(entry.role, index).id,
+    scope: getBrandColorScope(entry.scope).id
   };
 }
 
@@ -943,11 +988,31 @@ function getBrandColorRatioTotal(colors = []) {
   return normalizeBrandColors(colors).reduce((sum, color) => sum + Number(color.ratio || 0), 0);
 }
 
-function formatBrandColorPalette(brand = {}) {
+function isBrandColorApplicable(color = {}, outputPresetId = 'main-image', slotId = 1) {
+  if (outputPresetId === 'main-image' && Number(slotId) === 1) return false;
+  if (color.scope === 'aplus-only') return outputPresetId === 'aplus';
+  if (color.scope === 'main-secondary') return outputPresetId === 'main-image' && Number(slotId) > 1;
+  return outputPresetId === 'aplus' || (outputPresetId === 'main-image' && Number(slotId) > 1);
+}
+
+function formatBrandColorPalette(brand = {}, outputPresetId = 'main-image', slotId = 1) {
   const colors = normalizeBrandColors(brand.colors);
-  return colors.length
-    ? colors.map((color) => `${color.hex} ${color.ratio}%`).join(', ')
+  const applicable = colors.filter((color) => isBrandColorApplicable(color, outputPresetId, slotId));
+  return applicable.length
+    ? applicable.map((color) => `${color.hex} ${color.ratio}% for ${color.role}; scope ${color.scope}`).join(', ')
     : 'no brand colors configured';
+}
+
+function validateBrandProfileForSave(brand = {}) {
+  const colors = normalizeBrandColors(brand.colors);
+  if (!String(brand.name || '').trim()) return '请填写品牌名。';
+  if (!colors.length) return '请至少添加一个品牌色。';
+  if (getBrandColorRatioTotal(colors) !== 100) return '品牌色使用比例合计必须等于 100%。';
+  if (!colors.some((color) => color.role === 'background' || color.role === 'neutral')) {
+    return '请至少设置一个“背景/色块”或“中性留白”颜色。';
+  }
+  if (!normalizeHexColor(brand.titleColor)) return '统一标题颜色必须是有效 HEX 色号。';
+  return '';
 }
 
 const brandArrowStyleOptions = [
@@ -1134,9 +1199,50 @@ function getProjectScopedBrandLibrary(form = {}, project = {}, brands = defaultB
   ]);
 }
 
+function getProjectFrozenBrandProfile(form = {}, project = {}) {
+  const selectedBrandId = getProjectBrandId(form, [{ id: 'none', name: '不指定品牌' }]);
+  const snapshot = project?.brandSnapshot;
+  if (selectedBrandId === 'none') return null;
+  if (!snapshot?.rules || snapshot.brandId !== selectedBrandId || !Number(snapshot.brandVersion)) return null;
+  return normalizeBrandProfile({
+    ...snapshot.rules,
+    id: snapshot.brandId,
+    name: snapshot.brandName || snapshot.rules.name,
+    version: Number(snapshot.brandVersion)
+  });
+}
+
+function getProjectBrandVersionState(form = {}, project = {}, brands = [], brandLibraryStatus = 'ready') {
+  const snapshot = project?.brandSnapshot || {};
+  const selectedBrandId = getProjectBrandId(form, brands);
+  if (selectedBrandId === 'none') return { kind: 'baseline', canUpgrade: false };
+  if (!snapshot?.brandVersion || snapshot.brandId !== selectedBrandId) {
+    return { kind: 'unsaved', canUpgrade: false, brandId: selectedBrandId };
+  }
+  const currentBrand = normalizeBrandLibrary(brands).find((brand) => brand.id === snapshot.brandId);
+  const lockedVersion = Number(snapshot.brandVersion || 0);
+  const latestVersion = Number(currentBrand?.version || 0);
+  if (!currentBrand && brandLibraryStatus === 'ready') {
+    return { kind: 'archived', canUpgrade: false, brandId: snapshot.brandId, lockedVersion };
+  }
+  if (!currentBrand || brandLibraryStatus !== 'ready') {
+    return { kind: 'checking', canUpgrade: false, brandId: snapshot.brandId, lockedVersion };
+  }
+  return {
+    kind: latestVersion > lockedVersion ? 'outdated' : 'current',
+    canUpgrade: latestVersion > lockedVersion,
+    brandId: snapshot.brandId,
+    brandName: snapshot.brandName || currentBrand.name,
+    lockedVersion,
+    latestVersion
+  };
+}
+
 const initialProjectForm = {
   sku: 'CL-LT-BAM-FOLD-001',
   brandId: 'cosyland',
+  marketplaceId: 'amazon-us',
+  outputLanguage: 'en-US',
   projectName: 'Cosyland learning tower',
   category: 'Learning tower / Toddler step stool',
   productName: 'Cosyland bamboo foldable learning tower',
@@ -1146,6 +1252,16 @@ const initialProjectForm = {
   sourceImageDisplayPreview: sourceImage,
   sourceImageAudit: null,
   referenceImages: {},
+  keyPartsText: [
+    'Top safety rail',
+    'Standing platform',
+    'Two front steps',
+    'Folding side frame'
+  ].join('\n'),
+  immutablePartsText: [
+    'Keep the original bamboo color and grain',
+    'Do not change the number or position of steps, rails, fasteners, or support legs'
+  ].join('\n'),
   claimsText: [
     'Bamboo material',
     'Foldable structure',
@@ -1161,6 +1277,8 @@ const initialProjectForm = {
 const blankProjectForm = {
   sku: '',
   brandId: 'none',
+  marketplaceId: 'amazon-us',
+  outputLanguage: 'en-US',
   projectName: '',
   category: '',
   productName: '',
@@ -1170,6 +1288,8 @@ const blankProjectForm = {
   sourceImageDisplayPreview: '',
   sourceImageAudit: null,
   referenceImages: {},
+  keyPartsText: '',
+  immutablePartsText: '',
   claimsText: ''
 };
 
@@ -1254,6 +1374,7 @@ const outputPresets = [
 const QUALITY_SAMPLE_TARGET_PER_SLOT = 20;
 const QUALITY_BASELINE_PRESET_ID = 'main-image';
 const QUALITY_MAX_STORED_RUNS = QUALITY_SAMPLE_TARGET_PER_SLOT * 8;
+const ESTIMATED_GENERATION_COST_USD = 0.04;
 const IMAGE_CLAIM_POOL_LIMIT = 12;
 const CLAIMS_PER_IMAGE_LIMIT = 3;
 const STORYBOARD_SLOT_COUNT = 7;
@@ -1304,7 +1425,26 @@ function isStoryboardPlanReady(storyboardBriefs = [], form = {}) {
     ? storyboardBriefs.length >= APLUS_MIN_MODULE_COUNT && storyboardBriefs.length <= APLUS_MAX_MODULE_COUNT
     : storyboardBriefs.length >= MAIN_MIN_SLOT_COUNT && storyboardBriefs.length <= MAIN_MAX_SLOT_COUNT;
   const uniqueIds = new Set(storyboardBriefs.map((brief) => Number(brief.id))).size === storyboardBriefs.length;
-  return countValid && uniqueIds;
+  const hasLanguageContext = Object.prototype.hasOwnProperty.call(form, 'marketplaceId')
+    || Object.prototype.hasOwnProperty.call(form, 'outputLanguage');
+  const hasOutputContext = Object.prototype.hasOwnProperty.call(form, 'planOutputPresetId');
+  const targetLanguage = normalizeProjectLanguageFields(form).outputLanguage;
+  const plannedLanguage = storyboardBriefs[0]?.outputLanguage || 'en-US';
+  const targetOutputPreset = getProjectPlanOutputPresetId(form);
+  const plannedOutputPreset = storyboardBriefs[0]?.outputPresetId || 'main-image';
+  const contractValid = storyboardBriefs.every((brief, index) => {
+    const isPrimaryAnchor = !aPlus && index === 0;
+    return Boolean(
+      String(brief?.composition || '').trim()
+      && String(brief?.visualProof || '').trim()
+      && (isPrimaryAnchor || String(brief?.primaryClaim || '').trim())
+    );
+  });
+  return countValid
+    && uniqueIds
+    && contractValid
+    && (!hasLanguageContext || targetLanguage === plannedLanguage)
+    && (!hasOutputContext || targetOutputPreset === plannedOutputPreset);
 }
 
 const generationVerdicts = {
@@ -1341,8 +1481,8 @@ const promptTuningRules = {
     text: 'Do not add, remove, duplicate, or reshape product parts, attachments, handles, knobs, rails, buttons, screws, accessories, packaging, or labels unless they are clearly visible in the reference images.'
   },
   'text-error': {
-    title: '加强英文文案',
-    text: 'All visible generated copy must be short, natural, correctly spelled English. Do not render Chinese characters, garbled text, unsupported numbers, invented certifications, or unreadable labels.'
+    title: '加强目标语言文案',
+    text: 'All visible generated copy must follow the project target language, use natural ecommerce wording, and be correctly spelled. Do not render mixed-language copy, garbled text, unsupported numbers, invented certifications, or unreadable labels.'
   },
   aesthetic: {
     title: '提升画面审美',
@@ -1353,15 +1493,19 @@ const promptTuningRules = {
 const listingImageStrategyRules = [
   'First principle: the image must visually prove the selected selling point. Use scene, product detail, physical state, comparison, scale, or structure as evidence before relying on explanatory text.',
   'For standard listing slot 01, the product should visually fill about 80-85% of the canvas, should not fall below 75% unless the product shape is unusually long or thin, and must remain fully visible without cropping or distortion.',
-  'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short English title or a few short labels over paragraphs.',
+  'Minimize visible explanatory copy. Text is allowed when it improves clarity, but the image must not become a text poster. Prefer one short title or a few short labels in the project target language over paragraphs.',
   'Blocked or forbidden claims must not be stated, suggested, implied, staged, symbolized, or visually hinted as a benefit. You may show neutral factual product appearance or ordinary use only when it does not communicate the blocked claim.',
   'For standard listing images, if an image includes a title, place the title consistently at the top of the image. A+ content is an exception: title placement may follow the module layout and does not have to be at the top.',
   'Across the full standard listing image set, maintain a unified visual system: consistent typography, title placement, label style, spacing, icon/callout treatment, lighting quality, and overall ecommerce art direction.',
   'A+ modules may use richer and more varied section layouts, but the full A+ set must still share one brand visual system: consistent font style, heading hierarchy, title color, spacing rhythm, arrow/callout style, graphic blocks, image treatment, and ecommerce art direction.'
 ];
 
-function getListingImageStrategyText() {
-  return listingImageStrategyRules.join(' ');
+function getListingImageStrategyRules(form = {}) {
+  return [...listingImageStrategyRules, getVisibleCopyLanguageInstruction(form)];
+}
+
+function getListingImageStrategyText(form = {}) {
+  return getListingImageStrategyRules(form).join(' ');
 }
 
 const slotQualityGuardrails = {
@@ -1371,7 +1515,7 @@ const slotQualityGuardrails = {
     'Product coverage rule: target 80-85% of the canvas, minimum 75% unless the product is unusually long or thin. Never crop or distort the product just to fill the frame.'
   ],
   benefits: [
-    'Core benefits rule: show no more than three short English callouts. Each callout must point to a visible product feature or a visually demonstrated benefit.',
+    'Core benefits rule: show no more than three short callouts in the project target language. Each callout must point to a visible product feature or a visually demonstrated benefit.',
     'Do not turn the image into a text poster. Product and visual proof must be stronger than labels.'
   ],
   lifestyle: [
@@ -1401,7 +1545,7 @@ const qualityActionRules = {
   'scale-error': '下一轮先修比例：限制场景物体、人物、台面和产品之间的大小关系。',
   'physical-logic': '下一轮先修物理逻辑：要求接触点、阴影、支撑和使用状态成立。',
   'invented-parts': '下一轮先禁新增结构：不允许多出配件、把手、按钮、盖子或包装。',
-  'text-error': '下一轮先修文案：可见文字只用短英文，并且必须来自 Ledger。',
+  'text-error': '下一轮先修文案：可见文字只用项目目标语言，并且必须来自 Ledger。',
   aesthetic: '下一轮先修审美：增加构图层次、光线和背景目的性，避免纯装饰。'
 };
 
@@ -1430,6 +1574,12 @@ const referenceTypes = [
     id: 'side',
     label: '其他角度图',
     helper: '建议。侧面、背面、俯视或另一角度，用来减少结构猜测。',
+    required: false
+  },
+  {
+    id: 'sideAlt',
+    label: '其他角度图 2',
+    helper: '建议。补充第二个不同角度，优先上传背面、底部或关键结构角度。',
     required: false
   },
   {
@@ -1606,6 +1756,26 @@ function buildLedgerDraft(form, intakeMode) {
     }));
 }
 
+function getClaimRiskMeta(fact = {}) {
+  return {
+    allowed: { label: '低风险', className: 'allowed' },
+    evidence: { label: '需证据', className: 'evidence' },
+    review: { label: '待核实', className: 'review' },
+    blocked: { label: '禁止使用', className: 'blocked' }
+  }[fact.state] || { label: '待核实', className: 'review' };
+}
+
+function formatClaimSource(source = '') {
+  const normalized = String(source || '').toLowerCase();
+  if (normalized.includes('merge')) return '人工合并';
+  if (normalized.includes('edit')) return '人工编辑';
+  if (normalized.includes('manual')) return '人工录入';
+  if (normalized.includes('sku')) return 'SKU 草稿';
+  if (normalized.includes('visible')) return '图片可见';
+  if (normalized.includes('user')) return '用户提供';
+  return '项目资料';
+}
+
 function refreshMachineDraftLedger(ledgerFacts, intakeMode = 'sku') {
   return ledgerFacts.map((fact) => {
     const machineDraft = /draft|uncertain|flagged/.test(fact.source || '');
@@ -1629,11 +1799,11 @@ function pickClaimsByTemplate(claims, template, limit) {
   return [...preferred, ...fallback].slice(0, limit);
 }
 
-function getVisualProofInstruction(template = {}, primaryClaim = '') {
+function getVisualProofInstruction(template = {}, primaryClaim = '', form = {}) {
   const claimText = primaryClaim ? `“${primaryClaim}”` : '该图槽主卖点';
   const proofMap = {
     main: '用白底清晰展示真实产品外观，证明产品存在、外观、材质和结构，不承载复杂卖点。',
-    benefits: `围绕${claimText}做 1 个主视觉和少量短英文标签，标签必须指向图片中可见的产品部位或使用结果。`,
+    benefits: `围绕${claimText}做 1 个主视觉和少量${getShortCopyDescription(form)}标签，标签必须指向图片中可见的产品部位或使用结果。`,
     lifestyle: `把产品放进真实使用场景，用人与物、环境、动作和比例关系证明${claimText}，背景必须服务卖点，不做纯装饰。`,
     detail: `用局部特写证明${claimText}，画面必须能看到对应材质、部件、工艺、纹理或配件。`,
     state: `用展开/收纳/开合/组合/操作前后对比证明${claimText}，只展示参考图或项目资料确认过的状态。`,
@@ -1847,7 +2017,21 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
     const usableClaims = pickClaimsByTemplate(allowedClaims, template, claimLimit);
     const needsEvidence = pickClaimsByTemplate(evidenceClaims, template, template.evidenceLimit);
     const primaryClaim = usableClaims[0] || needsEvidence[0] || '';
-    const visualProof = getVisualProofInstruction(template, primaryClaim);
+    const visualProof = getVisualProofInstruction(template, primaryClaim, form);
+    const slotContract = normalizeStoryboardSlotContract({
+      slot: template,
+      id: template.id,
+      visualType: template.visualType,
+      primaryClaim,
+      visualProof,
+      composition: template.composition,
+      outputPresetId: outputPreset.id,
+      outputPresetSize: outputPreset.size,
+      projectForm: form,
+      brand: brandProfile,
+      blockedClaims,
+      guardrails: template.guardrails
+    });
     const status = template.visualType === 'main'
       ? 'ready'
       : needsEvidence.length > 0 || reviewClaims.length > 0
@@ -1863,9 +2047,13 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
       ...template,
       outputPresetId: outputPreset.id,
       outputPresetLabel: outputPreset.label,
+      outputPresetSize: outputPreset.size,
+      ...normalizeProjectLanguageFields(form),
+      ...slotContract,
       productType,
       brandId: brandProfile.id,
       brandName: brandProfile.name,
+      brandVersion: Number(brandProfile.version || 0),
       productName: form.productName || form.projectName || form.sku || 'Current product',
       usableClaims,
       needsEvidence,
@@ -1877,10 +2065,11 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
       promptBrief: [
         `Use the locked original product reference for ${form.productName || form.projectName || 'the product'}.`,
         outputRule,
-        `Listing image strategy rules: ${getListingImageStrategyText()}`,
+        `Listing image strategy rules: ${getListingImageStrategyText(form)}`,
         template.composition,
         primaryClaim ? `Primary claim to prove visually: ${primaryClaim}.` : getNoPrimaryClaimInstruction(template),
         `Visual proof plan: ${visualProof}`,
+        formatStoryboardSlotContract(slotContract),
         `Slot quality guardrail: ${getSlotQualityGuardrailText(template.visualType)}.`,
         usableClaims.length ? `Allowed claims: ${usableClaims.join('; ')}.` : 'No allowed claims assigned yet.',
         needsEvidence.length ? `Claims needing evidence before final export: ${needsEvidence.join('; ')}.` : '',
@@ -1909,20 +2098,44 @@ function createOptionalStoryboardBrief({ id, form, ledgerFacts = [], existingBri
   const visualProof = primaryClaim
     ? `Use a product detail, realistic action, physical state, scale reference, or supported scene to visibly demonstrate: ${primaryClaim}.`
     : 'Use a conservative product-led composition. Add a confirmed claim before final generation.';
+  const composition = aPlusMode
+    ? 'Create a clean supporting A+ module with one clear visual hierarchy and product-led evidence.'
+    : 'Create a distinct secondary listing image that proves one supported product benefit without duplicating another slot.';
+  const guardrails = [
+    'Do not duplicate another slot role.',
+    'Use only uploaded product references and confirmed Ledger facts.',
+    'Do not invent parts, functions, dimensions, certifications, or accessories.'
+  ];
+  const slotContract = normalizeStoryboardSlotContract({
+    slot: {},
+    id,
+    visualType: 'benefits',
+    primaryClaim,
+    visualProof,
+    composition,
+    outputPresetId: outputPreset.id,
+    outputPresetSize: outputPreset.size,
+    projectForm: form,
+    brand: brandProfile,
+    blockedClaims,
+    guardrails
+  });
   return {
     id,
     title,
     goal,
     visualType: 'benefits',
     roleType: aPlusMode ? 'benefit_story' : 'feature_callout',
-    composition: aPlusMode
-      ? 'Create a clean supporting A+ module with one clear visual hierarchy and product-led evidence.'
-      : 'Create a distinct secondary listing image that proves one supported product benefit without duplicating another slot.',
+    composition,
     outputPresetId: outputPreset.id,
     outputPresetLabel: outputPreset.label,
+    outputPresetSize: outputPreset.size,
+    ...normalizeProjectLanguageFields(form),
+    ...slotContract,
     productType: detectProductType(form, ledgerFacts),
     brandId: brandProfile.id,
     brandName: brandProfile.name,
+    brandVersion: Number(brandProfile.version || 0),
     productName: form.productName || form.projectName || form.sku || 'Current product',
     usableClaims: primaryClaim && usableFact?.state === 'allowed' ? [primaryClaim] : [],
     needsEvidence: primaryClaim && usableFact?.state === 'evidence' ? [primaryClaim] : [],
@@ -1931,16 +2144,13 @@ function createOptionalStoryboardBrief({ id, form, ledgerFacts = [], existingBri
     reviewClaims: [],
     blockedClaims,
     status: primaryClaim ? (usableFact?.state === 'evidence' ? 'needs_review' : 'ready') : 'needs_claims',
-    guardrails: [
-      'Do not duplicate another slot role.',
-      'Use only uploaded product references and confirmed Ledger facts.',
-      'Do not invent parts, functions, dimensions, certifications, or accessories.'
-    ],
+    guardrails,
     promptBrief: [
       `Use the locked original product reference for ${form.productName || form.projectName || 'the product'}.`,
       aPlusMode ? 'Output type: Amazon A+ module.' : 'Output type: secondary Amazon listing image.',
-      `Listing image strategy rules: ${getListingImageStrategyText()}`,
+      `Listing image strategy rules: ${getListingImageStrategyText(form)}`,
       visualProof,
+      formatStoryboardSlotContract(slotContract),
       primaryClaim ? `Primary claim to prove visually: ${primaryClaim}.` : 'No confirmed primary claim is assigned yet.',
       blockedClaims.length ? `Do not mention or imply: ${blockedClaims.join('; ')}.` : ''
     ].filter(Boolean).join(' ')
@@ -2046,6 +2256,11 @@ function normalizeGenerationRun(run = {}) {
     outputPresetId: run.outputPresetId || run.outputPreset?.id || 'main-image',
     outputPresetLabel: run.outputPresetLabel || run.outputPreset?.label || '主图',
     outputPresetSize: run.outputPresetSize || run.outputPreset?.size || '2000 x 2000',
+    brandId: String(run.brandId || 'none'),
+    brandName: run.brandName || (run.brandId && run.brandId !== 'none' ? run.brandId : '不指定品牌'),
+    brandVersion: Number(run.brandVersion || 0),
+    batchId: run.batchId || '',
+    batchIndex: Number.isFinite(Number(run.batchIndex)) ? Number(run.batchIndex) : null,
     verdict,
     reasons: Array.isArray(run.reasons) ? run.reasons : [],
     note: run.note || '',
@@ -2213,6 +2428,120 @@ function getQualityReportOverview(runs = [], options = {}) {
     agreementRate: comparable.length ? Math.round((agreement / comparable.length) * 100) : 0,
     target: (options.slots?.length || slots.length) * (options.sampleTarget || QUALITY_SAMPLE_TARGET_PER_SLOT)
   };
+}
+
+function getRunEstimatedCost(run = {}) {
+  const explicit = Number(run.estimatedCostUsd || run.estimatedCost || run.costUsd || 0);
+  return Number.isFinite(explicit) && explicit > 0 ? explicit : ESTIMATED_GENERATION_COST_USD;
+}
+
+function getProjectBrandMeta(project = {}) {
+  const snapshot = project.brandSnapshot || {};
+  const form = project.form || {};
+  const brandId = String(snapshot.brandId || form.brandId || 'none').trim() || 'none';
+  return {
+    brandId,
+    brandName: snapshot.brandName || form.brandName || (brandId === 'none' ? '不指定品牌' : brandId),
+    brandVersion: Number(snapshot.brandVersion || 0)
+  };
+}
+
+function getRunBrandMeta(run = {}, project = {}) {
+  const projectBrand = getProjectBrandMeta(project);
+  const brandId = String(run.brandId || projectBrand.brandId || 'none').trim() || 'none';
+  return {
+    brandId,
+    brandName: run.brandName || projectBrand.brandName || (brandId === 'none' ? '不指定品牌' : brandId),
+    brandVersion: Number(run.brandVersion || projectBrand.brandVersion || 0)
+  };
+}
+
+function getReasonCountsForRuns(runs = []) {
+  const counts = new Map(generationFailureReasons.map((reason) => [reason.id, 0]));
+  normalizeGenerationRuns(runs)
+    .filter((run) => run.verdict === 'needs_fix' || run.verdict === 'reject')
+    .forEach((run) => {
+      (run.reasons || []).forEach((reasonId) => {
+        if (counts.has(reasonId)) counts.set(reasonId, counts.get(reasonId) + 1);
+      });
+    });
+  return generationFailureReasons
+    .map((reason) => ({
+      ...reason,
+      count: counts.get(reason.id) || 0
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function getManagementRuns(projects = []) {
+  return (Array.isArray(projects) ? projects : []).flatMap((project) => (
+    normalizeGenerationRuns(project.generationRuns).map((run) => ({
+      ...run,
+      projectId: project.id,
+      projectName: project.form?.projectName || project.form?.productName || project.id,
+      ...getRunBrandMeta(run, project)
+    }))
+  ));
+}
+
+function getQualityManagementOverview(projects = []) {
+  const runs = getManagementRuns(projects);
+  const stats = getGenerationQualityStats(runs);
+  const reasonRows = getReasonCountsForRuns(runs);
+  const estimatedCost = runs.reduce((sum, run) => sum + getRunEstimatedCost(run), 0);
+  const brandCount = new Set(runs.map((run) => run.brandId)).size;
+  return {
+    ...stats,
+    brandCount,
+    estimatedCost,
+    costPerUsable: stats.usable ? estimatedCost / stats.usable : 0,
+    topReason: reasonRows.find((reason) => reason.count > 0)
+  };
+}
+
+function getBrandQualityRows(projects = []) {
+  const groups = new Map();
+  (Array.isArray(projects) ? projects : []).forEach((project) => {
+    normalizeGenerationRuns(project.generationRuns).forEach((run) => {
+      const brand = getRunBrandMeta(run, project);
+      const key = brand.brandId || 'none';
+      if (!groups.has(key)) {
+        groups.set(key, {
+          ...brand,
+          runs: [],
+          projectIds: new Set(),
+          outputPresets: new Set(),
+          estimatedCost: 0
+        });
+      }
+      const group = groups.get(key);
+      group.runs.push(run);
+      group.projectIds.add(project.id);
+      group.outputPresets.add(run.outputPresetLabel || run.outputPresetId || '主图');
+      group.estimatedCost += getRunEstimatedCost(run);
+    });
+  });
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const stats = getGenerationQualityStats(group.runs);
+      const reasonCounts = getReasonCountsForRuns(group.runs).filter((reason) => reason.count > 0);
+      const topReasons = reasonCounts.slice(0, 3);
+      const reviewCoverage = stats.total ? Math.round((stats.reviewed / stats.total) * 100) : 0;
+      return {
+        ...group,
+        stats,
+        projectCount: group.projectIds.size,
+        outputPresetLabels: Array.from(group.outputPresets).slice(0, 3),
+        topReasons,
+        issueCount: stats.needsFix + stats.rejected,
+        reviewCoverage,
+        sampleReady: stats.reviewed >= 10,
+        estimatedCost: group.estimatedCost,
+        costPerUsable: stats.usable ? group.estimatedCost / stats.usable : 0
+      };
+    })
+    .sort((a, b) => b.stats.total - a.stats.total || b.stats.reviewed - a.stats.reviewed);
 }
 
 function csvEscape(value = '') {
@@ -2536,6 +2865,9 @@ function buildReviewCsv(reviewDecisions = [], storyboardBriefs = [], generationR
 
 function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
+  const tracedBrand = storyboardBriefs.find((brief) => brief.brandVersion)
+    || generationRuns.find((run) => run.brandVersion)
+    || {};
   const selectedImages = activeSlots.map((slot) => {
     const brief = storyboardBriefs.find((item) => item.id === slot.id) || {};
     const decision = getReviewDecision(reviewDecisions, slot.id, storyboardBriefs);
@@ -2553,6 +2885,8 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
         verdict: run.verdict,
         source: getRunSourceLabel(run),
         model: run.model || '',
+        brandId: run.brandId || tracedBrand.brandId || 'none',
+        brandVersion: Number(run.brandVersion || tracedBrand.brandVersion || 0),
         outputPreset: run.outputPresetLabel || run.outputPresetId,
         outputSize: run.outputPresetSize,
         imageFilePath: run.imageFilePath || '',
@@ -2573,6 +2907,8 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
       projectName: projectForm.projectName || '',
       category: projectForm.category || '',
       brandId: projectForm.brandId || '',
+      brandName: tracedBrand.brandName || '',
+      brandVersion: Number(tracedBrand.brandVersion || 0),
       productLock: getProjectProductLock(projectForm),
       referenceImageName: getReferenceImageName(projectForm)
     },
@@ -2599,6 +2935,8 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
       reasons: run.reasons,
       source: getRunSourceLabel(run),
       model: run.model || '',
+      brandId: run.brandId || tracedBrand.brandId || 'none',
+      brandVersion: Number(run.brandVersion || tracedBrand.brandVersion || 0),
       outputPreset: run.outputPresetLabel || run.outputPresetId,
       outputSize: run.outputPresetSize,
       imageFilePath: run.imageFilePath || '',
@@ -2807,7 +3145,9 @@ function getProjectProductLock(form = {}) {
     form.productName || form.projectName,
     mainReference.name || form.sourceImageName,
     mainReference.audit?.width,
-    mainReference.audit?.height
+    mainReference.audit?.height,
+    form.keyPartsText,
+    form.immutablePartsText
   ].map(normalizeLockText).filter(Boolean);
   return lockParts.length ? lockParts.join('|') : 'unlocked';
 }
@@ -2825,10 +3165,13 @@ function buildStructuredProductLock(form = {}, ledgerFacts = []) {
       name: item.name,
       width: Number(item.audit?.width || 0),
       height: Number(item.audit?.height || 0),
+      fingerprint: item.audit?.fingerprint || '',
       checkedAt: item.audit?.checkedAt || null
     }));
+  const keyParts = splitListText(form.keyPartsText);
+  const immutableParts = splitListText(form.immutablePartsText);
   return {
-    version: 1,
+    version: 2,
     fingerprint: getProjectProductLock(form),
     identity: {
       sku: String(form.sku || '').trim(),
@@ -2839,13 +3182,15 @@ function buildStructuredProductLock(form = {}, ledgerFacts = []) {
       materials: pick(/material|材质|bamboo|wood|steel|iron|cotton|fabric|plastic|竹|木|钢|铁|棉|布|塑料/i),
       colors: pick(/colou?r|颜色|色|black|white|green|blue|red|pink|beige|gray|grey|黑|白|绿|蓝|红|粉|米|灰/i),
       structures: pick(/fold|adjust|frame|structure|handle|lid|wheel|step|rail|结构|折叠|调节|框架|把手|锅盖|轮|台阶|护栏/i),
-      dimensionsAndCounts: pick(/\d|size|dimension|capacity|weight|尺寸|承重|容量|数量/i)
+      dimensionsAndCounts: pick(/\d|size|dimension|capacity|weight|尺寸|承重|容量|数量/i),
+      keyParts
     },
     referenceEvidence: references,
     immutableRules: [
       'Preserve the exact product silhouette, proportions, material finish, color family, hardware placement, and part count shown in the references.',
       'Do not add, remove, duplicate, reshape, or relocate product parts, accessories, labels, controls, fasteners, or packaging.',
-      'Only show functional states supported by uploaded references or confirmed project facts.'
+      'Only show functional states supported by uploaded references or confirmed project facts.',
+      ...immutableParts.map((item) => `Project-specific immutable rule: ${item}`)
     ]
   };
 }
@@ -2857,6 +3202,7 @@ function formatProductLockForPrompt(lock = {}) {
     attributes.materials?.length ? `Locked material facts: ${attributes.materials.join('; ')}.` : '',
     attributes.colors?.length ? `Locked color facts: ${attributes.colors.join('; ')}.` : '',
     attributes.structures?.length ? `Locked structure facts: ${attributes.structures.join('; ')}.` : '',
+    attributes.keyParts?.length ? `Locked key parts: ${attributes.keyParts.join('; ')}.` : '',
     ...(Array.isArray(lock.immutableRules) ? lock.immutableRules : [])
   ];
   return lines.filter(Boolean).join(' ');
@@ -2865,6 +3211,13 @@ function formatProductLockForPrompt(lock = {}) {
 function isSameProductLock(project, form = {}) {
   if (!project?.productLock) return true;
   return project.productLock === getProjectProductLock(form);
+}
+
+function isSameContentLanguage(project, form = {}) {
+  const previous = project?.contentContract || normalizeProjectLanguageFields(project?.form || {});
+  const current = normalizeProjectLanguageFields(form);
+  return previous.marketplaceId === current.marketplaceId
+    && previous.outputLanguage === current.outputLanguage;
 }
 
 function getFallbackSlot(slotId = 1) {
@@ -2914,11 +3267,13 @@ function createProjectRecord(
   promptOverrides = {},
   exportSelections = {}
 ) {
+  const normalizedForm = { ...form, ...normalizeProjectLanguageFields(form) };
   return {
     id,
-    form,
-    productLock: getProjectProductLock(form),
-    productIdentity: buildStructuredProductLock(form, ledgerFacts),
+    form: normalizedForm,
+    productLock: getProjectProductLock(normalizedForm),
+    productIdentity: buildStructuredProductLock(normalizedForm, ledgerFacts),
+    contentContract: normalizeProjectLanguageFields(normalizedForm),
     ledgerFacts,
     storyboardBriefs,
     reviewDecisions,
@@ -3117,7 +3472,7 @@ function makeTeamProjectPayload(project = {}) {
     projectName: getProjectTitle(form),
     productName: form.productName || '',
     sku: form.sku || '',
-    outputType: getProjectPlanOutputPresetId(form) === 'a-plus' ? 'a-plus' : 'main-image',
+    outputType: getProjectPlanOutputPresetId(form) === 'aplus' ? 'a-plus' : 'main-image',
     status: project.cloud?.status || 'draft',
     brandSnapshot: {
       brandId: getProjectBrandId(form),
@@ -3246,7 +3601,8 @@ function getReferenceItems(form) {
 }
 
 function getReferenceReadiness(form = {}) {
-  const main = getReferenceItems(form).find((item) => item.id === 'main');
+  const referenceItems = getReferenceItems(form);
+  const main = referenceItems.find((item) => item.id === 'main');
   const blockers = [];
   const warnings = [];
   if (!main?.preview) {
@@ -3265,7 +3621,27 @@ function getReferenceReadiness(form = {}) {
   else if (Number(audit.subjectCoverage || 0) < 0.08) warnings.push('产品主体占比过小，建议裁掉多余留白');
   if (audit.touchesEdge) warnings.push('产品主体贴近画布边缘，可能存在裁切风险');
   if (Number(audit.transparentRatio || 0) > 0.98) blockers.push('图片几乎完全透明，无法作为产品参考');
+  const fingerprintedReferences = referenceItems.filter((item) => item.preview && item.audit?.fingerprint);
+  for (let firstIndex = 0; firstIndex < fingerprintedReferences.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < fingerprintedReferences.length; secondIndex += 1) {
+      const first = fingerprintedReferences[firstIndex];
+      const second = fingerprintedReferences[secondIndex];
+      if (getImageFingerprintDistance(first.audit.fingerprint, second.audit.fingerprint) <= 4) {
+        warnings.push(`${first.label}与${second.label}画面高度相似，建议换成不同角度或细节图`);
+      }
+    }
+  }
   return { ready: blockers.length === 0, blockers, warnings, main };
+}
+
+function getImageFingerprintDistance(first = '', second = '') {
+  if (!first || !second || first.length !== second.length) return Number.POSITIVE_INFINITY;
+  let distance = 0;
+  for (let index = 0; index < first.length; index += 1) {
+    const xor = Number.parseInt(first[index], 16) ^ Number.parseInt(second[index], 16);
+    distance += [0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4][xor] || 0;
+  }
+  return distance;
 }
 
 function getGenerationReferenceItems(form, slotId, outputPresetId, visualType = '') {
@@ -3334,7 +3710,6 @@ async function fetchWithTimeout(url, options, timeoutMs, timeoutMessage) {
 
 async function planStoryboardWithApi(projectId, projectForm, ledgerFacts, brands = defaultBrandLibrary) {
   const sourceImageDataUrl = await imageSourceToDataUrl(getReferenceImage(projectForm));
-  const brandProfile = getBrandProfile(getProjectBrandId(projectForm, brands), brands);
   const outputPreset = getProjectPlanOutputPreset(projectForm);
   const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/plan-storyboard`, {
     method: 'POST',
@@ -3344,12 +3719,11 @@ async function planStoryboardWithApi(projectId, projectForm, ledgerFacts, brands
       projectForm,
       ledgerFacts,
       productLock: buildStructuredProductLock(projectForm, ledgerFacts),
-      brandProfile,
       outputPresetId: outputPreset.id,
       outputPresetLabel: outputPreset.label,
       outputPresetSize: outputPreset.size,
       targetSlotCount: getStoryboardTargetSlotCount(projectForm, ledgerFacts),
-      strategyRules: listingImageStrategyRules,
+      strategyRules: getListingImageStrategyRules(projectForm),
       sourceImageDataUrl
     })
   }, 60000, 'AI 方案请求超过 60 秒未返回。已停止等待并切换到本地兜底方案。');
@@ -3577,10 +3951,15 @@ async function saveGeneratedImageToApi({ projectId, imageDataUrl, projectForm, s
 }
 
 function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
-  const brand = getBrandProfile(brief.brandId, options.brandLibrary || defaultBrandLibrary);
+  const projectForm = options.projectForm || {};
+  const brand = options.baselineMode
+    ? getBrandProfile('none', defaultBrandLibrary)
+    : options.brandProfile || getBrandProfile('none', defaultBrandLibrary);
   const isWhiteMainImage = outputPreset.id === 'main-image' && slot.id === 1;
   const isAPlusOutput = outputPreset.id === 'aplus';
-  const brandPaletteText = formatBrandColorPalette(brand);
+  const applicableBrandColors = normalizeBrandColors(brand.colors)
+    .filter((color) => isBrandColorApplicable(color, outputPreset.id, slot.id));
+  const brandPaletteText = formatBrandColorPalette(brand, outputPreset.id, slot.id);
   const brandArrowStyle = getBrandArrowStyle(brand.arrowStyle);
   const brandTitleColor = normalizeHexColor(brand.titleColor) || '#18211F';
   const logoInstruction = isAPlusOutput
@@ -3593,9 +3972,9 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
     : [
       `Brand style: ${brand.name}. ${brand.tone}.`,
       `Internal brand palette constraint, not visible content: ${brandPaletteText}.`,
-      brand.colors.length
+      applicableBrandColors.length
         ? 'Use these colors only as hidden art-direction constraints for designed backgrounds, graphic blocks, labels, icons, callouts, accent shapes, and decorative UI elements. Do not introduce unlisted brand colors. Neutral white/black/gray may be used only for legibility and shadows; never recolor the actual product away from the reference.'
-        : 'No brand colors are configured. Use only neutral ecommerce backgrounds and do not invent a brand palette.',
+        : 'No brand colors apply to this image slot. Use only neutral ecommerce backgrounds and do not invent a brand palette.',
       'Do not render the brand palette itself. Never show HEX codes, color percentages, color swatch blocks, color cards, palette legends, design-token labels, or style-guide panels in the generated image.',
       `Background policy: ${brand.backgroundPolicy}.`,
       brand.scenes.length ? `Preferred scene cues: ${brand.scenes.join(', ')}.` : '',
@@ -3641,16 +4020,17 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
     `Create one Amazon listing image candidate for slot ${String(slot.id).padStart(2, '0')} - ${brief.title || slot.title}.`,
     outputPreset.prompt,
     backgroundInstruction,
-    `Listing image strategy rules: ${getListingImageStrategyText()}`,
+    `Listing image strategy rules: ${getListingImageStrategyText(projectForm)}`,
     brief.promptBrief,
     brief.primaryClaim ? `Primary claim: ${brief.primaryClaim}. The composition must visually prove this claim.` : '',
     brief.visualProof ? `Visual proof requirement: ${brief.visualProof}` : '',
+    formatStoryboardSlotContract(brief),
     `Slot-specific quality guardrails: ${getSlotQualityGuardrailText(brief.visualType)}.`,
     isAPlusOutput ? 'A+ module quality rule: allow richer content, broader composition, and combined benefit storytelling, but keep every claim truthful, readable, visually supported, product-led, and visually consistent with the same brand system used across the A+ set.' : '',
-    'Input claims, keywords, and notes may be Chinese, English, or mixed. Understand and translate them internally.',
-    'Any visible copy in the generated image, including labels, callouts, badges, dimensions, feature text, comparison text, and short captions, must be natural English only. Do not render Chinese text in the final image.',
+    'Input claims, keywords, and notes may be written in any language. Understand them semantically; never infer the final image language from the input language.',
+    getVisibleCopyLanguageInstruction(projectForm),
     'Internal prompt metadata must never appear in the image. Do not show brand color HEX codes, percentages, palette swatches, prompt labels, model notes, grid specs, or any design-system documentation.',
-    'If a Chinese keyword has no direct ecommerce wording, rewrite it as concise Amazon-ready English instead of copying the Chinese characters.',
+    'Rewrite source-language keywords as concise Amazon-ready copy in the project target language instead of copying or mixing source-language characters.',
     'Design the typography, callout placement, arrows, badges, and text hierarchy directly inside the generated image composition. Do not leave blank spaces for later text overlay.',
     titlePlacementInstruction,
     'Visible text must be spatially aligned with the product feature, scene action, measurement, or visual evidence it refers to. Avoid generic floating labels that do not point to anything.',
@@ -3836,6 +4216,26 @@ function analyzeImageDataUrl(dataUrl, file) {
         ? ((maxX - minX + 1) * (maxY - minY + 1)) / (width * height)
         : 0;
       const touchesEdge = hasSubject && (minX <= 1 || minY <= 1 || maxX >= width - 2 || maxY >= height - 2);
+      const fingerprintCanvas = document.createElement('canvas');
+      fingerprintCanvas.width = 9;
+      fingerprintCanvas.height = 8;
+      const fingerprintContext = fingerprintCanvas.getContext('2d', { willReadFrequently: true });
+      let fingerprint = '';
+      if (fingerprintContext) {
+        fingerprintContext.drawImage(image, 0, 0, 9, 8);
+        const fingerprintPixels = fingerprintContext.getImageData(0, 0, 9, 8).data;
+        let bitBuffer = '';
+        for (let y = 0; y < 8; y += 1) {
+          for (let x = 0; x < 8; x += 1) {
+            const leftIndex = (y * 9 + x) * 4;
+            const rightIndex = (y * 9 + x + 1) * 4;
+            const left = fingerprintPixels[leftIndex] * 0.299 + fingerprintPixels[leftIndex + 1] * 0.587 + fingerprintPixels[leftIndex + 2] * 0.114;
+            const right = fingerprintPixels[rightIndex] * 0.299 + fingerprintPixels[rightIndex + 1] * 0.587 + fingerprintPixels[rightIndex + 2] * 0.114;
+            bitBuffer += left > right ? '1' : '0';
+          }
+        }
+        fingerprint = bitBuffer.match(/.{4}/g)?.map((bits) => Number.parseInt(bits, 2).toString(16)).join('') || '';
+      }
 
       resolve({
         fileName: file?.name || '',
@@ -3846,6 +4246,7 @@ function analyzeImageDataUrl(dataUrl, file) {
         subjectCoverage,
         transparentRatio: transparentCount / (width * height),
         touchesEdge,
+        fingerprint,
         subjectBounds: hasSubject ? { minX, minY, maxX, maxY, sampleWidth: width, sampleHeight: height } : null,
         checkedAt: new Date().toISOString()
       });
@@ -4257,7 +4658,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
   };
 
   return (
-    <section className="project-center-page">
+    <section className={`project-center-page role-${userRole}`}>
       <header className="project-center-header">
         <div>
           <p className="eyebrow">{roleLabel}</p>
@@ -4670,13 +5071,12 @@ function ProjectPage({
   projectForm,
   setProjectForm,
   brandLibrary,
-  ledgerFacts,
   productLockChanged,
-  productLockValue,
   onGenerateLedgerDraft,
-  onContinueToStoryboard,
   onSaveProject,
-  onManageLedger,
+  brandVersionState,
+  onUpgradeBrandSnapshot,
+  isUpgradingBrandSnapshot,
   saveStatus,
   focusRequest
 }) {
@@ -4685,18 +5085,17 @@ function ProjectPage({
   const [highlightTarget, setHighlightTarget] = useState('');
   const uploadRef = useRef(null);
   const claimsRef = useRef(null);
-  const ledgerDraftRef = useRef(null);
-  const activeMode = intakeModes[intakeMode];
-  const ModeIcon = activeMode.icon;
-  const draftCounts = {
-    allowed: ledgerFacts.filter((fact) => fact.state === 'allowed').length,
-    evidence: ledgerFacts.filter((fact) => fact.state === 'evidence').length,
-    review: ledgerFacts.filter((fact) => fact.state === 'review').length,
-    blocked: ledgerFacts.filter((fact) => fact.state === 'blocked').length
-  };
   const referenceReadiness = getReferenceReadiness(projectForm);
   const updateField = (field, value) => {
     setProjectForm((current) => ({ ...current, [field]: value }));
+  };
+  const updateMarketplace = (marketplaceId) => {
+    const marketplace = getMarketplaceOption(marketplaceId);
+    setProjectForm((current) => ({
+      ...current,
+      marketplaceId: marketplace.id,
+      outputLanguage: marketplace.defaultLanguage
+    }));
   };
   const handleReferenceImageUpload = (referenceId, event) => {
     const file = event.target.files?.[0];
@@ -4771,8 +5170,7 @@ function ProjectPage({
     if (focusRequest?.section !== 'project') return undefined;
     const targetMap = {
       'image-upload': uploadRef,
-      claims: claimsRef,
-      'ledger-draft': ledgerDraftRef
+      claims: claimsRef
     };
     const targetRef = targetMap[focusRequest.anchor] || uploadRef;
     const timeout = window.setTimeout(() => {
@@ -4785,6 +5183,29 @@ function ProjectPage({
       window.clearTimeout(clear);
     };
   }, [focusRequest]);
+
+  const skuField = <label className="form-field"><span>SKU</span><input value={projectForm.sku} onChange={(event) => updateField('sku', event.target.value)} placeholder="输入或粘贴 SKU" /></label>;
+  const brandField = <label className="form-field"><span>品牌</span><select value={getProjectBrandId(projectForm, brandLibrary)} onChange={(event) => updateField('brandId', event.target.value)}>{brandLibrary.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>;
+  const marketplaceField = (
+    <label className="form-field">
+      <span>目标站点</span>
+      <select value={normalizeProjectLanguageFields(projectForm).marketplaceId} onChange={(event) => updateMarketplace(event.target.value)}>
+        {MARKETPLACE_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+      <small>切换站点会自动带入该站点的默认文案语言。</small>
+    </label>
+  );
+  const outputLanguageField = (
+    <label className="form-field">
+      <span>图片文案语言</span>
+      <select value={normalizeProjectLanguageFields(projectForm).outputLanguage} onChange={(event) => updateField('outputLanguage', event.target.value)}>
+        {OUTPUT_LANGUAGE_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+      <small>卖点可用任意语言填写；生成图片中的可见文字以这里为准。</small>
+    </label>
+  );
+  const projectNameField = <label className="form-field"><span>项目名</span><input value={projectForm.projectName} onChange={(event) => updateField('projectName', event.target.value)} placeholder="例如 Cosyland learning tower" /></label>;
+  const productNameField = <label className="form-field"><span>产品名</span><input value={projectForm.productName} onChange={(event) => updateField('productName', event.target.value)} placeholder="用于内部识别" /></label>;
 
   return (
     <section className="new-project-page">
@@ -4819,12 +5240,17 @@ function ProjectPage({
                 <div className={(reference.displayPreview || reference.preview) ? 'reference-upload-preview has-image' : 'reference-upload-preview'}>
                   {(reference.displayPreview || reference.preview) ? <img src={reference.displayPreview || reference.preview} alt={reference.label} /> : <ImagePlus size={28} />}
                 </div>
-                <div>
-                  <strong>{reference.label}</strong>
-                  <p>{reference.helper}</p>
-                  {reference.name && <span>{reference.name}</span>}
-                  <div className="reference-upload-actions">
+                <div className="reference-upload-content">
+                  <div className="reference-upload-title-row">
+                    <span>
+                      <strong>{reference.label}</strong>
+                      <em>{reference.required ? '必填' : '可选'}</em>
+                    </span>
                     <label className="vz-btn vz-btn--secondary secondary-button upload-button" htmlFor={`reference-upload-${reference.id}`}><Upload size={16} />上传</label>
+                  </div>
+                  <p>{reference.helper}</p>
+                  {reference.name && <small className="reference-upload-filename">{reference.name}</small>}
+                  <div className="reference-upload-actions">
                     <input accept="image/*" className="file-input" id={`reference-upload-${reference.id}`} onChange={(event) => handleReferenceImageUpload(reference.id, event)} type="file" />
                     {(reference.displayPreview || reference.preview) && !reference.fallback && <button className="vz-btn vz-btn--ghost text-button" onClick={() => removeReferenceImage(reference.id)} type="button">移除</button>}
                   </div>
@@ -4834,12 +5260,36 @@ function ProjectPage({
           </div>
           {imageAuditStatus && <span className="save-status">{imageAuditStatus}</span>}
 
-          <div className="new-project-fields">
-            {intakeMode === 'sku' && <label className="form-field"><span>SKU</span><input value={projectForm.sku} onChange={(event) => updateField('sku', event.target.value)} placeholder="输入或粘贴 SKU" /></label>}
-            <label className="form-field"><span>品牌</span><select value={getProjectBrandId(projectForm, brandLibrary)} onChange={(event) => updateField('brandId', event.target.value)}>{brandLibrary.map((brand) => <option key={brand.id} value={brand.id}>{brand.name}</option>)}</select></label>
-            <label className="form-field"><span>项目名</span><input value={projectForm.projectName} onChange={(event) => updateField('projectName', event.target.value)} placeholder="例如 Cosyland learning tower" /></label>
-            <label className="form-field"><span>产品名</span><input value={projectForm.productName} onChange={(event) => updateField('productName', event.target.value)} placeholder="用于内部识别" /></label>
+          <div className={`new-project-fields ${intakeMode === 'noSku' ? 'is-no-sku' : 'is-sku'}`}>
+            {intakeMode === 'sku' ? (
+              <>
+                {skuField}
+                {brandField}
+                {marketplaceField}
+                {outputLanguageField}
+                {projectNameField}
+                {productNameField}
+              </>
+            ) : (
+              <>
+                {projectNameField}
+                {productNameField}
+                {brandField}
+                {marketplaceField}
+                {outputLanguageField}
+              </>
+            )}
             <label className="form-field full"><span>类目</span><input value={projectForm.category} onChange={(event) => updateField('category', event.target.value)} placeholder="Amazon 类目或内部类目" /></label>
+            <label className="form-field">
+              <span>关键部件，每行一个</span>
+              <textarea value={projectForm.keyPartsText || ''} onChange={(event) => updateField('keyPartsText', event.target.value)} rows={4} placeholder="例如 Handle、Charging cradle、Control panel" />
+              <small>用于锁定必须保留的结构和部件。</small>
+            </label>
+            <label className="form-field">
+              <span>不可改变项，每行一个</span>
+              <textarea value={projectForm.immutablePartsText || ''} onChange={(event) => updateField('immutablePartsText', event.target.value)} rows={4} placeholder="例如 不改变按钮数量、接口位置和产品主色" />
+              <small>后续每次生图都会带上这些硬约束。</small>
+            </label>
             <label className={`form-field full ${highlightTarget === 'claims' ? 'focus-flash soft' : ''}`} ref={claimsRef}>
               <span>卖点草稿，每行一个</span>
               <textarea value={projectForm.claimsText} onChange={(event) => updateField('claimsText', event.target.value)} rows={7} placeholder="每行一个卖点，例如 Bamboo material" />
@@ -4855,20 +5305,52 @@ function ProjectPage({
         <aside className="new-project-side">
           <section className={productLockChanged ? 'vz-card panel product-lock-panel changed' : 'vz-card panel product-lock-panel'}>
             <div className="panel-header compact"><div><p className="eyebrow">CURRENT PROJECT</p><h3>项目概览</h3></div><span className="lock-label"><LockKeyhole size={14} />{productLockChanged ? '资料有更新' : '资料已同步'}</span></div>
-            <div className="product-lock-summary"><div><span>产品</span><strong>{projectForm.productName || projectForm.projectName || '未命名产品'}</strong></div><div><span>SKU</span><strong>{projectForm.sku || '未填写'}</strong></div><div><span>主参考图</span><strong>{getReferenceImageName(projectForm) || '未上传'}</strong></div></div>
+            <div className="product-lock-summary"><div><span>产品</span><strong>{projectForm.productName || projectForm.projectName || '未命名产品'}</strong></div><div><span>SKU</span><strong>{projectForm.sku || '未填写'}</strong></div><div><span>目标站点</span><strong>{getMarketplaceOption(projectForm.marketplaceId).label}</strong></div><div><span>图片语言</span><strong>{getOutputLanguageOption(normalizeProjectLanguageFields(projectForm).outputLanguage).label}</strong></div><div><span>主参考图</span><strong>{getReferenceImageName(projectForm) || '未上传'}</strong></div><div><span>关键部件</span><strong>{splitListText(projectForm.keyPartsText).length || '未填写'}</strong></div><div><span>不可改变项</span><strong>{splitListText(projectForm.immutablePartsText).length || '未填写'}</strong></div></div>
             <div className={`reference-readiness ${referenceReadiness.ready ? 'is-ready' : 'is-blocked'}`}>
               <strong>{referenceReadiness.ready ? '参考图可进入下一步' : '参考图暂不能用于生图'}</strong>
               {[...referenceReadiness.blockers, ...referenceReadiness.warnings].slice(0, 3).map((message) => <span key={message}>{message}</span>)}
             </div>
           </section>
-          <section className={`vz-card panel new-project-ledger-summary ${highlightTarget === 'ledger-draft' ? 'focus-flash' : ''}`} ref={ledgerDraftRef}>
-            <p className="eyebrow">CLAIMS</p><h3>卖点准备情况</h3>
-            <strong>{ledgerFacts.length ? `${ledgerFacts.length} 条卖点已生成` : '还没有生成卖点'}</strong>
-            <p>{ledgerFacts.length ? `${draftCounts.allowed} 条可用于图片方案，其余会在确认表中处理。` : '填写上方卖点后，系统会先生成可编辑的卖点确认表。'}</p>
-            {ledgerFacts.length > 0 && <button className="vz-btn vz-btn--ghost text-button strong" onClick={onManageLedger} type="button">查看卖点确认表 <ChevronRight size={15} /></button>}
-          </section>
+          {brandVersionState?.kind !== 'baseline' && (
+            <section className={`vz-card panel project-brand-version-card ${brandVersionState?.kind || ''}`}>
+              <div className="project-brand-version-head">
+                <div>
+                  <p className="eyebrow">BRAND VERSION</p>
+                  <h3>{brandVersionState?.brandName || '项目品牌'}</h3>
+                </div>
+                <LockKeyhole size={18} />
+              </div>
+              {brandVersionState?.kind === 'unsaved' ? (
+                <p>品牌选择尚未写入项目。先保存项目，系统会锁定当前品牌版本。</p>
+              ) : brandVersionState?.kind === 'archived' ? (
+                <p>项目继续使用已归档品牌 v{brandVersionState.lockedVersion}，现有生图不受影响。</p>
+              ) : brandVersionState?.kind === 'checking' ? (
+                <p>项目锁定 v{brandVersionState.lockedVersion}，正在检查品牌库最新版本。</p>
+              ) : (
+                <>
+                  <div className="project-brand-version-values">
+                    <span><small>项目锁定</small><strong>v{brandVersionState.lockedVersion}</strong></span>
+                    <ChevronRight size={17} />
+                    <span><small>品牌库当前</small><strong>v{brandVersionState.latestVersion}</strong></span>
+                  </div>
+                  {brandVersionState.canUpgrade ? (
+                    <>
+                      <p>升级后将清空旧图片方案、候选图和审核结果，产品资料、参考图和卖点会保留。</p>
+                      <button
+                        className="vz-btn vz-btn--secondary secondary-button project-brand-upgrade-button"
+                        disabled={isUpgradingBrandSnapshot}
+                        onClick={onUpgradeBrandSnapshot}
+                        type="button"
+                      >
+                        <RefreshCcw size={16} />{isUpgradingBrandSnapshot ? '正在升级' : `升级到 v${brandVersionState.latestVersion}`}
+                      </button>
+                    </>
+                  ) : <p>当前项目已使用最新品牌规则。</p>}
+                </>
+              )}
+            </section>
+          )}
           {productLockChanged && <div className="planning-status warning"><MessageSquareWarning size={17} /><div><strong>产品资料已变化</strong><p>重新生成卖点或方案会替换旧方案，避免混入其他产品。</p></div></div>}
-          <button className="new-project-plan-link" onClick={onContinueToStoryboard} type="button"><Layers size={16} />已有卖点？进入图片方案</button>
         </aside>
       </div>
       {saveStatus && <p className="new-project-save-status">{saveStatus}</p>}
@@ -4876,11 +5358,12 @@ function ProjectPage({
   );
 }
 
-function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact }) {
+function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact, onDeleteFact, onMergeFacts }) {
   const [editingIndex, setEditingIndex] = useState(null);
   const [draftClaim, setDraftClaim] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [newClaim, setNewClaim] = useState('');
+  const [selectedIndices, setSelectedIndices] = useState([]);
 
   const startEdit = (index, claim) => {
     setEditingIndex(index);
@@ -4907,6 +5390,30 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact 
     setIsAdding(false);
   };
 
+  const toggleSelection = (index) => {
+    setSelectedIndices((current) => (
+      current.includes(index)
+        ? current.filter((item) => item !== index)
+        : [...current, index].sort((a, b) => a - b)
+    ));
+  };
+
+  const mergeSelected = () => {
+    if (selectedIndices.length < 2) return;
+    onMergeFacts?.(selectedIndices);
+    setSelectedIndices([]);
+    setEditingIndex(null);
+  };
+
+  const deleteFact = (index, claim) => {
+    if (!window.confirm(`确认删除卖点“${claim}”吗？`)) return;
+    onDeleteFact?.(index);
+    setSelectedIndices((current) => current
+      .filter((item) => item !== index)
+      .map((item) => (item > index ? item - 1 : item)));
+    if (editingIndex === index) cancelEdit();
+  };
+
   return (
     <section className="vz-card panel ledger-editor-panel">
       <div className="panel-header compact">
@@ -4914,7 +5421,14 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact 
           <p className="eyebrow">Claims</p>
           <h3>可用于图片的内容</h3>
         </div>
-        {onAddFact && <button className="vz-btn vz-btn--secondary secondary-button ledger-add-button" type="button" onClick={() => setIsAdding(true)}><Plus size={15} />添加卖点</button>}
+        <div className="ledger-header-actions">
+          {selectedIndices.length >= 2 && (
+            <button className="vz-btn vz-btn--secondary secondary-button ledger-merge-button" type="button" onClick={mergeSelected}>
+              <Layers size={15} />合并所选（{selectedIndices.length}）
+            </button>
+          )}
+          {onAddFact && <button className="vz-btn vz-btn--secondary secondary-button ledger-add-button" type="button" onClick={() => setIsAdding(true)}><Plus size={15} />添加卖点</button>}
+        </div>
       </div>
       <div className="ledger-edit-list">
         {isAdding && (
@@ -4931,8 +5445,19 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact 
         )}
         {ledgerFacts.length ? ledgerFacts.map((fact, index) => {
           const isEditing = editingIndex === index;
+          const risk = getClaimRiskMeta(fact);
           return (
-            <div className="ledger-edit-row" key={`${fact.claim}-${index}`}>
+            <div className={`ledger-edit-row ${selectedIndices.includes(index) ? 'selected' : ''}`} key={`${fact.claim}-${index}`}>
+              {!isEditing && (
+                <label className="ledger-select-control" title="选择后可合并卖点">
+                  <input
+                    aria-label={`选择卖点 ${fact.claim}`}
+                    checked={selectedIndices.includes(index)}
+                    onChange={() => toggleSelection(index)}
+                    type="checkbox"
+                  />
+                </label>
+              )}
               {isEditing ? (
                 <>
                   <label className="ledger-edit-field">
@@ -4948,12 +5473,21 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact 
                 <>
                   <div className="ledger-edit-copy">
                     <strong>{fact.claim}</strong>
-                    <span>{fact.source || 'manual'} · {fact.confidence || 'medium'}</span>
+                    <span className="ledger-claim-meta">
+                      <em>{formatClaimSource(fact.source)}</em>
+                      <em className={`ledger-risk-chip ${risk.className}`}>{risk.label}</em>
+                    </span>
                   </div>
-                  <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => startEdit(index, fact.claim)}>
-                    <PencilLine size={16} />
-                    编辑
-                  </button>
+                  <div className="ledger-row-actions">
+                    <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => startEdit(index, fact.claim)}>
+                      <PencilLine size={16} />编辑
+                    </button>
+                    {onDeleteFact && (
+                      <button aria-label={`删除卖点 ${fact.claim}`} className="vz-btn vz-btn--secondary vz-btn--icon icon-button ledger-delete-button" type="button" onClick={() => deleteFact(index, fact.claim)}>
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
                 </>
               )}
             </div>
@@ -4970,7 +5504,7 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact 
   );
 }
 
-function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAddFact, onGoStoryboard, focusRequest }) {
+function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAddFact, onDeleteFact, onMergeFacts, onGoStoryboard, focusRequest }) {
   const referenceItems = getReferenceItems(projectForm).filter((item) => item.preview);
   const primaryReference = referenceItems.find((item) => item.id === 'main') || referenceItems[0];
   const brand = getBrandProfile(getProjectBrandId(projectForm, brandLibrary), brandLibrary);
@@ -5005,7 +5539,13 @@ function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAd
           {visibleFacts.length > 0 && <div className="ledger-source-note"><strong>{ledgerFacts.length} 条卖点已整理</strong><p>可随时编辑，图片方案会使用最新内容。</p></div>}
         </aside>
         <FocusFrame active={getFocusSignal(focusRequest, 'ledger')} className="ledger-main-column">
-          <EditableFactLedgerPanel ledgerFacts={ledgerFacts} onUpdateFact={onUpdateFact} onAddFact={onAddFact} />
+          <EditableFactLedgerPanel
+            ledgerFacts={ledgerFacts}
+            onUpdateFact={onUpdateFact}
+            onAddFact={onAddFact}
+            onDeleteFact={onDeleteFact}
+            onMergeFacts={onMergeFacts}
+          />
           <footer className="ledger-next-bar">
             <span><strong>{ledgerFacts.length ? `${ledgerFacts.length} 条内容已就绪` : '先添加至少一个卖点'}</strong><small>下一步会依据这些内容规划每张图要证明什么。</small></span>
             <button className="vz-btn vz-btn--primary primary-button" type="button" disabled={!ledgerFacts.length} onClick={onGoStoryboard}><Layers size={16} />确认内容并规划图片</button>
@@ -5016,7 +5556,7 @@ function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAd
   );
 }
 
-function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteBrand, userRole, focusRequest }) {
+function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, onSaveBrand, onDeleteBrand, userRole, focusRequest }) {
   const [selectedBrandId, setSelectedBrandId] = useState(brandLibrary.find((brand) => brand.id !== 'none')?.id || 'none');
   const [view, setView] = useState('library');
   const [deleteChallenge, setDeleteChallenge] = useState('');
@@ -5026,6 +5566,10 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
   const selectedBrand = getBrandProfile(selectedBrandId, brandLibrary);
   const editable = selectedBrand.id !== 'none';
   const brandColorTotal = getBrandColorRatioTotal(selectedBrand.colors);
+  const managedBrands = brandLibrary.filter((brand) => brand.id !== 'none');
+  const savedBrandCount = managedBrands.filter((brand) => brand.version).length;
+  const logoBrandCount = managedBrands.filter((brand) => brand.logoPreview || brand.logoStorageKey).length;
+  const paletteIssueCount = managedBrands.filter((brand) => getBrandColorRatioTotal(brand.colors) !== 100).length;
 
   useEffect(() => {
     if (!brandLibrary.some((brand) => brand.id === selectedBrandId)) {
@@ -5054,8 +5598,8 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
       name: 'New Brand',
       tone: '真实、清晰、产品优先的 Amazon 电商风格',
       colors: [
-        { hex: '#FFFFFF', ratio: 60 },
-        { hex: '#8A8F8B', ratio: 40 }
+        { hex: '#FFFFFF', ratio: 60, role: 'background', scope: 'secondary-and-aplus' },
+        { hex: '#8A8F8B', ratio: 40, role: 'accent', scope: 'secondary-and-aplus' }
       ],
       backgroundPolicy: '02-07 可使用品牌色块或真实使用场景；01 白底主图不使用。',
       scenes: ['real product use scene'],
@@ -5094,7 +5638,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
     updateBrand({
       colors: [
         ...selectedBrand.colors,
-        { id: `color-${Date.now()}`, hex: '#FFFFFF', ratio: 10 }
+        { id: `color-${Date.now()}`, hex: '#FFFFFF', ratio: 10, role: 'accent', scope: 'secondary-and-aplus' }
       ]
     });
   };
@@ -5112,6 +5656,12 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
   };
   const saveSelectedBrand = async () => {
     if (!editable || !onSaveBrand || saveState === 'saving') return;
+    const validationError = validateBrandProfileForSave(selectedBrand);
+    if (validationError) {
+      setSaveError(validationError);
+      setSaveState('dirty');
+      return;
+    }
     setSaveState('saving');
     setSaveError('');
     try {
@@ -5140,7 +5690,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
   };
 
   return (
-    <section className={view === 'editor' ? 'brand-settings-page' : 'page-grid brand-library-page'}>
+    <section className={view === 'editor' ? `brand-settings-page role-${userRole}` : `page-grid brand-library-page role-${userRole}`}>
       {view === 'library' && <FocusFrame active={getFocusSignal(focusRequest, 'brands')} className="left-column">
         <section className="vz-card panel brand-library-panel">
           <div className="panel-header compact">
@@ -5153,6 +5703,16 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
               <Plus size={16} />
               新增品牌
             </button>
+          </div>
+          <div className={`brand-library-sync-state ${brandLibraryStatus || 'ready'}`} role="status">
+            <span>{brandLibraryStatus === 'loading' ? '正在同步团队品牌库' : brandLibraryStatus === 'error' ? '团队品牌库暂时不可用' : '团队品牌库已同步'}</span>
+            <small>{brandLibraryStatus === 'error' ? '缓存只用于查看，不会进入生产生图；已有项目仍使用冻结的品牌快照。' : '生产生图只使用项目内冻结的品牌版本。'}</small>
+          </div>
+          <div className="brand-library-summary">
+            <span><strong>{managedBrands.length}</strong>品牌</span>
+            <span><strong>{savedBrandCount}</strong>已保存版本</span>
+            <span><strong>{logoBrandCount}</strong>Logo 素材</span>
+            <span><strong>{paletteIssueCount}</strong>色彩待校准</span>
           </div>
           <div className="brand-card-list">
             {brandLibrary.map((brand) => (
@@ -5211,6 +5771,12 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
               )}
             </div>
           </div>
+          <div className="brand-editor-summary">
+            <span><strong>{selectedBrand.version ? `v${selectedBrand.version}` : '未保存'}</strong>版本</span>
+            <span className={brandColorTotal === 100 ? 'ok' : 'warn'}><strong>{brandColorTotal}%</strong>色彩比例</span>
+            <span><strong>{selectedBrand.colors.length}</strong>品牌色</span>
+            <span className={selectedBrand.logoPreview || selectedBrand.logoStorageKey ? 'ok' : 'warn'}><strong>{selectedBrand.logoPreview || selectedBrand.logoStorageKey ? '已上传' : '未上传'}</strong>Logo</span>
+          </div>
           {saveError && <div className="brand-save-error" role="alert">{saveError}</div>}
           {!editable && (
             <div className="planning-status">
@@ -5268,36 +5834,61 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
               <div className="brand-color-rows">
                 {selectedBrand.colors.map((color, index) => (
                   <div className="brand-color-row" key={color.id || `${color.hex}-${index}`}>
-                    <input
-                      aria-label="品牌色号"
-                      disabled={!editable}
-                      type="color"
-                      value={color.hex}
-                      onChange={(event) => updateBrandColor(index, { hex: event.target.value })}
-                    />
-                    <input
-                      aria-label="品牌色 HEX"
-                      disabled={!editable}
-                      pattern="^#[0-9A-Fa-f]{6}$"
-                      value={color.hex}
-                      onChange={(event) => {
-                        const nextHex = normalizeHexColor(event.target.value);
-                        if (nextHex) updateBrandColor(index, { hex: nextHex });
-                      }}
-                    />
-                    <input
-                      aria-label="颜色使用比例"
-                      disabled={!editable}
-                      max="100"
-                      min="1"
-                      type="number"
-                      value={color.ratio}
-                      onChange={(event) => updateBrandColor(index, { ratio: event.target.value })}
-                    />
-                    <span>%</span>
-                    <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button" disabled={!editable || selectedBrand.colors.length <= 1} onClick={() => removeBrandColor(index)} type="button">
-                      <X size={15} />
-                    </button>
+                    <div className="brand-color-row-main">
+                      <input
+                        aria-label="品牌色号"
+                        className="brand-color-swatch"
+                        disabled={!editable}
+                        type="color"
+                        value={color.hex}
+                        onChange={(event) => updateBrandColor(index, { hex: event.target.value })}
+                      />
+                      <input
+                        aria-label="品牌色 HEX"
+                        className="brand-color-hex"
+                        disabled={!editable}
+                        pattern="^#[0-9A-Fa-f]{6}$"
+                        value={color.hex}
+                        onChange={(event) => {
+                          const nextHex = normalizeHexColor(event.target.value);
+                          if (nextHex) updateBrandColor(index, { hex: nextHex });
+                        }}
+                      />
+                      <input
+                        aria-label="颜色使用比例"
+                        className="brand-color-ratio"
+                        disabled={!editable}
+                        max="100"
+                        min="1"
+                        type="number"
+                        value={color.ratio}
+                        onChange={(event) => updateBrandColor(index, { ratio: event.target.value })}
+                      />
+                      <span className="brand-color-percent">%</span>
+                      <button className="vz-btn vz-btn--secondary vz-btn--icon icon-button brand-color-delete" disabled={!editable || selectedBrand.colors.length <= 1} onClick={() => removeBrandColor(index)} type="button" aria-label="删除品牌色">
+                        <X size={15} />
+                      </button>
+                    </div>
+                    <div className="brand-color-row-meta">
+                      <select
+                        aria-label="颜色用途"
+                        className="brand-color-role"
+                        disabled={!editable}
+                        value={color.role}
+                        onChange={(event) => updateBrandColor(index, { role: event.target.value })}
+                      >
+                        {brandColorRoleOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                      </select>
+                      <select
+                        aria-label="颜色适用范围"
+                        className="brand-color-scope"
+                        disabled={!editable}
+                        value={color.scope}
+                        onChange={(event) => updateBrandColor(index, { scope: event.target.value })}
+                      >
+                        {brandColorScopeOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                      </select>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -5306,7 +5897,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
                   <Plus size={15} />
                   添加色号
                 </button>
-                <p>只能使用 HEX 色号。建议比例合计为 100%，生图时会按这些色号和比例控制背景、色块、标签和图形元素。</p>
+                <p>只能使用 HEX 色号，比例合计必须为 100%。用途和适用范围会控制每个颜色可出现的位置；系统不会把色号、比例或色板画进图片。</p>
               </div>
             </div>
             <label>
@@ -5365,7 +5956,7 @@ function BrandLibraryPage({ brandLibrary, onUpdateBrands, onSaveBrand, onDeleteB
           )}
         </section>
 
-        <section className="vz-card panel">
+        <section className="vz-card panel brand-logo-panel">
           <div className="panel-header compact">
             <div>
               <p className="eyebrow">Logo Asset</p>
@@ -5692,6 +6283,33 @@ function StoryboardPlanPage({
   const canRemoveSelected = Boolean(selectedBrief)
     && storyboardBriefs.length > minimumSlotCount
     && (isAPlus || Number(selectedBrief.id) !== 1);
+  const selectedContract = selectedBrief?.contractVersion
+    ? selectedBrief
+    : selectedBrief
+      ? normalizeStoryboardSlotContract({
+        slot: selectedBrief,
+        id: selectedBrief.id,
+        visualType: selectedBrief.visualType,
+        primaryClaim: selectedBrief.primaryClaim,
+        visualProof: selectedBrief.visualProof,
+        composition: selectedBrief.composition,
+        outputPresetId: selectedBrief.outputPresetId || selectedPreset.id,
+        outputPresetSize: selectedBrief.outputPresetSize || selectedPreset.size,
+        projectForm,
+        brand: {
+          id: selectedBrief.brandId,
+          version: selectedBrief.brandVersion,
+          ...(selectedBrief.brandRules || {})
+        },
+        blockedClaims: selectedBrief.blockedClaims,
+        guardrails: selectedBrief.guardrails
+      })
+      : null;
+  const incompleteBriefCount = storyboardBriefs.filter((brief, index) => (
+    !String(brief?.composition || '').trim()
+    || !String(brief?.visualProof || '').trim()
+    || ((isAPlus || index > 0) && !String(brief?.primaryClaim || '').trim())
+  )).length;
 
   return (
     <section className="storyboard-plan-page">
@@ -5771,16 +6389,19 @@ function StoryboardPlanPage({
               </button>
             </div>
           </div>
-          <div className="storyboard-plan-detail-grid">
+          <div className="storyboard-plan-detail-grid contract-grid">
             <div><span>图片目标</span><strong>{selectedBrief.goal}</strong></div>
             <div><span>画面如何证明</span><strong>{selectedBrief.visualProof || selectedBrief.composition}</strong></div>
-            <div><span>可用卖点</span><strong>{selectedBrief.usableClaims?.join(' · ') || selectedBrief.primaryClaim || '待分配'}</strong></div>
+            <div><span>允许出现的文案</span><strong>{selectedContract?.allowedCopy?.length ? selectedContract.allowedCopy.join(' · ') : selectedContract?.copyPolicy || '不新增可见文案'}</strong></div>
+            <div><span>场景与必须出现</span><strong>{[selectedContract?.scenePlan?.environment, ...(selectedContract?.scenePlan?.requiredElements || [])].filter(Boolean).join(' · ') || selectedBrief.composition}</strong></div>
+            <div><span>品牌与输出规格</span><strong>{`${selectedContract?.brandRules?.mode === 'brand' ? '品牌模式' : '基线模式'} · ${selectedContract?.outputSpec?.size || selectedPreset.size} · ${selectedContract?.outputSpec?.backgroundRule || '按方案背景'}`}</strong></div>
+            <div><span>禁止与合规边界</span><strong>{selectedContract?.complianceRules?.join(' · ') || selectedBrief.guardrails?.join(' · ') || '仅使用已确认事实，不改变产品结构'}</strong></div>
           </div>
         </section>
       )}
 
       <footer className="storyboard-plan-footer">
-        <span><strong>{isReady ? `图片方案已准备 · ${storyboardBriefs.length} 个图槽` : isAPlus ? '先生成 A+ 内容模块方案' : '先生成 7 张图片方案'}</strong><small>{isReady ? '方案阶段只确认卖点与画面证明方式，视觉质量在生图后判断。' : '每张图会自动分配一个主卖点和对应的画面证明方式。'}</small></span>
+        <span><strong>{isReady ? `图片方案已准备 · ${storyboardBriefs.length} 个图槽` : incompleteBriefCount ? `还有 ${incompleteBriefCount} 个图槽缺少卖点或画面证据` : isAPlus ? '先生成 A+ 内容模块方案' : '先生成 7 张图片方案'}</strong><small>{isReady ? '方案阶段只确认卖点与画面证明方式，视觉质量在生图后判断。' : '每张图必须明确主卖点、画面证据、可见文案和规则边界后才能开始生图。'}</small></span>
         <div className="storyboard-plan-footer-actions">
           <button
             className="vz-btn vz-btn--secondary secondary-button"
@@ -6444,133 +7065,146 @@ function summarizeBatchGenerationResult(completedCount, totalCount, failedMessag
 function QualityConsolePage({
   activeProjectId,
   projectForm,
-  storyboardBriefs,
+  projects = [],
   generationRuns,
   selectedSlot,
   promptOverrides,
-  onSaveGenerationRuns,
   onUpdatePromptOverride,
   focusRequest
 }) {
-  const [qualityStatus, setQualityStatus] = useState('');
+  const managementProjects = projects.length
+    ? projects
+    : [{ id: activeProjectId, form: projectForm, generationRuns }];
+  const overview = getQualityManagementOverview(managementProjects);
+  const brandRows = getBrandQualityRows(managementProjects);
+  const managementRuns = getManagementRuns(managementProjects);
+  const failedRuns = managementRuns.filter((run) => run.verdict === 'needs_fix' || run.verdict === 'reject');
+  const reasonRows = getReasonCountsForRuns(managementRuns).filter((reason) => reason.count > 0);
+  const maxReasonCount = Math.max(1, ...reasonRows.map((reason) => reason.count));
   const selectedPromptOverride = promptOverrides?.[selectedSlot.id] || '';
-
-  const exportQualityCsv = async () => {
-    const csv = `\uFEFF${buildQualityCsv(generationRuns)}`;
-    const projectName = (projectForm.projectName || projectForm.productName || 'listingflow')
-      .replace(/[^\w-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .toLowerCase() || 'listingflow';
-    const filename = `${projectName}-quality-baseline.csv`;
-    try {
-      const result = await saveTextExportToApi({
-        projectId: activeProjectId,
-        filename,
-        content: csv,
-        mimeType: 'text/csv;charset=utf-8'
-      });
-      setQualityStatus(`CSV 已保存：${result.filePath}`);
-    } catch (error) {
-      downloadTextFile(filename, csv);
-      setQualityStatus(error instanceof Error
-        ? `本地保存失败，已尝试浏览器下载：${error.message}`
-        : '本地保存失败，已尝试浏览器下载。');
-    }
-  };
-
-  const importQualityCsv = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const importedRuns = parseQualityCsvToRuns(text);
-      if (!importedRuns.length) {
-        setQualityStatus('没有识别到可导入的质量 CSV 记录。');
-        return;
-      }
-      onSaveGenerationRuns(importedRuns);
-      const importedStats = getGenerationQualityStats(importedRuns);
-      setQualityStatus(`已导入 ${importedRuns.length} 条记录，其中 ${importedStats.reviewed} 条已有人工判断；旧图片不会随 CSV 恢复。`);
-    } catch (error) {
-      setQualityStatus(error instanceof Error
-        ? `CSV 导入失败：${error.message}`
-        : 'CSV 导入失败，请确认文件来自质量样本导出。');
-    }
-  };
 
   return (
     <section className="quality-console-page">
       <FocusFrame active={getFocusSignal(focusRequest, 'quality')}>
         <section className="vz-card panel quality-console-hero">
           <div>
-            <p className="eyebrow">Quality Console</p>
-            <h3>质量后台</h3>
-            <p>这里放统计、CSV 和提示词调优；日常生成图片时不用看这些后台数据。</p>
+            <p className="eyebrow">Quality Records</p>
+            <h3>质量记录</h3>
+            <p>按品牌汇总生成次数、人工成功率、失败原因和估算成本，用于管理复盘和资源投入判断。</p>
           </div>
-          {qualityStatus && <span className="save-status">{qualityStatus}</span>}
         </section>
       </FocusFrame>
 
+      <section className="quality-management-summary">
+        <Metric label="生成次数" value={overview.total} />
+        <Metric label="已判断" value={`${overview.reviewed}/${overview.total || 0}`} />
+        <Metric label="人工成功率" value={overview.reviewed ? `${overview.usableRate}%` : '-'} tone="good" />
+        <Metric label="品牌数" value={overview.brandCount || 0} />
+        <Metric label="估算成本" value={`$${overview.estimatedCost.toFixed(2)}`} />
+        <Metric label="可用图成本" value={overview.costPerUsable ? `$${overview.costPerUsable.toFixed(2)}` : '-'} />
+      </section>
+
       <section className="quality-console-grid">
-        <section className="vz-card panel">
+        <section className="vz-card panel quality-reason-panel">
           <div className="panel-header compact">
             <div>
-              <p className="eyebrow">Quality Log</p>
+              <p className="eyebrow">Failure Reasons</p>
               <h3>失败原因排行</h3>
             </div>
           </div>
-          <div className="reason-leaderboard">
-            {generationFailureReasons.map((reason) => {
-              const count = generationRuns.filter((run) => run.reasons.includes(reason.id)).length;
+          <div className="quality-reason-list">
+            {reasonRows.length ? reasonRows.map((reason) => {
+              const percent = failedRuns.length ? Math.round((reason.count / failedRuns.length) * 100) : 0;
               return (
-                <div key={reason.id}>
-                  <span>{reason.label}</span>
-                  <strong>{count}</strong>
+                <div className="quality-reason-row" key={reason.id}>
+                  <div>
+                    <span>{reason.label}</span>
+                    <strong>{reason.count}</strong>
+                  </div>
+                  <em>{percent}%</em>
+                  <b style={{ width: `${Math.max(8, (reason.count / maxReasonCount) * 100)}%` }} />
                 </div>
               );
-            })}
+            }) : (
+              <div className="quality-empty-state">
+                <Check size={18} />
+                <span>暂无失败原因记录。完成候选图人工判断后，这里会显示主要问题。</span>
+              </div>
+            )}
           </div>
-          <p className="panel-note">当某类原因持续出现，就优先调整对应图槽的提示词或补充参考图。</p>
+          <p className="panel-note">排行只统计需修改和不可用候选图；同一候选图可计入多个原因。</p>
         </section>
 
-        <section className="vz-card panel">
+        <section className="vz-card panel quality-definition-panel">
           <div className="panel-header compact">
             <div>
-              <p className="eyebrow">Validation Rule</p>
-              <h3>质量基线规则</h3>
+              <p className="eyebrow">Metric Rules</p>
+              <h3>统计口径</h3>
             </div>
           </div>
-          <div className="workflow-list">
-            <div className="workflow-step">
-              <span>1</span>
-              <div><strong>先跑真实 API</strong><p>目标是统计候选图可用率，不再继续空转审核流程。</p></div>
-            </div>
-            <div className="workflow-step">
-              <span>2</span>
-              <div><strong>产品不变优先</strong><p>任何结构漂移、比例离谱、配件凭空增加的图都标废。</p></div>
-            </div>
-            <div className="workflow-step">
-              <span>3</span>
-              <div><strong>先拿基线数字</strong><p>每个图槽先积累 20 张，再决定是否解冻品牌风格和 A+。</p></div>
-            </div>
+          <div className="quality-definition-list">
+            <div><strong>成功率</strong><p>只计算已人工判断的候选图，可用 / 已判断。</p></div>
+            <div><strong>失败原因</strong><p>来自人工选择的问题标签，不把未判断候选图算作失败。</p></div>
+            <div><strong>成本核算</strong><p>优先使用任务成本字段，缺失时按每次生成 ${ESTIMATED_GENERATION_COST_USD.toFixed(2)} 估算。</p></div>
           </div>
         </section>
       </section>
 
-      <QualityReportPanel
-        generationRuns={generationRuns}
-        storyboardBriefs={storyboardBriefs}
-        onExportQualityCsv={exportQualityCsv}
-        onImportQualityCsv={importQualityCsv}
-      />
+      <section className="vz-card panel brand-performance-panel">
+        <div className="panel-header compact">
+          <div>
+            <p className="eyebrow">Brand Performance</p>
+            <h3>品牌表现表</h3>
+          </div>
+        </div>
+        <div className="brand-performance-table">
+          <div className="brand-performance-head">
+            <span>品牌</span>
+            <span>生成次数</span>
+            <span>人工成功率</span>
+            <span>失败原因</span>
+            <span>估算成本</span>
+            <span>可用图成本</span>
+          </div>
+          {brandRows.length ? brandRows.map((row) => (
+            <div className="brand-performance-row" key={row.brandId}>
+              <div>
+                <strong>{row.brandName}</strong>
+                <p>{row.projectCount} 个项目{row.brandVersion ? ` · v${row.brandVersion}` : ''}</p>
+              </div>
+              <div>
+                <strong>{row.stats.total}</strong>
+                <p>{row.outputPresetLabels.join(' / ') || '暂无类型'}</p>
+              </div>
+              <div>
+                <strong>{row.sampleReady ? `${row.stats.usableRate}%` : row.stats.reviewed ? '样本不足' : '-'}</strong>
+                <p>{row.stats.usable} 可用 / {row.issueCount} 问题 · 已判断 {row.reviewCoverage}%</p>
+                <span className="quality-rate-bar"><b style={{ width: `${row.stats.reviewed ? row.stats.usableRate : 0}%` }} /></span>
+              </div>
+              <div className="brand-reason-tags">
+                {row.topReasons.length
+                  ? row.topReasons.map((reason) => <span key={reason.id}>{reason.label} {reason.count}</span>)
+                  : <em>暂无</em>}
+              </div>
+              <div>
+                <strong>${row.estimatedCost.toFixed(2)}</strong>
+                <p>估算总成本</p>
+              </div>
+              <div>
+                <strong>{row.costPerUsable ? `$${row.costPerUsable.toFixed(2)}` : '-'}</strong>
+                <p>成本 / 可用图</p>
+              </div>
+            </div>
+          )) : (
+            <div className="brand-performance-empty">
+              <BarChart3 size={18} />
+              <span>还没有可统计的生成记录。完成生图并人工判断后，品牌表现会出现在这里。</span>
+            </div>
+          )}
+        </div>
+        <p className="panel-note">品牌归因优先使用候选图自身品牌字段；历史记录缺失时回退到项目品牌快照。</p>
+      </section>
 
-      <PromptTuningPanel
-        slot={selectedSlot}
-        generationRuns={generationRuns}
-        promptOverride={selectedPromptOverride}
-        onUpdatePromptOverride={onUpdatePromptOverride}
-      />
     </section>
   );
 }
@@ -6585,6 +7219,10 @@ function GenerationPage({
   generationRuns,
   promptOverrides,
   brandLibrary,
+  brandSnapshot,
+  brandLibraryStatus,
+  brandVersionState,
+  onUpgradeBrandSnapshot,
   onSaveGenerationRun,
   onSaveGenerationRuns,
   onUpdateGenerationRun,
@@ -6602,9 +7240,16 @@ function GenerationPage({
   const [singleBatchCount, setSingleBatchCount] = useState(3);
   const plannedOutputPresetId = getProjectPlanOutputPresetId(projectForm);
   const [outputPresetId, setOutputPresetId] = useState(plannedOutputPresetId);
-  const projectBrandId = getProjectBrandId(projectForm, brandLibrary);
-  const hasSelectedBrand = projectBrandId !== 'none' && brandLibrary.some((brand) => brand.id === projectBrandId);
-  const selectedProjectBrand = brandLibrary.find((brand) => brand.id === projectBrandId);
+  const projectBrandId = String(brandSnapshot?.brandId || getProjectBrandId(projectForm, brandLibrary) || 'none');
+  const selectedProjectBrand = projectBrandId !== 'none' && brandSnapshot?.rules
+    ? normalizeBrandProfile({
+      ...brandSnapshot.rules,
+      id: projectBrandId,
+      name: brandSnapshot.brandName || brandSnapshot.rules.name,
+      version: Number(brandSnapshot.brandVersion || 0)
+    })
+    : null;
+  const hasSelectedBrand = Boolean(selectedProjectBrand?.id && selectedProjectBrand.id !== 'none' && selectedProjectBrand.version);
   const [baselineMode, setBaselineMode] = useState(() => !hasSelectedBrand);
   const previousBrandAvailabilityRef = useRef(hasSelectedBrand);
   const [autoAdvanceReview, setAutoAdvanceReview] = useState(true);
@@ -6625,12 +7270,13 @@ function GenerationPage({
   const prompt = selectedBrief ? buildGenerationPrompt(selectedBrief, selectedSlot, outputPreset, {
     baselineMode,
     promptOverride: selectedPromptOverride,
-    brandLibrary,
-    productLock: structuredProductLock
+    brandProfile: selectedProjectBrand,
+    productLock: structuredProductLock,
+    projectForm
   }) : '';
   const generationPreviewImage = getReferenceImage(projectForm);
   const generationReferences = getGenerationReferenceItems(projectForm, selectedSlot.id, outputPreset.id, selectedBrief?.visualType);
-  const canGenerate = Boolean(selectedBrief && getReferenceImage(projectForm));
+  const canGenerate = Boolean(selectedBrief && getReferenceImage(projectForm) && (baselineMode || hasSelectedBrand));
   const slotRuns = useMemo(
     () => normalizeGenerationRuns(generationRuns.filter((run) => run.slotId === selectedSlot.id)),
     [generationRuns, selectedSlot.id]
@@ -6665,8 +7311,9 @@ function GenerationPage({
     const total = batchLog.length;
     const done = batchLog.filter((item) => item.status === 'done').length;
     const failed = batchLog.filter((item) => item.status === 'failed').length;
+    const blocked = batchLog.filter((item) => item.status === 'blocked').length;
     const running = batchLog.find((item) => item.status === 'running');
-    return { total, done, failed, running };
+    return { total, done, failed, blocked, running };
   }, [batchLog]);
   const isGenerationBusy = isGenerating || isAiReviewing || isBatchRunning || isLocalEditing;
   const generationStatusLooksLikeProgress = /生成|候选图|预审|Gemini|模型接口|API Key|额度|spending cap|quota|rate limit/i.test(generationStatus);
@@ -6993,7 +7640,12 @@ function GenerationPage({
     const runBaselineMode = options.baselineMode ?? baselineMode;
     const localEdit = options.localEdit || null;
     const referenceItems = getGenerationReferenceItems(projectForm, slot.id, runOutputPreset.id, brief?.visualType);
-    const runBrand = getBrandProfile(brief.brandId, brandLibrary);
+    const runBrand = runBaselineMode
+      ? getBrandProfile('none', defaultBrandLibrary)
+      : selectedProjectBrand;
+    if (!runBaselineMode && !runBrand) {
+      throw new Error('当前项目没有可验证的品牌快照，请回到项目资料重新选择并保存品牌。');
+    }
     const shouldAttachLogo = !runBaselineMode
       && runOutputPreset.id === 'aplus'
       && runBrand.id !== 'none'
@@ -7028,8 +7680,9 @@ function GenerationPage({
     const basePrompt = buildGenerationPrompt(brief, slot, runOutputPreset, {
       baselineMode: runBaselineMode,
       promptOverride: promptOverrides?.[slot.id] || '',
-      brandLibrary,
-      productLock: structuredProductLock
+      brandProfile: runBrand,
+      productLock: structuredProductLock,
+      projectForm
     });
     const runPrompt = localEdit
       ? [
@@ -7065,41 +7718,79 @@ function GenerationPage({
     }));
     const sourceImageDataUrl = sourceImages[0]?.dataUrl || await imageSourceToDataUrl(getReferenceImage(projectForm));
     const requestGeneratedImage = async (prompt, attempt = 1) => {
-      const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/generation-tasks`, {
-        method: 'POST',
-        headers: authenticatedJsonHeaders(),
-        body: JSON.stringify({
-          projectId: activeProjectId,
-          runId,
-          clientTaskId: `${runId}-${attempt}`,
-          slotId: slot.id,
-          slotTitle: brief.title || slot.title,
-          projectName: projectForm.projectName || projectForm.productName || projectForm.sku || 'vistamz',
-          prompt,
-          sourceImageDataUrl,
-          sourceImages,
-          size: '1024x1024',
-          quality: 'low'
-        })
-      }, 20000, '生图任务提交超过 20 秒，请检查服务连接后重试。');
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok || !result.ok || !result.task?.id) {
-        const responseMessage = response.status === 404
-          ? '当前 API 服务版本过旧，未找到生图任务入口。'
-          : (result.error || '生图接口返回失败。');
+      const clientTaskId = `${runId}-${attempt}`;
+      const taskPayload = {
+        projectId: activeProjectId,
+        runId,
+        clientTaskId,
+        batchId: options.batchId || '',
+        batchIndex: Number.isFinite(Number(options.batchIndex)) ? Number(options.batchIndex) : null,
+        slotId: slot.id,
+        slotTitle: brief.title || slot.title,
+        projectName: projectForm.projectName || projectForm.productName || projectForm.sku || 'vistamz',
+        projectForm,
+        baselineMode: runBaselineMode,
+        brandId: runBrand?.id || 'none',
+        brandVersion: Number(runBrand?.version || 0),
+        outputPresetId: runOutputPreset.id,
+        prompt,
+        sourceImageDataUrl,
+        sourceImages,
+        size: '1024x1024',
+        quality: 'low'
+      };
+      let taskId = '';
+      let lastSubmitError;
+      for (let submitAttempt = 1; submitAttempt <= 3; submitAttempt += 1) {
+        try {
+          const response = await fetchWithTimeout(`${IMAGE_API_BASE_URL}/api/generation-tasks`, {
+            method: 'POST',
+            headers: authenticatedJsonHeaders(),
+            body: JSON.stringify(taskPayload)
+          }, 35000, '生图任务提交超时，正在尝试恢复连接。');
+          const result = await response.json().catch(() => ({}));
+          if (response.ok && result.ok && result.task?.id) {
+            taskId = result.task.id;
+            break;
+          }
+          const responseMessage = response.status === 404
+            ? '当前 API 服务版本过旧，未找到生图任务入口。'
+            : (result.error || '生图接口返回失败。');
+          const error = new Error(responseMessage);
+          error.status = response.status;
+          throw error;
+        } catch (error) {
+          lastSubmitError = error;
+          const status = Number(error?.status || 0);
+          const retryable = !status || status === 408 || status === 429 || status >= 500;
+          appLogger.log('pipeline.generation.task_submit_failed', {
+            runId,
+            slotId: slot.id,
+            batchId: options.batchId || '',
+            batchIndex: options.batchIndex ?? null,
+            submitAttempt,
+            retryable,
+            status,
+            message: error instanceof Error ? error.message : String(error)
+          }, { level: retryable ? 'warn' : 'error', projectId: activeProjectId, step: 'generation', traceId: runId });
+          if (!retryable || submitAttempt >= 3) break;
+          setGenerationStatus(`第 ${options.batchIndex || 1} 张任务提交暂时超时，正在自动重试（${submitAttempt}/3）...`);
+          await new Promise((resolve) => window.setTimeout(resolve, 700 * (2 ** (submitAttempt - 1))));
+        }
+      }
+      if (!taskId) {
+        const responseMessage = lastSubmitError instanceof Error ? lastSubmitError.message : '生图任务提交失败。';
         appLogger.log('pipeline.generation.request_failed', {
           runId,
           slotId: slot.id,
-          status: response.status,
           attempt,
           message: responseMessage,
           durationMs: Math.round(performance.now() - startedAt)
         }, { level: 'error', projectId: activeProjectId, step: 'generation', traceId: runId });
         throw new Error(responseMessage);
       }
-      const taskId = result.task.id;
       const pollingStartedAt = Date.now();
-      const pollingDeadlineMs = 180000;
+      const pollingDeadlineMs = 480000;
       for (let pollCount = 0; Date.now() - pollingStartedAt < pollingDeadlineMs; pollCount += 1) {
         if (pollCount > 0) await new Promise((resolve) => window.setTimeout(resolve, 1500));
         const taskResponse = await fetchWithTimeout(
@@ -7113,7 +7804,12 @@ function GenerationPage({
           throw new Error(taskResult.error || '无法读取生图任务状态。');
         }
         const task = taskResult.task || {};
-        if (task.status === 'succeeded') return task.output;
+        if (task.status === 'succeeded') {
+          return {
+            ...(task.output || {}),
+            estimatedCostUsd: Number(task.estimatedCostUsd || task.output?.estimatedCostUsd || 0)
+          };
+        }
         if (task.status === 'failed' || task.status === 'cancelled') {
           throw new Error(task.errorMessage || '生图任务重试后仍未完成。');
         }
@@ -7123,7 +7819,7 @@ function GenerationPage({
             : '生图任务已排队，正在等待处理...');
         }
       }
-      throw new Error('生图任务等待超过 3 分钟。服务器任务已保留，完成后会自动恢复到候选图。');
+      throw new Error('生图任务等待超过 8 分钟。服务器任务已保留，完成后会自动恢复到候选图。');
     };
 
       const fitGeneratedImage = async (imageSrc, attempt) => {
@@ -7283,6 +7979,12 @@ function GenerationPage({
         storageMode: storedImage?.storageMode || '',
         prompt: runPrompt,
         baselineMode: runBaselineMode,
+        brandId: runBrand.id,
+        brandName: runBrand.name,
+        brandVersion: Number(runBrand.version || 0),
+        batchId: options.batchId || '',
+        batchIndex: Number.isFinite(Number(options.batchIndex)) ? Number(options.batchIndex) : null,
+        estimatedCostUsd: Number(result.estimatedCostUsd || 0) || ESTIMATED_GENERATION_COST_USD,
         requestId: result.requestId,
         model: result.model,
         referenceCount: sourceImages.length,
@@ -7367,6 +8069,7 @@ function GenerationPage({
       ? activeSlots
         .map((slot) => ({ slot, brief: storyboardBriefs.find((item) => item.id === slot.id) }))
         .filter((task) => task.brief)
+        .sort((a, b) => Number(a.slot.id) - Number(b.slot.id))
       : Array.from({ length: singleBatchCount }, () => ({ slot: selectedSlot, brief: selectedBrief })).filter((task) => task.brief);
     if (!tasks.length) {
       appLogger.log('pipeline.generation.blocked', {
@@ -7402,7 +8105,6 @@ function GenerationPage({
         : `开始为当前卖点生成 ${tasks.length} 张候选图。`);
       const completedRuns = [];
       const failedMessages = [];
-      let reviewChain = Promise.resolve();
       for (const [index, task] of tasks.entries()) {
         const logId = `${task.slot.id}-${index}`;
         setBatchLog((items) => items.map((item) => (
@@ -7411,58 +8113,61 @@ function GenerationPage({
         try {
           const run = await createCandidateRun(task.slot, task.brief, {
             baselineMode,
-            outputPreset
+            outputPreset,
+            batchId: generationSessionId,
+            batchIndex: index + 1
           });
-          completedRuns.unshift(run);
+          completedRuns.push(run);
           onSaveGenerationRuns(completedRuns);
           setActiveRunId(run.id);
           setSelectedSlot(task.slot);
           setBatchLog((items) => items.map((item) => (
             item.id === logId ? { ...item, status: 'reviewing', message: '等待 AI 预审' } : item
           )));
-          reviewChain = reviewChain.then(async () => {
+          setBatchLog((items) => items.map((item) => (
+            item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
+          )));
+          try {
+            const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, { outputPreset });
+            const runIndex = completedRuns.findIndex((item) => item.id === run.id);
+            if (runIndex >= 0) completedRuns.splice(runIndex, 1, reviewedRun);
+            onSaveGenerationRuns(completedRuns);
             setBatchLog((items) => items.map((item) => (
-              item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
+              item.id === logId
+                ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
+                : item
             )));
-            try {
-              const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, { outputPreset });
-              const runIndex = completedRuns.findIndex((item) => item.id === run.id);
-              if (runIndex >= 0) completedRuns.splice(runIndex, 1, reviewedRun);
-              onSaveGenerationRuns(completedRuns);
-              setBatchLog((items) => items.map((item) => (
-                item.id === logId
-                  ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
-                  : item
-              )));
-            } catch (reviewError) {
-              const message = getGenerationErrorMessage(reviewError);
-              const keptRun = { ...run, note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。` };
-              const runIndex = completedRuns.findIndex((item) => item.id === run.id);
-              if (runIndex >= 0) completedRuns.splice(runIndex, 1, keptRun);
-              onSaveGenerationRuns(completedRuns);
-              failedMessages.push(`AI 预审失败：${message}`);
-              setBatchLog((items) => items.map((item) => (
-                item.id === logId
-                  ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
-                  : item
-              )));
-            }
-          });
+          } catch (reviewError) {
+            const message = getGenerationErrorMessage(reviewError);
+            const keptRun = { ...run, note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。` };
+            const runIndex = completedRuns.findIndex((item) => item.id === run.id);
+            if (runIndex >= 0) completedRuns.splice(runIndex, 1, keptRun);
+            onSaveGenerationRuns(completedRuns);
+            failedMessages.push(`AI 预审失败：${message}`);
+            setBatchLog((items) => items.map((item) => (
+              item.id === logId
+                ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
+                : item
+            )));
+          }
         } catch (error) {
           const message = getGenerationErrorMessage(error);
           failedMessages.push(message);
           setBatchLog((items) => items.map((item) => (
             item.id === logId
               ? { ...item, status: 'failed', message }
-              : item
+              : item.status === 'waiting'
+                ? { ...item, status: 'blocked', message: `前序第 ${index + 1} 张失败，已暂停` }
+                : item
           )));
+          setGenerationStatus(`第 ${index + 1} 张生成失败，已暂停后续任务，避免跳号或混入错误结果。`);
+          break;
         }
       }
-      if (completedRuns.length) {
-        setGenerationStatus('候选图已生成，正在完成剩余 AI 预审...');
-      }
-      await reviewChain;
       setIsBatchRunning(false);
+      if (activeGenerationMode === 'all-one' && tasks[0]?.slot) {
+        setSelectedSlot(tasks[0].slot);
+      }
       appLogger.log('pipeline.generation.batch_completed', {
         generationSessionId,
         completedCount: completedRuns.length,
@@ -7725,34 +8430,34 @@ function GenerationPage({
               <div className="generation-method-grid">
                 <button
                   className="vz-btn vz-btn--primary primary-button generation-action-button"
-                  disabled={isGenerationBusy}
+                  disabled={isGenerationBusy || !canGenerate}
                   onClick={() => {
                     setGenerationMode('single-multi');
                     runGeneration('single-multi');
                   }}
                 >
                   <Sparkles size={15} />
-                  重生当前图 · 3 张
+                  当前图生成 3 张
                 </button>
                 <button
                   className="vz-btn vz-btn--primary primary-button generation-action-button"
-                  disabled={isGenerationBusy}
+                  disabled={isGenerationBusy || !canGenerate}
                   onClick={() => {
                     setGenerationMode('all-one');
                     runGeneration('all-one');
                   }}
                 >
                   <Layers size={15} />
-                  整套生成 · 各 1 张
+                  整套各生成 1 张
                 </button>
               </div>
               {generationMode === 'single-multi' ? (
                 <div className="generation-count-row muted">
-                  <span>当前图槽固定生成 3 张候选图，用于比较后选定一张。</span>
+                  <span>当前图槽生成 3 张候选图，用于比较后选定一张。</span>
                 </div>
               ) : (
                 <div className="generation-count-row muted">
-                  <span>当前会按 7 张图片方案各生成 1 张，并自动进入待判断队列。</span>
+                  <span>按整套图片方案各生成 1 张，并自动进入待判断队列。</span>
                 </div>
               )}
             </div>
@@ -7763,7 +8468,13 @@ function GenerationPage({
                   <Palette size={16} />
                   <span>图片风格</span>
                 </div>
-                <small>{hasSelectedBrand ? '可在生成前临时切换' : '未选择品牌，仅可使用基线'}</small>
+                <small>{hasSelectedBrand
+                  ? brandVersionState?.latestVersion
+                    ? `项目锁定 v${selectedProjectBrand.version} · 品牌库 v${brandVersionState.latestVersion}`
+                    : `项目品牌快照 v${selectedProjectBrand.version}`
+                  : brandLibraryStatus === 'loading'
+                    ? '正在验证项目品牌'
+                    : '未选择品牌，仅可使用基线'}</small>
               </div>
               <div className="generation-style-options" role="group" aria-label="选择图片风格模式">
                 <button
@@ -7784,6 +8495,14 @@ function GenerationPage({
                 </button>
               </div>
               <p>{baselineMode ? '使用统一的商业基线，不读取品牌色、标题与箭头规则。' : '生成时会读取项目已绑定品牌的色彩、标题、箭头和场景规则。'}</p>
+              {brandVersionState?.canUpgrade && (
+                <div className="generation-brand-update-notice">
+                  <span>品牌库已更新到 v{brandVersionState.latestVersion}，本项目仍按 v{brandVersionState.lockedVersion} 生成。</span>
+                  <button className="vz-btn vz-btn--ghost" type="button" onClick={onUpgradeBrandSnapshot}>
+                    升级项目版本
+                  </button>
+                </div>
+              )}
             </section>
             </div>
 
@@ -7791,9 +8510,6 @@ function GenerationPage({
               <div className="generation-brief">
                 <div className="generation-context-head">
                   <span className="eyebrow">Generation Context</span>
-                  <span className="vz-tag generation-context-mode">
-                    {baselineMode ? '基线模式' : `品牌模式${selectedProjectBrand?.name ? ` · ${selectedProjectBrand.name}` : ''}`}
-                  </span>
                 </div>
                 <div className="generation-brief-summary">
                   <span>本图证明什么</span>
@@ -7849,7 +8565,7 @@ function GenerationPage({
               </div>
             ) : (
               <div className="brief-empty">
-                <Sparkles size={22} />
+                <FileText size={22} />
                 <strong>还没有可生图的 brief</strong>
                 <p>请先回到图片方案，生成每张图的角色、卖点和画面证明方式。</p>
               </div>
@@ -7860,7 +8576,7 @@ function GenerationPage({
                 <div className="candidate-preview candidate-preview-pending">
                   {isGenerationBusy && <VistamzLoader size={40} label={generationStageLabel} />}
                   <strong>{candidatePendingTitle}</strong>
-                  <p>{batchProgress.total ? `${batchProgress.done + batchProgress.failed}/${batchProgress.total} 已处理。${candidatePendingDetail}` : candidatePendingDetail}</p>
+                  <p>{batchProgress.total ? `${batchProgress.done + batchProgress.failed + batchProgress.blocked}/${batchProgress.total} 已处理。${candidatePendingDetail}` : candidatePendingDetail}</p>
                 </div>
               </div>
             )}
@@ -8213,7 +8929,7 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
   }, [activeSlots, selectedSlotId]);
 
   return (
-    <section className="review-workspace">
+    <section className={activeRole === 'ops' ? 'review-workspace operator-review-workspace' : 'review-workspace'}>
       <aside className="review-slot-panel">
         <div className="review-slot-panel-head"><p className="eyebrow">REVIEW QUEUE</p><strong>图片审核</strong><span>{approved}/{activeSlots.length || STORYBOARD_SLOT_COUNT} 已最终放行</span></div>
         <div className="review-slot-list">
@@ -8498,6 +9214,7 @@ function WorkspaceApp({ session, onLogout }) {
   ));
   const [projects, setProjects] = useState(initialProjects);
   const [brandLibrary, setBrandLibrary] = useState(initialBrands);
+  const [brandLibraryStatus, setBrandLibraryStatus] = useState('loading');
   const [activeProjectId, setActiveProjectId] = useState(initialProject.id);
   const [projectForm, setProjectForm] = useState(initialProject.form);
   const [ledgerFacts, setLedgerFacts] = useState(initialProject.ledgerFacts);
@@ -8511,6 +9228,7 @@ function WorkspaceApp({ session, onLogout }) {
   const [isLoadingTeamProjects, setIsLoadingTeamProjects] = useState(true);
   const [focusRequest, setFocusRequest] = useState(null);
   const [isPlanningStoryboard, setIsPlanningStoryboard] = useState(false);
+  const [isUpgradingBrandSnapshot, setIsUpgradingBrandSnapshot] = useState(false);
   const [regeneratingSlotId, setRegeneratingSlotId] = useState(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const previousSectionRef = useRef(activeSection);
@@ -8527,13 +9245,18 @@ function WorkspaceApp({ session, onLogout }) {
     let mounted = true;
     listTeamBrands()
       .then((remoteBrands) => {
-        if (!mounted || !remoteBrands.length) return;
+        if (!mounted) return;
         const baseline = normalizeBrandLibrary(defaultBrandLibrary).find((brand) => brand.id === 'none');
         const normalized = normalizeBrandLibrary([baseline, ...remoteBrands].filter(Boolean));
         setBrandLibrary(normalized);
         storeBrands(normalized);
+        setBrandLibraryStatus('ready');
       })
       .catch((error) => {
+        if (!mounted) return;
+        const baseline = normalizeBrandLibrary(defaultBrandLibrary).find((brand) => brand.id === 'none');
+        setBrandLibrary(normalizeBrandLibrary([baseline].filter(Boolean)));
+        setBrandLibraryStatus('error');
         appLogger.error('brand.library.load_failed', error, { step: 'brands' });
       });
     return () => { mounted = false; };
@@ -8720,6 +9443,14 @@ function WorkspaceApp({ session, onLogout }) {
     () => getProjectScopedBrandLibrary(projectForm, currentProject, brandLibrary),
     [brandLibrary, currentProject?.brandSnapshot, projectForm.brandId]
   );
+  const projectFrozenBrand = useMemo(
+    () => getProjectFrozenBrandProfile(projectForm, currentProject),
+    [currentProject?.brandSnapshot, projectForm.brandId]
+  );
+  const projectBrandVersionState = useMemo(
+    () => getProjectBrandVersionState(projectForm, currentProject, brandLibrary, brandLibraryStatus),
+    [brandLibrary, brandLibraryStatus, currentProject?.brandSnapshot, projectForm.brandId]
+  );
   const slotTotal = activeSlots.length || STORYBOARD_SLOT_COUNT;
   const currentProductLock = getProjectProductLock(projectForm);
   const productLockChanged = currentProject ? !isSameProductLock(currentProject, projectForm) : false;
@@ -8849,7 +9580,7 @@ function WorkspaceApp({ session, onLogout }) {
     setProjects(normalizedProjects);
     storeProjects(normalizedProjects);
     const remoteProject = normalizedProjects.find((project) => project.id === remoteProjectId);
-    if (remoteProject?.cloud?.remote) void syncProjectToTeam(remoteProject);
+    return remoteProject?.cloud?.remote ? syncProjectToTeam(remoteProject) : Promise.resolve();
   };
   const updateBrandLibrary = (nextBrands) => {
     const normalized = normalizeBrandLibrary(nextBrands);
@@ -8923,6 +9654,54 @@ function WorkspaceApp({ session, onLogout }) {
       assigneeName: assignee?.displayName || ''
     }, { projectId, step: 'team' });
     setSaveStatus('项目负责人已更新。');
+  };
+  const upgradeCurrentProjectBrandSnapshot = async () => {
+    if (!currentProject?.cloud?.remote || !projectBrandVersionState.canUpgrade || isUpgradingBrandSnapshot) return;
+    const confirmed = window.confirm(
+      `将项目品牌从 v${projectBrandVersionState.lockedVersion} 升级到 v${projectBrandVersionState.latestVersion}？\n\n`
+      + '产品资料、参考图和卖点会保留；旧图片方案、候选图、审核结果和导出选择将失效。'
+    );
+    if (!confirmed) return;
+    setIsUpgradingBrandSnapshot(true);
+    setSaveStatus('正在升级项目品牌版本...');
+    try {
+      const remote = await upgradeTeamProjectBrandSnapshot(currentProject.id);
+      const nextForm = { ...projectForm, storyboardSlotCountOverride: 0 };
+      const nextProject = {
+        ...currentProject,
+        form: nextForm,
+        storyboardBriefs: [],
+        reviewDecisions: [],
+        generationRuns: [],
+        promptOverrides: {},
+        exportSelections: {},
+        brandSnapshot: remote.brandSnapshot,
+        cloud: { ...currentProject.cloud, status: remote.status || 'content' },
+        updatedAt: new Date().toISOString()
+      };
+      const nextProjects = projects.map((project) => project.id === currentProject.id ? nextProject : project);
+      setProjects(nextProjects);
+      storeProjects(nextProjects);
+      setProjectForm(nextForm);
+      setStoryboardBriefs([]);
+      setReviewDecisions([]);
+      setGenerationRuns([]);
+      setPromptOverrides({});
+      setExportSelections({});
+      setSelectedSlot(slots[0]);
+      appLogger.log('audit.project.brand_snapshot_upgraded', {
+        brandId: remote.brandSnapshot?.brandId,
+        fromVersion: remote.fromVersion,
+        toVersion: remote.toVersion,
+        cancelledTaskCount: remote.cancelledTaskCount || 0
+      }, { projectId: currentProject.id, step: 'project' });
+      setSaveStatus(`品牌快照已升级到 v${remote.toVersion}。旧方案和候选图已失效，请重新规划图片方案。`);
+    } catch (error) {
+      appLogger.error('team.project.brand_snapshot_upgrade_failed', error, { projectId: currentProject.id, step: 'project' });
+      setSaveStatus(error instanceof Error ? error.message : '品牌版本升级失败，请稍后重试。');
+    } finally {
+      setIsUpgradingBrandSnapshot(false);
+    }
   };
   const changePlanOutputPreset = (presetId) => {
     const nextPreset = getOutputPresetById(presetId);
@@ -9062,7 +9841,7 @@ function WorkspaceApp({ session, onLogout }) {
     const nextProjects = projects.some((project) => project.id === activeProjectId)
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
       : [nextProject, ...projects];
-    persistProjects(nextProjects, nextProject.id);
+    await persistProjects(nextProjects, nextProject.id);
     setActiveProjectId(nextProject.id);
     appLogger.log('audit.project.saved', {
       projectName: nextProject.form?.projectName || nextProject.form?.productName || nextProject.form?.sku || '',
@@ -9238,6 +10017,53 @@ function WorkspaceApp({ session, onLogout }) {
     }, { projectId: activeProjectId, step: 'ledger' });
     setSaveStatus('卖点已添加，图片方案会使用最新内容。');
   };
+  const deleteLedgerFact = (index) => {
+    if (index < 0 || index >= ledgerFacts.length) return;
+    const removed = ledgerFacts[index];
+    const nextLedgerFacts = ledgerFacts.filter((_, currentIndex) => currentIndex !== index);
+    setLedgerFacts(nextLedgerFacts);
+    const nextProject = createProjectRecord(projectForm, nextLedgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    const nextProjects = projects.some((project) => project.id === activeProjectId)
+      ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
+      : [nextProject, ...projects];
+    persistProjects(nextProjects);
+    appLogger.log('audit.ledger.claim_deleted', {
+      index,
+      claim: removed?.claim || ''
+    }, { projectId: activeProjectId, step: 'ledger' });
+    setSaveStatus('卖点已删除，后续图片方案不会再使用该内容。');
+  };
+  const mergeLedgerFacts = (indices = []) => {
+    const selected = [...new Set(indices)]
+      .filter((index) => index >= 0 && index < ledgerFacts.length)
+      .sort((a, b) => a - b);
+    if (selected.length < 2) return;
+    const mergedClaim = selected.map((index) => ledgerFacts[index]?.claim).filter(Boolean).join('；');
+    const mergedFact = {
+      claim: mergedClaim,
+      ...classifyClaim(mergedClaim, 'manual'),
+      source: 'manual-merge'
+    };
+    const insertAt = selected[0];
+    const selectedSet = new Set(selected);
+    const nextLedgerFacts = [];
+    ledgerFacts.forEach((fact, index) => {
+      if (index === insertAt) nextLedgerFacts.push(mergedFact);
+      if (!selectedSet.has(index)) nextLedgerFacts.push(fact);
+    });
+    setLedgerFacts(nextLedgerFacts);
+    const nextProject = createProjectRecord(projectForm, nextLedgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    const nextProjects = projects.some((project) => project.id === activeProjectId)
+      ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
+      : [nextProject, ...projects];
+    persistProjects(nextProjects);
+    appLogger.log('audit.ledger.claims_merged', {
+      indices: selected,
+      mergedClaim,
+      state: mergedFact.state
+    }, { projectId: activeProjectId, step: 'ledger' });
+    setSaveStatus(`已合并 ${selected.length} 条卖点，可继续编辑合并后的内容。`);
+  };
   const generateStoryboardBriefs = async () => {
     if (isPlanningStoryboard || regeneratingSlotId) return;
     if (!ledgerFacts.length) {
@@ -9246,6 +10072,16 @@ function WorkspaceApp({ session, onLogout }) {
       }, { level: 'warn', projectId: activeProjectId, step: 'storyboard' });
       setSaveStatus('请先填写卖点并生成卖点草稿');
       navigateTo('project', 'claims');
+      return;
+    }
+    if (currentProject && !isSameContentLanguage(currentProject, projectForm)) {
+      setSaveStatus('目标站点或图片文案语言已更改。请先保存项目，再重新生成图片方案。');
+      navigateTo('project', 'project-form');
+      return;
+    }
+    if (getProjectBrandId(projectForm, projectBrandLibrary) !== 'none' && !projectFrozenBrand) {
+      setSaveStatus('当前项目缺少可验证的品牌快照，请先保存项目资料后再生成图片方案。');
+      navigateTo('project', 'project-form');
       return;
     }
     const referenceReadiness = getReferenceReadiness(projectForm);
@@ -9278,6 +10114,7 @@ function WorkspaceApp({ session, onLogout }) {
       let briefs;
       let plannerMessage = 'AI 已根据产品图、卖点和品牌生成图片方案';
       const lockMatches = currentProject ? isSameProductLock(currentProject, projectForm) : true;
+      const languageMatches = currentProject ? isSameContentLanguage(currentProject, planningForm) : true;
       try {
         const aiPlan = await planStoryboardWithApi(activeProjectId, planningForm, refreshedLedgerFacts, projectBrandLibrary);
         briefs = aiPlan.briefs;
@@ -9292,9 +10129,9 @@ function WorkspaceApp({ session, onLogout }) {
         plannerMessage = `AI 方案暂不可用，已使用本地兜底方案。${error instanceof Error ? error.message : ''}`.trim();
       }
       const decisions = createReviewDecisions(briefs);
-      const preservedGenerationRuns = lockMatches ? normalizeGenerationRuns(generationRuns) : [];
-      const preservedPromptOverrides = lockMatches ? { ...promptOverrides } : {};
-      const preservedExportSelections = lockMatches ? { ...exportSelections } : {};
+      const preservedGenerationRuns = lockMatches && languageMatches ? normalizeGenerationRuns(generationRuns) : [];
+      const preservedPromptOverrides = lockMatches && languageMatches ? { ...promptOverrides } : {};
+      const preservedExportSelections = lockMatches && languageMatches ? { ...exportSelections } : {};
       setLedgerFacts(refreshedLedgerFacts);
       setProjectForm(planningForm);
       setStoryboardBriefs(briefs);
@@ -9315,11 +10152,12 @@ function WorkspaceApp({ session, onLogout }) {
         briefCount: briefs.length,
         outputPresetId: planningForm.planOutputPresetId,
         lockMatches,
+        languageMatches,
         durationMs: Math.round(performance.now() - startedAt)
       }, { projectId: nextProject.id, step: 'storyboard' });
-      setSaveStatus(lockMatches
+      setSaveStatus(lockMatches && languageMatches
         ? `${plannerMessage}，并已保留 ${preservedGenerationRuns.length} 条生图验证记录。下一步可以进入生图任务`
-        : `${plannerMessage}。检测到产品锁变化，旧生图记录已清空，避免混入其他产品。`);
+        : `${plannerMessage}。检测到产品锁或图片语言变化，旧生图记录已清空，避免混入其他产品或语言。`);
       navigateTo('storyboard', 'storyboard');
     } catch (error) {
       appLogger.error('pipeline.storyboard.failed', error, {
@@ -9338,6 +10176,16 @@ function WorkspaceApp({ session, onLogout }) {
     if (!ledgerFacts.length) {
       setSaveStatus('请先填写卖点并生成卖点草稿');
       navigateTo('project', 'claims');
+      return;
+    }
+    if (currentProject && !isSameContentLanguage(currentProject, projectForm)) {
+      setSaveStatus('目标站点或图片文案语言已更改。请先保存项目，再重新生成图片方案。');
+      navigateTo('project', 'project-form');
+      return;
+    }
+    if (getProjectBrandId(projectForm, projectBrandLibrary) !== 'none' && !projectFrozenBrand) {
+      setSaveStatus('当前项目缺少可验证的品牌快照，请先保存项目资料后再重生成方案。');
+      navigateTo('project', 'project-form');
       return;
     }
     const referenceReadiness = getReferenceReadiness(projectForm);
@@ -9619,6 +10467,7 @@ function WorkspaceApp({ session, onLogout }) {
         : ['project', 'ledger', 'storyboard', 'generation', 'review', 'export'].includes(item.id)
   ));
   const isProjectWorkspace = projectStageItems.some((item) => item.id === activeSection) || activeSection === 'handoff';
+  const shouldShowSimpleHeader = !isProjectWorkspace && activeSection !== 'projects' && session.user.role !== 'admin';
   const roleLabel = session.user.role === 'designer' ? '设计' : session.user.role === 'operator' ? '运营' : '管理员';
 
   const pageMap = {
@@ -9639,13 +10488,12 @@ function WorkspaceApp({ session, onLogout }) {
         projectForm={projectForm}
         setProjectForm={setProjectForm}
         brandLibrary={brandLibrary}
-        ledgerFacts={ledgerFacts}
         productLockChanged={productLockChanged}
-        productLockValue={currentProductLock}
         onGenerateLedgerDraft={generateLedgerDraft}
-        onContinueToStoryboard={continueToStoryboard}
         onSaveProject={saveCurrentProject}
-        onManageLedger={() => navigateTo('ledger', 'ledger')}
+        brandVersionState={projectBrandVersionState}
+        onUpgradeBrandSnapshot={upgradeCurrentProjectBrandSnapshot}
+        isUpgradingBrandSnapshot={isUpgradingBrandSnapshot}
         saveStatus={saveStatus}
         focusRequest={focusRequest}
       />
@@ -9653,6 +10501,7 @@ function WorkspaceApp({ session, onLogout }) {
     brands: (
       <BrandLibraryPage
         brandLibrary={brandLibrary}
+        brandLibraryStatus={brandLibraryStatus}
         onUpdateBrands={updateBrandLibrary}
         onSaveBrand={saveBrandProfile}
         onDeleteBrand={removeBrandProfile}
@@ -9672,11 +10521,10 @@ function WorkspaceApp({ session, onLogout }) {
       <QualityConsolePage
         activeProjectId={activeProjectId}
         projectForm={projectForm}
-        storyboardBriefs={storyboardBriefs}
+        projects={projects}
         generationRuns={generationRuns}
         selectedSlot={selectedSlot}
         promptOverrides={promptOverrides}
-        onSaveGenerationRuns={saveGenerationRuns}
         onUpdatePromptOverride={updatePromptOverride}
         focusRequest={focusRequest}
       />
@@ -9688,6 +10536,8 @@ function WorkspaceApp({ session, onLogout }) {
         ledgerFacts={ledgerFacts}
         onUpdateFact={updateLedgerFact}
         onAddFact={addLedgerFact}
+        onDeleteFact={deleteLedgerFact}
+        onMergeFacts={mergeLedgerFacts}
         onGoStoryboard={continueToStoryboard}
         focusRequest={focusRequest}
       />
@@ -9722,6 +10572,10 @@ function WorkspaceApp({ session, onLogout }) {
         generationRuns={generationRuns}
         promptOverrides={promptOverrides}
         brandLibrary={projectBrandLibrary}
+        brandSnapshot={currentProject?.brandSnapshot || null}
+        brandLibraryStatus={brandLibraryStatus}
+        brandVersionState={projectBrandVersionState}
+        onUpgradeBrandSnapshot={upgradeCurrentProjectBrandSnapshot}
         onSaveGenerationRun={saveGenerationRun}
         onSaveGenerationRuns={saveGenerationRuns}
         onUpdateGenerationRun={updateGenerationRun}
@@ -9766,8 +10620,10 @@ function WorkspaceApp({ session, onLogout }) {
     )
   };
 
+  const appShellClass = `app-shell role-${session.user.role}${isSidebarCollapsed ? ' sidebar-collapsed' : ''}`;
+
   return (
-    <main className={isSidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+    <main className={appShellClass}>
       <aside className="sidebar workspace-sidebar">
         <div className="sidebar-top-row">
           <div className="brand">
@@ -9797,6 +10653,12 @@ function WorkspaceApp({ session, onLogout }) {
 
         <div className="sidebar-bottom-group">
           {saveStatus && <div className="workspace-save-status workspace-sidebar-save-status" role="status">{saveStatus}</div>}
+          {saveStatus && (
+            <span className="sidebar-unread-badge" title={saveStatus} aria-label="1 条未读通知">
+              <Bell size={17} aria-hidden="true" />
+              <span className="sidebar-unread-count">1</span>
+            </span>
+          )}
           <div className="workspace-user">
             <div className="workspace-user-copy">
               <span>{session.user.displayName || '成员'}</span>
@@ -9829,7 +10691,7 @@ function WorkspaceApp({ session, onLogout }) {
           </header>
         )}
 
-        {!isProjectWorkspace && activeSection !== 'projects' && (
+        {shouldShowSimpleHeader && (
           <header className="workspace-simple-header">
             <div><p className="eyebrow">{currentNav.eyebrow}</p><h2>{currentNav.title}</h2><p>{currentNav.subtitle}</p></div>
           </header>
