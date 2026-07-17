@@ -200,6 +200,34 @@ export async function listGenerationTasks(projectId, limit = 50) {
   return result.tasks || [];
 }
 
+export async function createGenerationBatch(payload) {
+  const result = await request('/api/generation-batches', {
+    method: 'POST',
+    timeoutMs: 45000,
+    body: JSON.stringify(payload)
+  });
+  return result.batch;
+}
+
+export async function getGenerationBatch(projectId, batchId) {
+  const result = await request(`/api/generation-batches/${encodeURIComponent(batchId)}?projectId=${encodeURIComponent(projectId)}`, {
+    timeoutMs: 15000
+  });
+  return result.batch;
+}
+
+export async function listGenerationBatches(projectId, limit = 10) {
+  const result = await request(`/api/generation-batches?projectId=${encodeURIComponent(projectId)}&limit=${encodeURIComponent(limit)}`);
+  return result.batches || [];
+}
+
+export async function getGenerationTaskImageUrl(projectId, taskId) {
+  const result = await request(`/api/generation-tasks/${encodeURIComponent(taskId)}/image-url?projectId=${encodeURIComponent(projectId)}`, {
+    timeoutMs: 20000
+  });
+  return result.imageUrl || '';
+}
+
 export async function cancelGenerationTask(projectId, taskId) {
   const result = await request(`/api/generation-tasks/${encodeURIComponent(taskId)}`, {
     method: 'PATCH',

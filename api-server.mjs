@@ -579,6 +579,36 @@ async function saveUploadedAsset({ imageDataUrl, storageKey }) {
   return assetStorage.putObject({ key: storageKey, data, contentType });
 }
 
+async function persistGenerationSourceImages({ projectId, scopeId, images = [] }) {
+  return Promise.all((Array.isArray(images) ? images : []).map(async (image, index) => {
+    if (!image || typeof image !== 'object') return image;
+    const inlineValue = [image.dataUrl, image.imageDataUrl, image.preview]
+      .find((value) => String(value || '').startsWith('data:'));
+    if (!inlineValue) return image;
+    const parsed = parseInlineImage(inlineValue);
+    const extension = getImageExtension(parsed.contentType);
+    const sourceId = sanitizeFilenamePart(image.id || image.name || `source-${index + 1}`);
+    const stored = await saveUploadedAsset({
+      imageDataUrl: inlineValue,
+      storageKey: `projects/${sanitizeFilenamePart(projectId)}/generation-inputs/${sanitizeFilenamePart(scopeId)}/${sourceId}.${extension}`
+    });
+    const { dataUrl: _dataUrl, imageDataUrl: _imageDataUrl, ...rest } = image;
+    return {
+      ...rest,
+      preview: String(image.preview || '').startsWith('data:') ? '' : image.preview,
+      imageUrl: stored.url || '',
+      storageKey: stored.storageKey
+    };
+  }));
+}
+
+function stripInlineImagesFromTaskPayload(value) {
+  if (typeof value === 'string') return value.startsWith('data:image/') ? '' : value;
+  if (Array.isArray(value)) return value.map(stripInlineImagesFromTaskPayload);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, stripInlineImagesFromTaskPayload(item)]));
+}
+
 function getAssetContentType(storageKey = '') {
   const extension = extname(storageKey).toLowerCase();
   if (extension === '.png') return 'image/png';
@@ -2278,13 +2308,18 @@ const server = http.createServer(async (request, response) => {
       const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['designer', 'admin'] });
       const authoritativePayload = getAuthoritativeProjectPayload(payload, project, { prependPrompt: true });
       const brandExampleSources = getBrandExampleSourceImages(authoritativePayload.brandSnapshot, authoritativePayload);
-      const authoritativeSourceImages = [
+      const authoritativeSourceImages = await persistGenerationSourceImages({
+        projectId: payload.projectId,
+        scopeId: payload.clientTaskId || payload.runId || `task-${Date.now()}`,
+        images: [
         ...(Array.isArray(authoritativePayload.sourceImages) ? authoritativePayload.sourceImages : []),
         ...brandExampleSources
-      ];
+        ]
+      });
       const task = await generationTaskStore.createTask(session.user, {
-        ...authoritativePayload,
+        ...stripInlineImagesFromTaskPayload(authoritativePayload),
         sourceImages: authoritativeSourceImages,
+        sourceImageDataUrl: '',
         brandExampleCount: brandExampleSources.length,
         requestedBy: session.user.id
       });
@@ -2314,20 +2349,135 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && requestPath === '/api/generation-batches') {
+    try {
+      const payload = await readJsonBody(request);
+      const projectId = String(payload.projectId || payload.common?.projectId || '');
+      const { session, project } = await requireProjectAction(
+        request,
+        { projectId },
+        { allowedRoles: ['designer', 'admin'] }
+      );
+      const common = payload.common && typeof payload.common === 'object' ? payload.common : {};
+      const authoritativeCommon = getAuthoritativeProjectPayload({
+        ...common,
+        projectId
+      }, project, { prependPrompt: false });
+      const brandExampleSources = getBrandExampleSourceImages(
+        authoritativeCommon.brandSnapshot,
+        authoritativeCommon
+      );
+      const assetPool = await persistGenerationSourceImages({
+        projectId,
+        scopeId: `${payload.clientBatchId || Date.now()}-references`,
+        images: Array.isArray(payload.sourceImages) ? payload.sourceImages : []
+      });
+      const persistedBrandExamples = await persistGenerationSourceImages({
+        projectId,
+        scopeId: `${payload.clientBatchId || Date.now()}-brand`,
+        images: brandExampleSources
+      });
+      const assetById = new Map(assetPool.map((image) => [String(image.id || ''), image]));
+      const requestedTasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+      if (!requestedTasks.length || requestedTasks.length > 12) {
+        sendJson(response, 400, { ok: false, code: 'INVALID_GENERATION_BATCH', error: '整套生图任务必须包含 1–12 张图片。' });
+        return;
+      }
+      const authoritativeTasks = requestedTasks.map((item, index) => {
+        const sourceImages = Array.isArray(item.sourceImageIds)
+          ? item.sourceImageIds.map((id) => assetById.get(String(id))).filter(Boolean)
+          : Array.isArray(item.sourceImages)
+            ? item.sourceImages
+            : assetPool;
+        const authoritativePayload = getAuthoritativeProjectPayload({
+          ...common,
+          ...item,
+          projectId,
+          sourceImages,
+          sourceImageDataUrl: sourceImages[0]?.dataUrl || sourceImages[0]?.preview || '',
+          batchIndex: index + 1
+        }, project, { prependPrompt: true });
+        return {
+          ...stripInlineImagesFromTaskPayload(authoritativePayload),
+          sourceImages: [...sourceImages, ...persistedBrandExamples],
+          brandExampleCount: persistedBrandExamples.length,
+          requestedBy: session.user.id
+        };
+      });
+      const batch = await generationTaskStore.createBatch(session.user, {
+        projectId,
+        clientBatchId: payload.clientBatchId,
+        planId: payload.planId,
+        tasks: authoritativeTasks
+      });
+      void auditProjectAction(session.user, projectId, 'pipeline.generation.batch_created', {
+        step: 'generation',
+        traceId: payload.clientBatchId || batch.id,
+        batchId: batch.id,
+        taskCount: batch.tasks.length
+      }).catch((error) => console.warn(`Generation batch audit unavailable: ${error instanceof Error ? error.message : String(error)}`));
+      void runGenerationWorkerOnce();
+      sendJson(response, 202, { ok: true, batch });
+    } catch (error) {
+      if (error instanceof Stage1Error) {
+        sendStage1Error(response, error);
+        return;
+      }
+      sendJson(response, Number(error?.status || 500), {
+        ok: false,
+        code: error?.code || 'BATCH_CREATE_FAILED',
+        error: error instanceof Error ? error.message : 'Unable to create generation batch'
+      });
+    }
+    return;
+  }
+
+  if (request.method === 'GET' && requestPath === '/api/generation-batches') {
+    try {
+      const url = new URL(request.url, PUBLIC_BASE_URL);
+      const projectId = String(url.searchParams.get('projectId') || '');
+      await requireProjectAction(request, { projectId }, { allowedRoles: ['designer', 'admin'] });
+      const batches = await generationTaskStore.listRecentBatches(projectId, url.searchParams.get('limit') || 10);
+      sendJson(response, 200, { ok: true, batches });
+    } catch (error) {
+      if (error instanceof Stage1Error) {
+        sendStage1Error(response, error);
+        return;
+      }
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : 'Unable to list generation batches' });
+    }
+    return;
+  }
+
+  const generationBatchMatch = /^\/api\/generation-batches\/([^/]+)$/.exec(requestPath);
+  if (request.method === 'GET' && generationBatchMatch) {
+    try {
+      const url = new URL(request.url, PUBLIC_BASE_URL);
+      const projectId = String(url.searchParams.get('projectId') || '');
+      await requireProjectAction(request, { projectId }, { allowedRoles: ['designer', 'admin'] });
+      const batch = await generationTaskStore.getBatch(decodeURIComponent(generationBatchMatch[1]), projectId);
+      if (!batch) {
+        sendJson(response, 404, { ok: false, code: 'BATCH_NOT_FOUND', error: 'Generation batch not found' });
+        return;
+      }
+      sendJson(response, 200, { ok: true, batch });
+    } catch (error) {
+      if (error instanceof Stage1Error) {
+        sendStage1Error(response, error);
+        return;
+      }
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : 'Unable to read generation batch' });
+    }
+    return;
+  }
+
   if (request.method === 'GET' && requestPath === '/api/generation-tasks') {
     try {
       const url = new URL(request.url, PUBLIC_BASE_URL);
       const projectId = String(url.searchParams.get('projectId') || '');
       await requireProjectAction(request, { projectId }, { allowedRoles: ['designer', 'admin'] });
       const tasks = await generationTaskStore.listProjectTasks(projectId, url.searchParams.get('limit') || 50);
-      const refreshedTasks = await Promise.all(tasks.map(async (task) => {
-        if (task.status !== 'succeeded' || !task.output?.storageKey) return task;
-        return {
-          ...task,
-          output: { ...task.output, imageUrl: await assetStorage.getUrl(task.output.storageKey) }
-        };
-      }));
-      sendJson(response, 200, { ok: true, tasks: refreshedTasks });
+      sendJson(response, 200, { ok: true, tasks });
     } catch (error) {
       if (error instanceof Stage1Error) {
         sendStage1Error(response, error);
@@ -2339,6 +2489,31 @@ const server = http.createServer(async (request, response) => {
   }
 
   const generationTaskMatch = /^\/api\/generation-tasks\/([^/]+)$/.exec(requestPath);
+  const generationTaskImageMatch = /^\/api\/generation-tasks\/([^/]+)\/image-url$/.exec(requestPath);
+  if (request.method === 'GET' && generationTaskImageMatch) {
+    try {
+      const url = new URL(request.url, PUBLIC_BASE_URL);
+      const projectId = String(url.searchParams.get('projectId') || '');
+      await requireProjectAction(request, { projectId }, { allowedRoles: ['designer', 'admin'] });
+      const task = await generationTaskStore.getTask(decodeURIComponent(generationTaskImageMatch[1]), projectId);
+      if (!task || task.status !== 'succeeded' || !task.output?.storageKey) {
+        sendJson(response, 404, { ok: false, code: 'TASK_IMAGE_NOT_READY', error: 'Generation image is not ready' });
+        return;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        imageUrl: await assetStorage.getUrl(task.output.storageKey),
+        storageKey: task.output.storageKey
+      });
+    } catch (error) {
+      if (error instanceof Stage1Error) {
+        sendStage1Error(response, error);
+        return;
+      }
+      sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : 'Unable to read generation image' });
+    }
+    return;
+  }
   if (request.method === 'GET' && generationTaskMatch) {
     try {
       const url = new URL(request.url, PUBLIC_BASE_URL);

@@ -58,13 +58,17 @@ import {
   assignTeamProject,
   cancelGenerationTask,
   cloneTeamBrand,
+  createGenerationBatch,
   createTeamBrand,
   createTeamProject,
   deleteTeamBrand,
   getAccessToken,
+  getGenerationBatch,
+  getGenerationTaskImageUrl,
   getTeamBrandVersion,
   listAdminGenerationTasks,
   listGenerationTasks,
+  listGenerationBatches,
   listTeamBrandVersions,
   listTeamBrands,
   listTeamUsers,
@@ -1482,8 +1486,8 @@ function getStoryboardTargetSlotCount(form = {}, ledgerFacts = []) {
   );
 }
 
-function isStoryboardPlanReady(storyboardBriefs = [], form = {}) {
-  if (!Array.isArray(storyboardBriefs) || !storyboardBriefs.length) return false;
+function getStoryboardPlanReadinessIssues(storyboardBriefs = [], form = {}) {
+  if (!Array.isArray(storyboardBriefs) || !storyboardBriefs.length) return ['还没有生成图片方案'];
   const aPlus = isAPlusPlan(form) || storyboardBriefs[0]?.outputPresetId === 'aplus';
   const countValid = aPlus
     ? storyboardBriefs.length >= APLUS_MIN_MODULE_COUNT && storyboardBriefs.length <= APLUS_MAX_MODULE_COUNT
@@ -1493,22 +1497,40 @@ function isStoryboardPlanReady(storyboardBriefs = [], form = {}) {
     || Object.prototype.hasOwnProperty.call(form, 'outputLanguage');
   const hasOutputContext = Object.prototype.hasOwnProperty.call(form, 'planOutputPresetId');
   const targetLanguage = normalizeProjectLanguageFields(form).outputLanguage;
-  const plannedLanguage = storyboardBriefs[0]?.outputLanguage || 'en-US';
   const targetOutputPreset = getProjectPlanOutputPresetId(form);
-  const plannedOutputPreset = storyboardBriefs[0]?.outputPresetId || 'main-image';
-  const contractValid = storyboardBriefs.every((brief, index) => {
+  const incompleteSlots = storyboardBriefs.filter((brief, index) => {
     const isPrimaryAnchor = !aPlus && index === 0;
-    return Boolean(
+    return !Boolean(
       String(brief?.composition || '').trim()
       && String(brief?.visualProof || '').trim()
       && (isPrimaryAnchor || String(brief?.primaryClaim || '').trim())
     );
-  });
-  return countValid
-    && uniqueIds
-    && contractValid
-    && (!hasLanguageContext || targetLanguage === plannedLanguage)
-    && (!hasOutputContext || targetOutputPreset === plannedOutputPreset);
+  }).map((brief) => String(brief?.id || '?').padStart(2, '0'));
+  const missingLanguageSlots = hasLanguageContext
+    ? storyboardBriefs.filter((brief) => !String(brief?.outputLanguage || '').trim()).map((brief) => brief.id)
+    : [];
+  const mismatchedLanguageSlots = hasLanguageContext
+    ? storyboardBriefs.filter((brief) => brief.outputLanguage && brief.outputLanguage !== targetLanguage).map((brief) => brief.id)
+    : [];
+  const missingOutputSlots = hasOutputContext
+    ? storyboardBriefs.filter((brief) => !String(brief?.outputPresetId || '').trim()).map((brief) => brief.id)
+    : [];
+  const mismatchedOutputSlots = hasOutputContext
+    ? storyboardBriefs.filter((brief) => brief.outputPresetId && brief.outputPresetId !== targetOutputPreset).map((brief) => brief.id)
+    : [];
+  return [
+    ...(!countValid ? [aPlus ? 'A+ 方案需要 4–7 个模块' : '主图方案需要 7–9 个图槽'] : []),
+    ...(!uniqueIds ? ['图槽编号存在重复'] : []),
+    ...(incompleteSlots.length ? [`图槽 ${incompleteSlots.join('、')} 缺少卖点或画面证据`] : []),
+    ...(missingLanguageSlots.length ? [`图槽 ${missingLanguageSlots.join('、')} 缺少输出语言`] : []),
+    ...(mismatchedLanguageSlots.length ? [`图槽 ${mismatchedLanguageSlots.join('、')} 的语言与项目 ${targetLanguage} 不一致`] : []),
+    ...(missingOutputSlots.length ? [`图槽 ${missingOutputSlots.join('、')} 缺少输出类型`] : []),
+    ...(mismatchedOutputSlots.length ? [`图槽 ${mismatchedOutputSlots.join('、')} 与当前图片类型不一致`] : [])
+  ];
+}
+
+function isStoryboardPlanReady(storyboardBriefs = [], form = {}) {
+  return getStoryboardPlanReadinessIssues(storyboardBriefs, form).length === 0;
 }
 
 const generationVerdicts = {
@@ -2221,7 +2243,62 @@ function createOptionalStoryboardBrief({ id, form, ledgerFacts = [], existingBri
   };
 }
 
-function normalizeStoryboardSequence(briefs = []) {
+function applyStoryboardProjectContract(briefs = [], form = {}, brands = defaultBrandLibrary) {
+  const normalizedLanguage = normalizeProjectLanguageFields(form);
+  const normalizedForm = { ...form, ...normalizedLanguage };
+  const outputPreset = getProjectPlanOutputPreset(normalizedForm);
+  const brandProfile = getBrandProfile(getProjectBrandId(normalizedForm, brands), brands);
+
+  return briefs.map((brief, index) => {
+    const id = index + 1;
+    const contract = normalizeStoryboardSlotContract({
+      slot: brief,
+      id,
+      visualType: brief?.visualType || (id === 1 ? 'main' : 'benefits'),
+      primaryClaim: brief?.primaryClaim || '',
+      visualProof: brief?.visualProof || '',
+      composition: brief?.composition || '',
+      outputPresetId: outputPreset.id,
+      outputPresetSize: outputPreset.size,
+      projectForm: normalizedForm,
+      brand: brandProfile,
+      blockedClaims: brief?.blockedClaims || [],
+      guardrails: brief?.guardrails || []
+    });
+    return {
+      ...brief,
+      id,
+      ...normalizedLanguage,
+      outputPresetId: outputPreset.id,
+      outputPresetLabel: outputPreset.label,
+      outputPresetSize: outputPreset.size,
+      brandId: brandProfile.id,
+      brandName: brandProfile.name,
+      brandVersion: Number(brandProfile.version || 0),
+      ...contract
+    };
+  });
+}
+
+function repairStoredStoryboardProjectMetadata(briefs = [], form = {}) {
+  const normalizedLanguage = normalizeProjectLanguageFields(form);
+  const outputPreset = getProjectPlanOutputPreset(form);
+  return briefs.map((brief) => ({
+    ...brief,
+    ...normalizedLanguage,
+    outputPresetId: outputPreset.id,
+    outputPresetLabel: outputPreset.label,
+    outputPresetSize: outputPreset.size,
+    outputSpec: {
+      ...(brief?.outputSpec || {}),
+      presetId: outputPreset.id,
+      size: outputPreset.size
+    }
+  }));
+}
+
+function normalizeStoryboardSequence(briefs = [], form = null, brands = defaultBrandLibrary) {
+  if (form) return applyStoryboardProjectContract(briefs, form, brands);
   return briefs.map((brief, index) => ({ ...brief, id: index + 1 }));
 }
 
@@ -3426,7 +3503,14 @@ function loadStoredProjects() {
     return parsed.map((project) => {
       const form = { ...blankProjectForm, ...project.form };
       const ledgerFacts = Array.isArray(project.ledgerFacts) ? project.ledgerFacts : facts;
-      const storyboardBriefs = Array.isArray(project.storyboardBriefs) ? project.storyboardBriefs : [];
+      const storedBriefs = Array.isArray(project.storyboardBriefs) ? project.storyboardBriefs : [];
+      const savedContract = project.contentContract || {};
+      const currentContract = normalizeProjectLanguageFields(form);
+      const contractAligned = savedContract.marketplaceId === currentContract.marketplaceId
+        && savedContract.outputLanguage === currentContract.outputLanguage;
+      const storyboardBriefs = contractAligned
+        ? repairStoredStoryboardProjectMetadata(storedBriefs, form)
+        : storedBriefs;
       const reviewDecisions = Array.isArray(project.reviewDecisions)
         ? createReviewDecisions(storyboardBriefs, project.reviewDecisions)
         : createReviewDecisions(storyboardBriefs);
@@ -3467,7 +3551,14 @@ function mapTeamProjectToWorkspaceProject(remoteProject = {}) {
     brandId: stored.form?.brandId || remoteProject.brandSnapshot?.brandId || 'none',
     planOutputPresetId: stored.form?.planOutputPresetId || (remoteProject.outputType === 'a-plus' ? 'aplus' : 'main-image')
   };
-  const storyboardBriefs = Array.isArray(stored.storyboardBriefs) ? stored.storyboardBriefs : [];
+  const storedBriefs = Array.isArray(stored.storyboardBriefs) ? stored.storyboardBriefs : [];
+  const savedContract = stored.contentContract || {};
+  const currentContract = normalizeProjectLanguageFields(form);
+  const contractAligned = savedContract.marketplaceId === currentContract.marketplaceId
+    && savedContract.outputLanguage === currentContract.outputLanguage;
+  const storyboardBriefs = contractAligned
+    ? repairStoredStoryboardProjectMetadata(storedBriefs, form)
+    : storedBriefs;
   return {
     ...createProjectRecord(
       form,
@@ -6548,7 +6639,8 @@ function StoryboardPlanPage({
   const activeSlots = useMemo(() => getActiveSlots(storyboardBriefs), [storyboardBriefs]);
   const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
   const selectedPreset = getProjectPlanOutputPreset(projectForm);
-  const isReady = isStoryboardPlanReady(storyboardBriefs, projectForm);
+  const readinessIssues = getStoryboardPlanReadinessIssues(storyboardBriefs, projectForm);
+  const isReady = readinessIssues.length === 0;
   const isAPlus = selectedPreset.id === 'aplus';
   const selectedIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(selectedBrief?.id));
   const minimumSlotCount = isAPlus ? APLUS_MIN_MODULE_COUNT : MAIN_MIN_SLOT_COUNT;
@@ -6678,7 +6770,7 @@ function StoryboardPlanPage({
       )}
 
       <footer className="storyboard-plan-footer">
-        <span><strong>{isReady ? `图片方案已准备 · ${storyboardBriefs.length} 个图槽` : incompleteBriefCount ? `还有 ${incompleteBriefCount} 个图槽缺少卖点或画面证据` : isAPlus ? '先生成 A+ 内容模块方案' : '先生成 7 张图片方案'}</strong><small>{isReady ? '方案阶段只确认卖点与画面证明方式，视觉质量在生图后判断。' : '每张图必须明确主卖点、画面证据、可见文案和规则边界后才能开始生图。'}</small></span>
+        <span><strong>{isReady ? `图片方案已准备 · ${storyboardBriefs.length} 个图槽` : readinessIssues[0] || (incompleteBriefCount ? `还有 ${incompleteBriefCount} 个图槽缺少卖点或画面证据` : isAPlus ? '先生成 A+ 内容模块方案' : '先生成 7 张图片方案')}</strong><small>{isReady ? '方案阶段只确认卖点与画面证明方式，视觉质量在生图后判断。' : readinessIssues.slice(1).join('；') || '补齐上述内容后即可确认方案并开始生图。'}</small></span>
         <div className="storyboard-plan-footer-actions">
           <button
             className="vz-btn vz-btn--secondary secondary-button"
@@ -7677,7 +7769,7 @@ function GenerationPage({
             : `${activeTasks.length} 个生图任务正在排队。`);
         }
         for (const task of tasks) {
-          if (task.status !== 'succeeded' || !task.output?.imageUrl || recoveredTaskIdsRef.current.has(task.id)) continue;
+          if (task.status !== 'succeeded' || !task.output?.storageKey || recoveredTaskIdsRef.current.has(task.id)) continue;
           if (generationRuns.some((run) => run.id === task.runId)) {
             recoveredTaskIdsRef.current.add(task.id);
             continue;
@@ -7688,7 +7780,8 @@ function GenerationPage({
             const taskBrief = storyboardBriefs.find((brief) => String(brief.id) === String(task.slotId));
             if (!taskSlot || !taskBrief || !task.runId) continue;
             const recoveredPreset = getOutputPresetById(plannedOutputPresetId);
-            const fittedImageSrc = await resizeImageToPreset(task.output.imageUrl, recoveredPreset);
+            const recoveredImageUrl = await getGenerationTaskImageUrl(activeProjectId, task.id);
+            const fittedImageSrc = await resizeImageToPreset(recoveredImageUrl, recoveredPreset);
             const reviewImageDataUrl = await createImageThumbnail(fittedImageSrc, 1200);
             const storedImage = await saveGeneratedImageToApi({
               projectId: activeProjectId,
@@ -7729,6 +7822,10 @@ function GenerationPage({
         }
       } catch (error) {
         appLogger.error('pipeline.generation.tasks_load_failed', error, { projectId: activeProjectId });
+        if (error?.status === 401) {
+          setGenerationStatus('登录已失效。服务器中的生图任务不会丢失，重新登录后会自动恢复结果。');
+          window.clearInterval(timer);
+        }
       } finally {
         refreshInFlight = false;
       }
@@ -8325,6 +8422,139 @@ function GenerationPage({
     }
   };
 
+  const prepareBatchCandidate = async (slot, brief, options = {}, sourceCache = new Map()) => {
+    const runOutputPreset = options.outputPreset || outputPreset;
+    const runBaselineMode = options.baselineMode ?? baselineMode;
+    const runBrand = runBaselineMode
+      ? getBrandProfile('none', defaultBrandLibrary)
+      : selectedProjectBrand;
+    if (!runBaselineMode && !runBrand) {
+      throw new Error('当前项目没有可验证的品牌快照，请回到项目资料重新选择并保存品牌。');
+    }
+    const references = getGenerationReferenceItems(
+      projectForm,
+      slot.id,
+      runOutputPreset.id,
+      brief?.visualType
+    );
+    const shouldAttachLogo = !runBaselineMode
+      && runOutputPreset.id === 'aplus'
+      && runBrand.id !== 'none'
+      && Boolean(runBrand.logoPreview);
+    const referenceItems = shouldAttachLogo
+      ? [...references, {
+        id: 'brand-logo',
+        label: 'A+ brand logo reference',
+        name: `${runBrand.name} logo`,
+        preview: runBrand.logoPreview
+      }]
+      : references;
+    const sourceImageIds = [];
+    for (const reference of referenceItems) {
+      const sourceKey = String(reference.preview || '');
+      let pooled = sourceCache.get(sourceKey);
+      if (!pooled) {
+        const id = `source-${sourceCache.size + 1}`;
+        const readableSource = sourceKey.startsWith('blob:')
+          ? await imageSourceToDataUrl(sourceKey)
+          : sourceKey;
+        pooled = {
+          id,
+          label: reference.label,
+          name: reference.name,
+          ...(readableSource.startsWith('data:') ? { dataUrl: readableSource } : { imageUrl: readableSource })
+        };
+        sourceCache.set(sourceKey, pooled);
+      }
+      sourceImageIds.push(pooled.id);
+    }
+    const prompt = buildGenerationPrompt(brief, slot, runOutputPreset, {
+      baselineMode: runBaselineMode,
+      promptOverride: promptOverrides?.[slot.id] || '',
+      brandProfile: runBrand,
+      productLock: structuredProductLock,
+      projectForm
+    });
+    const runId = createGenerationRunId();
+    return {
+      slot,
+      brief,
+      runId,
+      prompt,
+      runOutputPreset,
+      runBaselineMode,
+      runBrand,
+      sourceImageIds,
+      taskPayload: {
+        projectId: activeProjectId,
+        runId,
+        clientTaskId: `${options.clientBatchId}-${options.batchIndex}`,
+        slotId: slot.id,
+        slotTitle: brief.title || slot.title,
+        prompt,
+        sourceImageIds,
+        outputPresetId: runOutputPreset.id,
+        batchIndex: options.batchIndex,
+        size: '1024x1024',
+        quality: 'low'
+      }
+    };
+  };
+
+  const materializeBatchCandidate = async (prepared, task) => {
+    const imageUrl = task.output?.imageUrl || await getGenerationTaskImageUrl(activeProjectId, task.id);
+    if (!imageUrl) throw new Error('服务器已完成生图，但暂时无法读取图片地址。');
+    const fittedImageSrc = await resizeImageToPreset(imageUrl, prepared.runOutputPreset);
+    const previewImageSrc = await createImageThumbnail(fittedImageSrc);
+    const reviewImageDataUrl = await createImageThumbnail(fittedImageSrc, 1200);
+    let storedImage = null;
+    try {
+      storedImage = await saveGeneratedImageToApi({
+        projectId: activeProjectId,
+        imageDataUrl: fittedImageSrc,
+        projectForm,
+        slotId: prepared.slot.id,
+        runId: prepared.runId
+      });
+    } catch (error) {
+      appLogger.error('pipeline.generation.persist_fitted_failed', error, {
+        projectId: activeProjectId,
+        step: 'generation',
+        traceId: prepared.runId,
+        taskId: task.id
+      });
+    }
+    return normalizeGenerationRun({
+      id: prepared.runId,
+      slotId: prepared.slot.id,
+      slotTitle: prepared.brief.title || prepared.slot.title,
+      outputPresetId: prepared.runOutputPreset.id,
+      outputPresetLabel: prepared.runOutputPreset.label,
+      outputPresetSize: prepared.runOutputPreset.size,
+      imageSrc: storedImage?.imageUrl || previewImageSrc,
+      reviewImageDataUrl,
+      imageFilePath: storedImage?.filePath || '',
+      imageFilename: storedImage?.filename || '',
+      storageKey: storedImage?.storageKey || task.output?.storageKey || '',
+      storageMode: storedImage?.storageMode || '',
+      prompt: prepared.prompt,
+      baselineMode: prepared.runBaselineMode,
+      brandId: prepared.runBrand.id,
+      brandName: prepared.runBrand.name,
+      brandVersion: Number(prepared.runBrand.version || 0),
+      batchId: task.batchId || '',
+      batchIndex: task.batchIndex,
+      estimatedCostUsd: Number(task.estimatedCostUsd || 0),
+      requestId: task.output?.requestId || '',
+      model: task.output?.model || '',
+      durationMs: task.output?.durationMs || 0,
+      referenceCount: prepared.sourceImageIds.length,
+      verdict: 'unreviewed',
+      reasons: [],
+      createdAt: task.updatedAt || new Date().toISOString()
+    });
+  };
+
   const runGeneration = async (requestedMode = generationMode) => {
     if (!selectedBrief) {
       appLogger.log('pipeline.generation.blocked', {
@@ -8383,66 +8613,189 @@ function GenerationPage({
         : `开始为当前卖点生成 ${tasks.length} 张候选图。`);
       const completedRuns = [];
       const failedMessages = [];
-      for (const [index, task] of tasks.entries()) {
-        const logId = `${task.slot.id}-${index}`;
-        setBatchLog((items) => items.map((item) => (
-          item.id === logId ? { ...item, status: 'running', message: '正在生成候选图' } : item
-        )));
-        try {
-          const run = await createCandidateRun(task.slot, task.brief, {
+      const sourceCache = new Map();
+      const preparedTasks = [];
+      const processedTaskIds = new Set();
+      const reviewPromises = [];
+      try {
+        for (const [index, task] of tasks.entries()) {
+          preparedTasks.push(await prepareBatchCandidate(task.slot, task.brief, {
             baselineMode,
             outputPreset,
-            batchId: generationSessionId,
+            clientBatchId: generationSessionId,
             batchIndex: index + 1
-          });
-          completedRuns.push(run);
-          onSaveGenerationRuns(completedRuns);
-          setActiveRunId(run.id);
-          setSelectedSlot(task.slot);
-          setBatchLog((items) => items.map((item) => (
-            item.id === logId ? { ...item, status: 'reviewing', message: '等待 AI 预审' } : item
-          )));
-          setBatchLog((items) => items.map((item) => (
-            item.id === logId ? { ...item, status: 'running', message: '正在 AI 预审' } : item
-          )));
-          try {
-            const reviewedRun = await reviewCandidateRun(run, task.slot, task.brief, { outputPreset });
-            const runIndex = completedRuns.findIndex((item) => item.id === run.id);
-            if (runIndex >= 0) completedRuns.splice(runIndex, 1, reviewedRun);
-            onSaveGenerationRuns(completedRuns);
-            setBatchLog((items) => items.map((item) => (
-              item.id === logId
-                ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
-                : item
-            )));
-          } catch (reviewError) {
-            const message = getGenerationErrorMessage(reviewError);
-            const keptRun = { ...run, note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。` };
-            const runIndex = completedRuns.findIndex((item) => item.id === run.id);
-            if (runIndex >= 0) completedRuns.splice(runIndex, 1, keptRun);
-            onSaveGenerationRuns(completedRuns);
-            failedMessages.push(`AI 预审失败：${message}`);
-            setBatchLog((items) => items.map((item) => (
-              item.id === logId
-                ? { ...item, status: 'failed', message: `预审失败，已保留候选图：${message}` }
-                : item
-            )));
-          }
-        } catch (error) {
-          const message = getGenerationErrorMessage(error);
-          failedMessages.push(message);
-          setBatchLog((items) => items.map((item) => (
-            item.id === logId
-              ? { ...item, status: 'failed', message }
-              : item.status === 'waiting'
-                ? { ...item, status: 'blocked', message: `前序第 ${index + 1} 张失败，已暂停` }
-                : item
-          )));
-          setGenerationStatus(`第 ${index + 1} 张生成失败，已暂停后续任务，避免跳号或混入错误结果。`);
-          break;
+          }, sourceCache));
         }
+
+        const batchPayload = {
+          projectId: activeProjectId,
+          clientBatchId: generationSessionId,
+          planId: String(projectForm.storyboardPlanId || projectForm.planId || ''),
+          common: {
+            projectId: activeProjectId,
+            projectName: projectForm.projectName || projectForm.productName || projectForm.sku || 'vistamz',
+            projectForm,
+            baselineMode,
+            brandId: selectedProjectBrand?.id || 'none',
+            brandVersion: Number(selectedProjectBrand?.version || 0),
+            outputPresetId: outputPreset.id,
+            size: '1024x1024',
+            quality: 'low'
+          },
+          sourceImages: [...sourceCache.values()],
+          tasks: preparedTasks.map((prepared) => prepared.taskPayload)
+        };
+        let serverBatch = null;
+        let submitError = null;
+        for (let submitAttempt = 1; submitAttempt <= 3; submitAttempt += 1) {
+          try {
+            serverBatch = await createGenerationBatch(batchPayload);
+            break;
+          } catch (error) {
+            submitError = error;
+            const retryable = !error?.status || error.status === 408 || error.status === 429 || error.status >= 500;
+            appLogger.log('pipeline.generation.batch_submit_failed', {
+              generationSessionId,
+              submitAttempt,
+              retryable,
+              status: Number(error?.status || 0),
+              code: error?.code || '',
+              message: error instanceof Error ? error.message : String(error)
+            }, { level: retryable ? 'warn' : 'error', projectId: activeProjectId, step: 'generation', traceId: generationSessionId });
+            if (!retryable || submitAttempt >= 3) break;
+            setGenerationStatus(`批次提交响应超时，任务状态尚未确认；正在使用同一批次编号恢复（${submitAttempt}/3）...`);
+            await new Promise((resolve) => window.setTimeout(resolve, 900 * (2 ** (submitAttempt - 1))));
+          }
+        }
+        if (!serverBatch?.id) {
+          const error = new Error(submitError instanceof Error
+            ? `${submitError.message}。若服务器已经收到任务，重新登录或刷新后仍会自动恢复，不会重复扣费。`
+            : '暂时无法确认批次任务状态；刷新后系统会继续恢复。');
+          error.code = 'BATCH_STATE_UNKNOWN';
+          throw error;
+        }
+
+        const pollingStartedAt = Date.now();
+        const pollingDeadlineMs = 15 * 60 * 1000;
+        let consecutivePollFailures = 0;
+        let terminal = false;
+        while (!terminal && Date.now() - pollingStartedAt < pollingDeadlineMs) {
+          try {
+            serverBatch = await getGenerationBatch(activeProjectId, serverBatch.id);
+            consecutivePollFailures = 0;
+          } catch (error) {
+            consecutivePollFailures += 1;
+            if (error?.status === 401) {
+              setGenerationStatus('登录已失效，但服务器批次仍会继续。重新登录后将自动恢复已完成图片。');
+              break;
+            }
+            if (consecutivePollFailures >= 8) {
+              throw new Error('连续多次读取任务状态失败。服务器批次仍会继续，刷新页面后可恢复结果。');
+            }
+            setGenerationStatus(`网络波动，正在重新连接批次任务（${consecutivePollFailures}/8）...`);
+            await new Promise((resolve) => window.setTimeout(resolve, 1800));
+            continue;
+          }
+
+          const orderedServerTasks = [...(serverBatch.tasks || [])]
+            .sort((a, b) => Number(a.batchIndex || 0) - Number(b.batchIndex || 0));
+          setBatchLog((items) => items.map((item, index) => {
+            const serverTask = orderedServerTasks[index];
+            if (!serverTask) return item;
+            if (serverTask.status === 'succeeded' && !processedTaskIds.has(serverTask.id)) {
+              return { ...item, status: 'running', message: '图片已生成，正在保存候选图' };
+            }
+            if (serverTask.status === 'failed' || serverTask.status === 'cancelled') {
+              return { ...item, status: 'failed', message: serverTask.errorMessage || '生成失败，其他图继续处理' };
+            }
+            if (serverTask.status === 'running') return { ...item, status: 'running', message: '正在生成候选图' };
+            if (serverTask.status === 'queued') return { ...item, status: 'waiting', message: '已入队，等待按顺序生成' };
+            return item;
+          }));
+
+          for (const serverTask of orderedServerTasks) {
+            if (processedTaskIds.has(serverTask.id)) continue;
+            const prepared = preparedTasks[Number(serverTask.batchIndex || 1) - 1];
+            const logId = prepared ? `${prepared.slot.id}-${Number(serverTask.batchIndex || 1) - 1}` : '';
+            if (serverTask.status === 'failed' || serverTask.status === 'cancelled') {
+              processedTaskIds.add(serverTask.id);
+              failedMessages.push(serverTask.errorMessage || `第 ${serverTask.batchIndex || '?'} 张生成失败`);
+              continue;
+            }
+            if (serverTask.status !== 'succeeded' || !prepared) continue;
+            processedTaskIds.add(serverTask.id);
+            try {
+              const run = await materializeBatchCandidate(prepared, serverTask);
+              completedRuns.push(run);
+              onSaveGenerationRuns(completedRuns);
+              setActiveRunId(run.id);
+              setSelectedSlot(prepared.slot);
+              setBatchLog((items) => items.map((item) => (
+                item.id === logId ? { ...item, status: 'reviewing', message: '候选图已保存，正在 AI 预审' } : item
+              )));
+              const reviewPromise = reviewCandidateRun(run, prepared.slot, prepared.brief, { outputPreset: prepared.runOutputPreset })
+                .then((reviewedRun) => {
+                  const runIndex = completedRuns.findIndex((item) => item.id === run.id);
+                  if (runIndex >= 0) completedRuns.splice(runIndex, 1, reviewedRun);
+                  onSaveGenerationRuns(completedRuns);
+                  setBatchLog((items) => items.map((item) => (
+                    item.id === logId
+                      ? { ...item, status: 'done', message: aiReviewVerdicts[reviewedRun.aiReview?.verdict]?.label || '已预审' }
+                      : item
+                  )));
+                })
+                .catch((reviewError) => {
+                  const message = getGenerationErrorMessage(reviewError);
+                  const runIndex = completedRuns.findIndex((item) => item.id === run.id);
+                  if (runIndex >= 0) completedRuns.splice(runIndex, 1, {
+                    ...run,
+                    note: `AI 预审失败：${message}。图片已保留，请人工判断是否可用。`
+                  });
+                  onSaveGenerationRuns(completedRuns);
+                  setBatchLog((items) => items.map((item) => (
+                    item.id === logId
+                      ? { ...item, status: 'done', message: '图片已保留，预审需人工补充' }
+                      : item
+                  )));
+                });
+              reviewPromises.push(reviewPromise);
+            } catch (error) {
+              const message = getGenerationErrorMessage(error);
+              failedMessages.push(`第 ${serverTask.batchIndex || '?'} 张读取失败：${message}`);
+              setBatchLog((items) => items.map((item) => (
+                item.id === logId ? { ...item, status: 'failed', message: `图片已生成但读取失败：${message}` } : item
+              )));
+            }
+          }
+
+          terminal = orderedServerTasks.length === tasks.length
+            && orderedServerTasks.every((task) => ['succeeded', 'failed', 'cancelled'].includes(task.status));
+          if (!terminal) {
+            const succeededCount = orderedServerTasks.filter((task) => task.status === 'succeeded').length;
+            const runningTask = orderedServerTasks.find((task) => task.status === 'running');
+            setGenerationStatus(runningTask
+              ? `正在按顺序生成第 ${runningTask.batchIndex} / ${tasks.length} 张；已完成 ${succeededCount} 张。已完成图片会立即进入 AI 预审。`
+              : `批次已入队：已完成 ${succeededCount} / ${tasks.length} 张。`);
+            await new Promise((resolve) => window.setTimeout(resolve, 1500));
+          }
+        }
+        if (!terminal && Date.now() - pollingStartedAt >= pollingDeadlineMs) {
+          setGenerationStatus('等待超过 15 分钟，服务器批次仍会继续；刷新页面后会自动恢复已完成图片。');
+        }
+        if (reviewPromises.length) await Promise.allSettled(reviewPromises);
+      } catch (error) {
+        const message = getGenerationErrorMessage(error);
+        failedMessages.push(message);
+        appLogger.error('pipeline.generation.batch_failed', error, {
+          projectId: activeProjectId,
+          step: 'generation',
+          traceId: generationSessionId,
+          generationMode: activeGenerationMode
+        });
+        setGenerationStatus(message);
+      } finally {
+        setIsBatchRunning(false);
       }
-      setIsBatchRunning(false);
       if (activeGenerationMode === 'all-one' && tasks[0]?.slot) {
         setSelectedSlot(tasks[0].slot);
       }
@@ -10090,7 +10443,7 @@ function WorkspaceApp({ session, onLogout }) {
     navigateTo('storyboard', 'storyboard');
   };
   const commitStoryboardStructure = (briefs, selectedIndex, actionLabel) => {
-    const nextBriefs = normalizeStoryboardSequence(briefs);
+    const nextBriefs = normalizeStoryboardSequence(briefs, projectForm, projectBrandLibrary);
     const nextForm = {
       ...projectForm,
       storyboardSlotCountOverride: nextBriefs.length
@@ -10479,7 +10832,7 @@ function WorkspaceApp({ session, onLogout }) {
       const languageMatches = currentProject ? isSameContentLanguage(currentProject, planningForm) : true;
       try {
         const aiPlan = await planStoryboardWithApi(activeProjectId, planningForm, refreshedLedgerFacts, projectBrandLibrary);
-        briefs = aiPlan.briefs;
+        briefs = applyStoryboardProjectContract(aiPlan.briefs, planningForm, projectBrandLibrary);
         plannerMessage = `AI 已生成 ${getProjectPlanOutputPreset(planningForm).label} 方案：${aiPlan.productType || '已识别产品类型'} · ${aiPlan.model || 'planner'}`;
       } catch (error) {
         planProvider = 'local_fallback';
@@ -10487,7 +10840,11 @@ function WorkspaceApp({ session, onLogout }) {
           projectId: activeProjectId,
           step: 'storyboard'
         });
-        briefs = buildStoryboardBriefs(refreshedLedgerFacts, planningForm, projectBrandLibrary);
+        briefs = applyStoryboardProjectContract(
+          buildStoryboardBriefs(refreshedLedgerFacts, planningForm, projectBrandLibrary),
+          planningForm,
+          projectBrandLibrary
+        );
         plannerMessage = `AI 方案暂不可用，已使用本地兜底方案。${error instanceof Error ? error.message : ''}`.trim();
       }
       const decisions = createReviewDecisions(briefs);
@@ -10572,9 +10929,10 @@ function WorkspaceApp({ session, onLogout }) {
       let plannerMessage = 'AI 已重生成当前图槽方案';
       try {
         const aiPlan = await planStoryboardWithApi(activeProjectId, projectForm, refreshedLedgerFacts, projectBrandLibrary);
-        const plannedBrief = aiPlan.briefs.find((brief) => Number(brief.id) === numericSlotId)
-          || aiPlan.briefs[Math.min(numericSlotId - 1, aiPlan.briefs.length - 1)];
-        nextBrief = plannedBrief ? { ...plannedBrief, id: numericSlotId } : null;
+        const normalizedPlan = applyStoryboardProjectContract(aiPlan.briefs, projectForm, projectBrandLibrary);
+        nextBrief = normalizedPlan.find((brief) => Number(brief.id) === numericSlotId)
+          || normalizedPlan[Math.min(numericSlotId - 1, normalizedPlan.length - 1)]
+          || null;
         plannerMessage = `AI 已重生成第 ${String(numericSlotId).padStart(2, '0')} 张方案：${aiPlan.model || 'planner'}`;
       } catch (error) {
         planProvider = 'local_fallback';
@@ -10584,9 +10942,10 @@ function WorkspaceApp({ session, onLogout }) {
           slotId: numericSlotId
         });
         const fallbackBriefs = buildStoryboardBriefs(refreshedLedgerFacts, projectForm, projectBrandLibrary);
-        const fallbackBrief = fallbackBriefs.find((brief) => Number(brief.id) === numericSlotId)
-          || fallbackBriefs[Math.min(numericSlotId - 1, fallbackBriefs.length - 1)];
-        nextBrief = fallbackBrief ? { ...fallbackBrief, id: numericSlotId } : null;
+        const normalizedFallback = applyStoryboardProjectContract(fallbackBriefs, projectForm, projectBrandLibrary);
+        nextBrief = normalizedFallback.find((brief) => Number(brief.id) === numericSlotId)
+          || normalizedFallback[Math.min(numericSlotId - 1, normalizedFallback.length - 1)]
+          || null;
         plannerMessage = `AI 局部方案暂不可用，已用本地兜底重生成当前图槽。${error instanceof Error ? error.message : ''}`.trim();
       }
 

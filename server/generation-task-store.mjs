@@ -4,6 +4,10 @@ function createTaskId() {
   return `task_${randomUUID().replace(/-/g, '')}`;
 }
 
+function createBatchId() {
+  return `batch_${randomUUID().replace(/-/g, '')}`;
+}
+
 function taskRecord(row = {}) {
   const input = row.input_snapshot || {};
   return {
@@ -16,8 +20,8 @@ function taskRecord(row = {}) {
     errorMessage: row.error_message || '',
     output: row.output_snapshot || {},
     runId: String(input.runId || ''),
-    batchId: String(input.batchId || ''),
-    batchIndex: Number.isFinite(Number(input.batchIndex)) ? Number(input.batchIndex) : null,
+    batchId: String(row.batch_id || input.batchId || ''),
+    batchIndex: Number.isFinite(Number(row.slot_no ?? input.batchIndex)) ? Number(row.slot_no ?? input.batchIndex) : null,
     slotTitle: String(input.slotTitle || ''),
     clientTaskId: String(input.clientTaskId || ''),
     requestedBy: row.requested_by || '',
@@ -28,6 +32,34 @@ function taskRecord(row = {}) {
     finishedAt: row.finished_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function batchRecord(row = {}, tasks = []) {
+  const counts = tasks.reduce((result, task) => {
+    result.total += 1;
+    result[task.status] = (result[task.status] || 0) + 1;
+    return result;
+  }, { total: 0 });
+  const finished = (counts.succeeded || 0) + (counts.failed || 0) + (counts.cancelled || 0);
+  const status = counts.total && finished === counts.total
+    ? counts.succeeded === counts.total
+      ? 'completed'
+      : counts.succeeded
+        ? 'partial'
+        : 'failed'
+    : row.status || 'running';
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    clientBatchId: row.client_batch_id,
+    planId: row.plan_id || '',
+    status,
+    requestedBy: row.requested_by || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    counts,
+    tasks: [...tasks].sort((a, b) => Number(a.batchIndex || 0) - Number(b.batchIndex || 0))
   };
 }
 
@@ -73,10 +105,21 @@ export function createGenerationTaskStore(database, options = {}) {
         `INSERT INTO generation_tasks
           (id, project_id, slot_id, task_type, status, requested_by, input_snapshot, idempotency_key)
          VALUES ($1, $2, $3, 'generate_image', 'queued', $4, $5::jsonb, $6)
+         ON CONFLICT (project_id, idempotency_key) WHERE idempotency_key <> ''
+         DO NOTHING
          RETURNING *`,
         [taskId, projectId, slotId || '1', user.id, JSON.stringify(payload), idempotencyKey]
       );
-      return taskRecord(result.rows[0]);
+      if (result.rowCount) return taskRecord(result.rows[0]);
+      const replay = await client.query(
+        'SELECT * FROM generation_tasks WHERE project_id = $1 AND idempotency_key = $2 LIMIT 1',
+        [projectId, idempotencyKey]
+      );
+      if (replay.rowCount) return taskRecord(replay.rows[0]);
+      const replayError = new Error('The generation request was accepted but could not be confirmed yet.');
+      replayError.code = 'TASK_STATE_UNKNOWN';
+      replayError.status = 503;
+      throw replayError;
     });
     let lastError;
     for (let attempt = 1; attempt <= createRetryAttempts; attempt += 1) {
@@ -91,6 +134,114 @@ export function createGenerationTaskStore(database, options = {}) {
       }
     }
     throw lastError;
+  }
+
+  async function createBatch(user, payload = {}) {
+    const projectId = String(payload.projectId || '').trim();
+    const clientBatchId = String(payload.clientBatchId || '').trim().slice(0, 180);
+    const tasks = Array.isArray(payload.tasks) ? payload.tasks : [];
+    if (!projectId || !clientBatchId || !tasks.length) {
+      const error = new Error('projectId, clientBatchId and generation tasks are required.');
+      error.code = 'INVALID_GENERATION_BATCH';
+      error.status = 400;
+      throw error;
+    }
+    const batchId = createBatchId();
+    return database.transaction(async (client) => {
+      const insertedBatch = await client.query(
+        `INSERT INTO generation_batches
+          (id, project_id, client_batch_id, plan_id, status, requested_by)
+         VALUES ($1, $2, $3, $4, 'running', $5)
+         ON CONFLICT (project_id, client_batch_id) DO NOTHING
+         RETURNING *`,
+        [batchId, projectId, clientBatchId, String(payload.planId || ''), user.id]
+      );
+      if (!insertedBatch.rowCount) {
+        const existingBatch = await client.query(
+          'SELECT * FROM generation_batches WHERE project_id = $1 AND client_batch_id = $2 LIMIT 1',
+          [projectId, clientBatchId]
+        );
+        const existingTasks = await client.query(
+          `SELECT gt.* FROM generation_tasks gt
+           JOIN generation_batches gb ON gb.id = gt.batch_id
+             AND gb.project_id = $1 AND gb.client_batch_id = $2
+           ORDER BY gt.slot_no ASC`,
+          [projectId, clientBatchId]
+        );
+        return batchRecord(existingBatch.rows[0], existingTasks.rows.map(taskRecord));
+      }
+
+      const daily = await client.query(
+        `SELECT COUNT(*)::int AS count
+         FROM generation_tasks
+         WHERE requested_by = $1 AND created_at >= date_trunc('day', NOW())`,
+        [user.id]
+      );
+      if (Number(daily.rows[0]?.count || 0) + tasks.length > dailyTaskLimit) {
+        const error = new Error(`本次任务会超过今日 ${dailyTaskLimit} 次生图上限。`);
+        error.code = 'DAILY_GENERATION_LIMIT';
+        error.status = 429;
+        throw error;
+      }
+
+      const createdTasks = [];
+      for (const [index, taskPayload] of tasks.entries()) {
+        const slotNo = index + 1;
+        const taskId = createTaskId();
+        const idempotencyKey = String(taskPayload.clientTaskId || `${clientBatchId}-${slotNo}`).trim().slice(0, 180);
+        const inputSnapshot = {
+          ...taskPayload,
+          batchId,
+          clientBatchId,
+          batchIndex: slotNo
+        };
+        const insertedTask = await client.query(
+          `INSERT INTO generation_tasks
+            (id, project_id, slot_id, task_type, status, requested_by, input_snapshot,
+             idempotency_key, batch_id, slot_no)
+           VALUES ($1, $2, $3, 'generate_image', 'queued', $4, $5::jsonb, $6, $7, $8)
+           ON CONFLICT (batch_id, slot_no) WHERE batch_id IS NOT NULL
+           DO NOTHING
+           RETURNING *`,
+          [
+            taskId,
+            projectId,
+            String(taskPayload.slotId || slotNo),
+            user.id,
+            JSON.stringify(inputSnapshot),
+            idempotencyKey,
+            batchId,
+            slotNo
+          ]
+        );
+        if (insertedTask.rowCount) createdTasks.push(taskRecord(insertedTask.rows[0]));
+      }
+      return batchRecord(insertedBatch.rows[0], createdTasks);
+    });
+  }
+
+  async function getBatch(batchId, projectId) {
+    const batch = await database.query(
+      'SELECT * FROM generation_batches WHERE id = $1 AND project_id = $2 LIMIT 1',
+      [batchId, projectId]
+    );
+    if (!batch.rowCount) return null;
+    const tasks = await database.query(
+      'SELECT * FROM generation_tasks WHERE batch_id = $1 ORDER BY slot_no ASC',
+      [batchId]
+    );
+    return batchRecord(batch.rows[0], tasks.rows.map(taskRecord));
+  }
+
+  async function listRecentBatches(projectId, limit = 10) {
+    const batches = await database.query(
+      `SELECT * FROM generation_batches
+       WHERE project_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [projectId, Math.min(25, Math.max(1, Number(limit || 10)))]
+    );
+    return Promise.all(batches.rows.map((batch) => getBatch(batch.id, projectId)));
   }
 
   async function getTask(taskId, projectId) {
@@ -174,14 +325,15 @@ export function createGenerationTaskStore(database, options = {}) {
              )
              AND NOT EXISTS (
                SELECT 1 FROM generation_tasks earlier
-               WHERE COALESCE(earlier.input_snapshot->>'batchId', '') <> ''
-                 AND earlier.input_snapshot->>'batchId' = generation_tasks.input_snapshot->>'batchId'
-                 AND COALESCE((earlier.input_snapshot->>'batchIndex')::int, 2147483647)
-                     < COALESCE((generation_tasks.input_snapshot->>'batchIndex')::int, 2147483647)
+               WHERE COALESCE(earlier.batch_id, NULLIF(earlier.input_snapshot->>'batchId', '')) =
+                     COALESCE(generation_tasks.batch_id, NULLIF(generation_tasks.input_snapshot->>'batchId', ''))
+                 AND COALESCE(generation_tasks.batch_id, NULLIF(generation_tasks.input_snapshot->>'batchId', '')) IS NOT NULL
+                 AND COALESCE(earlier.slot_no, NULLIF(earlier.input_snapshot->>'batchIndex', '')::int, 32767) <
+                     COALESCE(generation_tasks.slot_no, NULLIF(generation_tasks.input_snapshot->>'batchIndex', '')::int, 32767)
                  AND earlier.status IN ('queued', 'running')
              )
            ORDER BY created_at ASC,
-             COALESCE((input_snapshot->>'batchIndex')::int, 2147483647) ASC,
+             COALESCE(slot_no, NULLIF(input_snapshot->>'batchIndex', '')::int, 32767) ASC,
              id ASC
            FOR UPDATE SKIP LOCKED
            LIMIT 1
@@ -252,6 +404,9 @@ export function createGenerationTaskStore(database, options = {}) {
     dailyTaskLimit,
     estimatedCostPerCall,
     createTask,
+    createBatch,
+    getBatch,
+    listRecentBatches,
     getTask,
     listProjectTasks,
     listAdminTasks,

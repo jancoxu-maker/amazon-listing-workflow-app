@@ -146,8 +146,108 @@ test('claiming work keeps one active generation task per project', async () => {
   assert.equal(await store.claimNextTask(), null);
   assert.match(capturedSql, /NOT EXISTS/);
   assert.match(capturedSql, /running\.project_id = generation_tasks\.project_id/);
-  assert.match(capturedSql, /batchIndex/);
+  assert.match(capturedSql, /slot_no/);
+  assert.match(capturedSql, /input_snapshot->>'batchIndex'/);
   assert.match(capturedSql, /INTERVAL '8 minutes'/);
+});
+
+test('batch creation stores all seven tasks atomically in slot order', async () => {
+  const insertedSlots = [];
+  const database = {
+    async transaction(handler) {
+      return handler({
+        async query(sql, values) {
+          if (sql.includes('INSERT INTO generation_batches')) {
+            return {
+              rowCount: 1,
+              rows: [{
+                id: values[0],
+                project_id: values[1],
+                client_batch_id: values[2],
+                plan_id: values[3],
+                status: 'running',
+                requested_by: values[4]
+              }]
+            };
+          }
+          if (sql.includes('COUNT(*)')) return { rowCount: 1, rows: [{ count: 0 }] };
+          if (sql.includes('INSERT INTO generation_tasks')) {
+            insertedSlots.push(values[7]);
+            return {
+              rowCount: 1,
+              rows: [taskRow({
+                id: values[0],
+                project_id: values[1],
+                slot_id: values[2],
+                requested_by: values[3],
+                input_snapshot: JSON.parse(values[4]),
+                batch_id: values[6],
+                slot_no: values[7]
+              })]
+            };
+          }
+          throw new Error(`Unexpected query: ${sql}`);
+        }
+      });
+    }
+  };
+  const batch = await createGenerationTaskStore(database).createBatch(
+    { id: 'usr_design', role: 'designer' },
+    {
+      projectId: 'prj_one',
+      clientBatchId: 'client_batch_one',
+      tasks: Array.from({ length: 7 }, (_, index) => ({
+        slotId: String(index + 1),
+        runId: `run_${index + 1}`,
+        clientTaskId: `client_task_${index + 1}`
+      }))
+    }
+  );
+  assert.equal(batch.tasks.length, 7);
+  assert.deepEqual(insertedSlots, [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(batch.tasks.map((task) => task.batchIndex), [1, 2, 3, 4, 5, 6, 7]);
+});
+
+test('replaying a batch request returns the original tasks without inserting duplicates', async () => {
+  let taskInsertCount = 0;
+  const existingBatch = {
+    id: 'batch_existing',
+    project_id: 'prj_one',
+    client_batch_id: 'stable_batch',
+    status: 'running',
+    requested_by: 'usr_design'
+  };
+  const existingTasks = [1, 2, 3].map((slotNo) => taskRow({
+    id: `task_${slotNo}`,
+    batch_id: 'batch_existing',
+    slot_no: slotNo,
+    slot_id: String(slotNo),
+    input_snapshot: { runId: `run_${slotNo}`, batchIndex: slotNo }
+  }));
+  const database = {
+    async transaction(handler) {
+      return handler({
+        async query(sql) {
+          if (sql.includes('INSERT INTO generation_batches')) return { rowCount: 0, rows: [] };
+          if (sql.includes('SELECT * FROM generation_batches')) return { rowCount: 1, rows: [existingBatch] };
+          if (sql.includes('JOIN generation_batches')) return { rowCount: 3, rows: existingTasks };
+          if (sql.includes('INSERT INTO generation_tasks')) taskInsertCount += 1;
+          throw new Error(`Unexpected query: ${sql}`);
+        }
+      });
+    }
+  };
+  const batch = await createGenerationTaskStore(database).createBatch(
+    { id: 'usr_design', role: 'designer' },
+    {
+      projectId: 'prj_one',
+      clientBatchId: 'stable_batch',
+      tasks: [{ slotId: '1' }, { slotId: '2' }, { slotId: '3' }]
+    }
+  );
+  assert.equal(batch.id, 'batch_existing');
+  assert.equal(batch.tasks.length, 3);
+  assert.equal(taskInsertCount, 0);
 });
 
 test('admin task summary reports active, failed, daily usage, and estimated cost', async () => {
