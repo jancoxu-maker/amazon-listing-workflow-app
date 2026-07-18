@@ -105,6 +105,43 @@ test('admin can access an existing project without an assignment', async () => {
   assert.equal(project.id, 'prj_three');
 });
 
+test('role-scoped administrator invites remain one-time use', async () => {
+  const store = createStage1Store({
+    configured: true,
+    async transaction(callback) {
+      return callback({
+        async query(sql) {
+          if (sql.includes('FROM invite_codes')) {
+            return {
+              rowCount: 1,
+              rows: [{
+                id: 'invite_admin_beta_01',
+                role_scope: 'admin',
+                status: 'active',
+                uses: 1,
+                max_uses: 1,
+                expires_at: null
+              }]
+            };
+          }
+          throw new Error(`Unexpected query in test: ${sql}`);
+        }
+      });
+    }
+  });
+
+  await assert.rejects(
+    store.activateInvite({
+      inviteHash: 'a'.repeat(64),
+      displayName: 'Admin Tester',
+      email: 'admin-tester@vistamz.test',
+      requestedRole: 'admin',
+      password: 'VistamzTest2026!'
+    }),
+    (error) => error instanceof Stage1Error && error.status === 403 && error.code === 'INVITE_UNAVAILABLE'
+  );
+});
+
 test('export remains blocked until every planned slot has ops and final approval', async () => {
   const store = createStage1Store(createProjectDatabase({
     id: 'prj_four',

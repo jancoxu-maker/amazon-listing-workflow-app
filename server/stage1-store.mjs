@@ -210,7 +210,9 @@ export function createStage1Store(database) {
     return database.transaction(async (client) => {
       const inviteResult = await client.query('SELECT * FROM invite_codes WHERE code_hash = $1 FOR UPDATE', [codeHash]);
       const invite = inviteResult.rows[0];
-      const reusableAdminInvite = invite?.role_scope === 'admin';
+      // Keep only the legacy master administrator invite reusable. Role-scoped
+      // administrator invites issued for individual testers remain one-time use.
+      const reusableAdminInvite = invite?.id === 'invite_admin' && invite?.role_scope === 'admin';
       if (!invite || invite.status !== 'active' || (!reusableAdminInvite && invite.uses >= invite.max_uses) || (invite.expires_at && new Date(invite.expires_at) <= new Date())) {
         throw new Stage1Error('邀请码无效、已被使用或已过期。', 403, 'INVITE_UNAVAILABLE');
       }
