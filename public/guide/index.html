@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Vistamz 内测版动态使用说明书" />
+    <link rel="icon" type="image/svg+xml" href="/vistamz-favicon.svg" />
+    <link rel="stylesheet" href="/guide/guide.css" />
+    <title>Vistamz 使用说明</title>
+  </head>
+  <body class="vz">
+    <a class="skip-link" href="#guide-content">跳到正文</a>
+
+    <header class="guide-topbar">
+      <a class="brand-link" href="/" aria-label="返回 Vistamz">
+        <img src="/vistamz-lockup-ink.svg" alt="Vistamz" />
+      </a>
+      <div class="topbar-title">
+        <span>使用说明</span>
+        <span class="vz-tag">内测版 · 2026.07</span>
+      </div>
+      <div class="topbar-actions">
+        <label class="guide-search" for="guide-search">
+          <i data-lucide="search" aria-hidden="true"></i>
+          <span class="sr-only">搜索说明书</span>
+          <input id="guide-search" type="search" placeholder="搜索步骤、功能或问题" autocomplete="off" />
+          <kbd>⌘ K</kbd>
+        </label>
+        <a class="vz-btn vz-btn--primary vz-btn--md" href="/">
+          <i data-lucide="arrow-up-right" aria-hidden="true"></i>
+          打开 Vistamz
+        </a>
+      </div>
+    </header>
+
+    <div class="guide-shell">
+      <aside class="guide-sidebar" aria-label="说明书目录">
+        <button class="sidebar-toggle vz-btn vz-btn--secondary vz-btn--icon" type="button" aria-label="收起目录" aria-expanded="true">
+          <i data-lucide="panel-left-close" aria-hidden="true"></i>
+        </button>
+
+        <div class="sidebar-content">
+          <div class="role-panel">
+            <p class="eyebrow">YOUR ROLE</p>
+            <h2>选择你的身份</h2>
+            <div class="role-switch" role="tablist" aria-label="身份选择">
+              <button type="button" class="role-button is-active" data-role="designer" role="tab" aria-selected="true">
+                <i data-lucide="pen-tool" aria-hidden="true"></i><span>设计</span>
+              </button>
+              <button type="button" class="role-button" data-role="operator" role="tab" aria-selected="false">
+                <i data-lucide="clipboard-check" aria-hidden="true"></i><span>运营</span>
+              </button>
+              <button type="button" class="role-button" data-role="admin" role="tab" aria-selected="false">
+                <i data-lucide="shield-check" aria-hidden="true"></i><span>管理员</span>
+              </button>
+            </div>
+          </div>
+
+          <nav class="guide-nav" aria-label="页面章节">
+            <a href="#start" class="is-active"><i data-lucide="sparkles"></i><span>快速开始</span></a>
+            <a href="#workflow"><i data-lucide="route"></i><span>完整流程</span></a>
+            <a href="#project"><i data-lucide="folder-plus"></i><span>准备项目</span></a>
+            <a href="#plan"><i data-lucide="layout-template"></i><span>图片方案</span></a>
+            <a href="#generate"><i data-lucide="image-plus"></i><span>生图与修改</span></a>
+            <a href="#review"><i data-lucide="scan-eye"></i><span>预审与人工审核</span></a>
+            <a href="#brand"><i data-lucide="palette"></i><span>品牌模式</span></a>
+            <a href="#troubleshoot"><i data-lucide="life-buoy"></i><span>问题处理</span></a>
+            <a href="#faq"><i data-lucide="circle-help"></i><span>常见问题</span></a>
+          </nav>
+
+          <div class="sidebar-progress">
+            <div><span>我的学习进度</span><strong id="progress-label">0%</strong></div>
+            <div class="vz-progress" aria-label="学习进度"><i id="progress-bar" style="width:0%"></i></div>
+            <button type="button" class="reset-progress">重置进度</button>
+          </div>
+        </div>
+      </aside>
+
+      <main id="guide-content" class="guide-main">
+        <section id="start" class="guide-hero searchable-section">
+          <div class="hero-copy">
+            <p class="eyebrow">VISTAMZ PLAYBOOK</p>
+            <h1>从产品资料，到可审核的 Amazon 图片</h1>
+            <p class="hero-lead">Vistamz 把产品参考图、已确认卖点、品牌规则和审核记录串成一条清晰流程。你只需要完成当前身份对应的工作。</p>
+            <div class="hero-meta">
+              <span><i data-lucide="clock-3"></i>首次上手约 8 分钟</span>
+              <span><i data-lucide="users"></i>设计 · 运营 · 管理员协作</span>
+              <span><i data-lucide="languages"></i>支持多站点图片文案</span>
+            </div>
+            <div class="hero-actions">
+              <a class="vz-btn vz-btn--primary vz-btn--lg" href="#workflow"><i data-lucide="play"></i>开始学习</a>
+              <button class="vz-btn vz-btn--secondary vz-btn--lg" type="button" id="show-tour"><i data-lucide="mouse-pointer-click"></i>查看 60 秒导览</button>
+            </div>
+          </div>
+          <div class="hero-visual" aria-label="Vistamz 七图流程示例">
+            <div class="hero-image hero-image-main"><img src="/sample/final/03-lifestyle-kitchen.png" alt="产品生活方式图片示例" /></div>
+            <div class="hero-image hero-image-small"><img src="/sample/final/01-main-white-background.png" alt="产品白底主图示例" /></div>
+            <div class="hero-image hero-image-small"><img src="/sample/final/04-detail-closeups.png" alt="产品细节图片示例" /></div>
+            <div class="visual-note"><strong>先证明卖点</strong><span>再决定文字和装饰</span></div>
+          </div>
+        </section>
+
+        <section class="role-brief searchable-section" aria-live="polite">
+          <div class="role-icon"><i data-lucide="pen-tool" id="role-brief-icon"></i></div>
+          <div>
+            <p class="eyebrow">CURRENT GUIDE</p>
+            <h2 id="role-brief-title">设计工作指南</h2>
+            <p id="role-brief-copy">负责准备产品资料、图片方案、生图、候选选择和提交运营审核。</p>
+          </div>
+          <span class="vz-tag vz-tag--info" id="role-brief-tag">6 个主要步骤</span>
+        </section>
+
+        <section id="workflow" class="guide-section searchable-section">
+          <div class="section-heading">
+            <div><p class="eyebrow">CORE WORKFLOW</p><h2>只关注下一步</h2><p>点击步骤查看操作和完成标准。勾选后会保存在这台设备上。</p></div>
+            <span class="section-count" id="workflow-count">01 / 06</span>
+          </div>
+          <div class="workflow" id="role-workflow"></div>
+        </section>
+
+        <section id="project" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">PROJECT INPUT</p><h2>准备项目资料</h2><p>参考图负责锁定产品，卖点负责限定模型能说什么。</p></div>
+          </div>
+          <div class="two-column">
+            <article class="vz-card guide-card">
+              <div class="card-icon"><i data-lucide="images"></i></div>
+              <h3>参考图怎么上传</h3>
+              <ul class="check-list">
+                <li><i data-lucide="check"></i><span><strong>主参考图必填</strong>，完整展示外观、材质和比例。</span></li>
+                <li><i data-lucide="check"></i><span>建议补充侧面、背面、状态图和关键细节。</span></li>
+                <li><i data-lucide="check"></i><span>只上传产品真实存在的状态，避免模型猜测。</span></li>
+                <li><i data-lucide="check"></i><span>预览被容器缩放不等于原图被裁掉。</span></li>
+              </ul>
+              <div class="do-dont"><span class="do"><i data-lucide="thumbs-up"></i>主体完整、角度互补</span><span class="dont"><i data-lucide="thumbs-down"></i>重复图、过度裁切</span></div>
+            </article>
+            <article class="vz-card guide-card">
+              <div class="card-icon"><i data-lucide="list-checks"></i></div>
+              <h3>卖点怎么准备</h3>
+              <ul class="check-list">
+                <li><i data-lucide="check"></i><span>有 SKU 时使用已有卖点；无 SKU 时可手动填写。</span></li>
+                <li><i data-lucide="check"></i><span>卖点可以中文输入；图片可见文字遵循项目语言。</span></li>
+                <li><i data-lucide="check"></i><span>认证、尺寸、承重等必须有资料依据。</span></li>
+                <li><i data-lucide="check"></i><span>建议最多 12 条进入方案池，由 AI 组合而非全部塞入图片。</span></li>
+              </ul>
+              <div class="vz-alert vz-alert--warning"><i data-lucide="triangle-alert"></i><div class="body"><span class="title">不要暗示被禁止的卖点</span><span class="desc">文字不写但用画面暗示，同样属于不允许使用。</span></div></div>
+            </article>
+          </div>
+        </section>
+
+        <section id="plan" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">IMAGE PLAN</p><h2>先规划，再生图</h2><p>每个图槽都应回答：这张图证明什么，用户通过什么画面看懂。</p></div>
+          </div>
+          <div class="plan-layout">
+            <div class="plan-tabs" role="tablist" aria-label="输出类型">
+              <button class="plan-tab is-active" type="button" data-plan="main" role="tab" aria-selected="true"><i data-lucide="gallery-horizontal-end"></i><span><strong>Amazon 主图套图</strong><small>默认 7 个方向</small></span></button>
+              <button class="plan-tab" type="button" data-plan="aplus" role="tab" aria-selected="false"><i data-lucide="panels-top-left"></i><span><strong>A+ 内容</strong><small>按内容动态规划</small></span></button>
+            </div>
+            <div class="plan-rules" id="plan-rules"></div>
+          </div>
+          <div class="slot-strip" aria-label="七图示例">
+            <button type="button" class="slot-card is-active" data-slot="0"><img src="/sample/final/01-main-white-background.png" alt="主图" /><span>01</span><strong>白底主图</strong></button>
+            <button type="button" class="slot-card" data-slot="1"><img src="/sample/final/02-core-features.png" alt="核心卖点" /><span>02</span><strong>核心卖点</strong></button>
+            <button type="button" class="slot-card" data-slot="2"><img src="/sample/final/03-lifestyle-kitchen.png" alt="使用场景" /><span>03</span><strong>真实场景</strong></button>
+            <button type="button" class="slot-card" data-slot="3"><img src="/sample/final/04-detail-closeups.png" alt="细节" /><span>04</span><strong>细节证明</strong></button>
+            <button type="button" class="slot-card" data-slot="4"><img src="/sample/final/05-foldable-storage.png" alt="功能状态" /><span>05</span><strong>功能状态</strong></button>
+            <button type="button" class="slot-card" data-slot="5"><img src="/sample/final/06-structure-specs.png" alt="结构" /><span>06</span><strong>结构规格</strong></button>
+            <button type="button" class="slot-card" data-slot="6"><img src="/sample/final/07-dimensions-included.png" alt="尺寸清单" /><span>07</span><strong>尺寸清单</strong></button>
+          </div>
+          <div class="slot-detail" id="slot-detail"><span class="vz-tag vz-tag--info">01 · 必需</span><div><strong>白底展示完整产品</strong><p>产品建议占有效画面 80%–90%，默认目标 85%；不加场景、Logo 或促销文案。</p></div></div>
+        </section>
+
+        <section id="generate" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">GENERATE & EDIT</p><h2>生成、比较、局部修改</h2><p>生图不会覆盖已有结果；每一次再生成或局部修改都会成为新候选版本。</p></div>
+          </div>
+          <div class="generation-modes">
+            <article class="mode-card"><span class="mode-number">3</span><div><h3>重生当前图</h3><p>当前图槽生成 3 张候选，用于比较构图、产品一致性和文字表现。</p></div><span class="vz-tag">重点打磨</span></article>
+            <article class="mode-card"><span class="mode-number">1×</span><div><h3>整套各生成一张</h3><p>按图槽顺序逐张生成完整初稿；失败项可单独重试，不会打乱顺序。</p></div><span class="vz-tag">快速成套</span></article>
+            <article class="mode-card"><span class="mode-number"><i data-lucide="lasso-select"></i></span><div><h3>局部修改</h3><p>选中区域并写明修改内容，选区外锁定不变；结果作为新候选保留。</p></div><span class="vz-tag">保留好图</span></article>
+          </div>
+          <div class="local-edit-demo">
+            <div class="edit-canvas">
+              <img src="/sample/final/03-lifestyle-kitchen.png" alt="局部修改示意" />
+              <div class="selection-shape"><span>选区</span></div>
+            </div>
+            <div class="edit-steps">
+              <p class="eyebrow">LOCAL EDIT</p><h3>局部修改的正确顺序</h3>
+              <ol>
+                <li><span>1</span><div><strong>选择候选图</strong><p>先确认画面的大部分内容值得保留。</p></div></li>
+                <li><span>2</span><div><strong>圈出修改区域</strong><p>用套索、画笔或矩形覆盖需要变化的部分。</p></div></li>
+                <li><span>3</span><div><strong>写清楚修改指令</strong><p>说明“改什么”和“哪些内容必须保持不变”。</p></div></li>
+                <li><span>4</span><div><strong>比较两个版本</strong><p>原候选仍然保留，可随时切回。</p></div></li>
+              </ol>
+            </div>
+          </div>
+        </section>
+
+        <section id="review" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">REVIEW</p><h2>AI 找风险，人做决定</h2><p>AI 预审不会自动批准图片；最终判断由被分配的运营完成，管理员负责最终放行。</p></div>
+          </div>
+          <div class="review-grid">
+            <article class="review-score">
+              <div class="score-head"><div><span>AI 预审示例</span><strong>需关注</strong></div><span class="score warning">62</span></div>
+              <p>产品主体与参考图一致，但标题文字需要复核，场景中的使用动作需要人工确认。</p>
+              <div class="review-metrics">
+                <span><b>产品一致性</b><em class="success">通过</em></span>
+                <span><b>比例/物理逻辑</b><em class="success">通过</em></span>
+                <span><b>卖点准确</b><em class="warning">复核</em></span>
+                <span><b>文字风险</b><em class="warning">复核</em></span>
+                <span><b>画面可用性</b><em class="success">通过</em></span>
+              </div>
+              <details><summary>查看预审依据<i data-lucide="chevron-down"></i></summary><div><p><strong>发现：</strong>标题中的产品名称需与卖点表逐字核对。</p><p><strong>建议：</strong>保留当前构图，优先局部修改文字区域。</p></div></details>
+            </article>
+            <article class="decision-panel">
+              <p class="eyebrow">HUMAN DECISION</p><h3>人工判断看什么</h3>
+              <div class="decision-options">
+                <div><i data-lucide="check-circle-2"></i><span><strong>采用此图</strong><small>产品、卖点、文字和场景都可用</small></span></div>
+                <div><i data-lucide="refresh-cw"></i><span><strong>需修改</strong><small>选择问题原因，局部修改或重新生成</small></span></div>
+                <div><i data-lucide="x-circle"></i><span><strong>不可用</strong><small>产品变形、逻辑错误或存在合规风险</small></span></div>
+              </div>
+              <div class="vz-alert vz-alert--info"><i data-lucide="info"></i><div class="body"><span class="title">运营何时能看到项目？</span><span class="desc">只有设计完成整套选择并提交后，被分配的运营才会看到。</span></div></div>
+            </article>
+          </div>
+          <div class="handoff-flow">
+            <span><i data-lucide="pen-tool"></i><b>设计提交整套</b></span><i data-lucide="arrow-right"></i><span><i data-lucide="clipboard-check"></i><b>运营逐图审核</b></span><i data-lucide="arrow-right"></i><span><i data-lucide="shield-check"></i><b>管理员放行</b></span><i data-lucide="arrow-right"></i><span><i data-lucide="file-archive"></i><b>导出 ZIP</b></span>
+          </div>
+        </section>
+
+        <section id="brand" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">BRAND MODE</p><h2>品牌规则跟随项目版本</h2><p>项目选择品牌后会锁定当时的版本，品牌库之后更新不会静默改变旧项目。</p></div>
+          </div>
+          <div class="brand-version-card">
+            <div class="brand-version-main"><span class="brand-mark">C</span><div><small>当前项目</small><h3>Cosyland</h3><p>温暖家庭 · 自然材质 · 克制排版</p></div></div>
+            <div class="version-compare"><span><small>项目锁定</small><strong>v3</strong></span><i data-lucide="arrow-right"></i><span class="latest"><small>品牌库当前</small><strong>v5</strong></span></div>
+            <button class="vz-btn vz-btn--secondary" type="button" id="brand-upgrade-demo">了解升级影响</button>
+          </div>
+          <div class="brand-rules-grid">
+            <article><i data-lucide="swatch-book"></i><h3>颜色是规则，不是色卡</h3><p>HEX 与比例用于控制背景、标题和点缀；图片中不能出现色号或比例面板。</p></article>
+            <article><i data-lucide="move-up-right"></i><h3>箭头与标注统一</h3><p>标题颜色、箭头、标注线、图标和圆角风格跟随品牌快照。</p></article>
+            <article><i data-lucide="badge-check"></i><h3>Logo 只用于 A+</h3><p>普通主图套图不展示 Logo；A+ 是否展示由品牌规则与方案共同决定。</p></article>
+            <article><i data-lucide="images"></i><h3>示例图帮助理解审美</h3><p>品牌示例图是风格参考，不是要模型复刻的版式或产品图。</p></article>
+          </div>
+        </section>
+
+        <section id="troubleshoot" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">RECOVERY</p><h2>遇到问题，先看这里</h2><p>绝大多数失败都可以保留已有结果后继续，不需要重建项目。</p></div>
+          </div>
+          <div class="trouble-list">
+            <details><summary><span class="status-dot error"></span><strong>模型没有返回图片</strong><small>生图失败</small><i data-lucide="chevron-down"></i></summary><div><p>先点击失败项重试。若连续失败，检查参考图是否可读、提示词是否冲突，再改用“重生当前图”。其他已成功图不会丢失。</p></div></details>
+            <details><summary><span class="status-dot warning"></span><strong>AI 预审失败或超时</strong><small>图片已生成</small><i data-lucide="chevron-down"></i></summary><div><p>图片会被保留。稍后重试 AI 预审，也可以先进行人工判断；不要反复点击生图。</p></div></details>
+            <details><summary><span class="status-dot warning"></span><strong>项目或图片加载很慢</strong><small>网络/服务唤醒</small><i data-lucide="chevron-down"></i></summary><div><p>等待页面明确显示结果后再操作。若超过两分钟仍无变化，刷新并重新进入项目，任务状态会从服务器恢复。</p></div></details>
+            <details><summary><span class="status-dot error"></span><strong>参考图读取失败或 Not found</strong><small>素材不可访问</small><i data-lucide="chevron-down"></i></summary><div><p>回到项目资料检查缩略图。无法打开时重新上传对应参考图并保存项目，再重新生成受影响的方案或图片。</p></div></details>
+            <details><summary><span class="status-dot info"></span><strong>局部修改没有变化</strong><small>选区/指令不明确</small><i data-lucide="chevron-down"></i></summary><div><p>扩大选区覆盖完整对象，并写清楚具体变化；避免只写“优化一下”。同时说明选区外产品结构、颜色和比例保持不变。</p></div></details>
+          </div>
+        </section>
+
+        <section id="faq" class="guide-section searchable-section">
+          <div class="section-heading compact">
+            <div><p class="eyebrow">FAQ</p><h2>常见问题</h2><p>这里没有答案时，把项目名、图槽编号和发生时间发给管理员。</p></div>
+          </div>
+          <div class="faq-grid">
+            <details><summary>为什么运营看不到设计中的项目？<i data-lucide="plus"></i></summary><p>这是权限规则。只有设计选好整套图片并正式提交后，被分配的运营才会在审核队列看到项目。</p></details>
+            <details><summary>为什么品牌库更新后项目还是旧样式？<i data-lucide="plus"></i></summary><p>项目锁定了创建时的品牌版本。你可以主动升级版本，但升级会让旧方案和候选图失效，需要重新规划和生成。</p></details>
+            <details><summary>主图和 A+ 能在后面切换吗？<i data-lucide="plus"></i></summary><p>输出类型在图片方案阶段确定。切换类型会清空不兼容的方案与候选图，因此应尽量在生图前确认。</p></details>
+            <details><summary>图片中的文字为什么不是需求语言？<i data-lucide="plus"></i></summary><p>检查项目资料里的目标站点和图片文案语言，保存后重新生成图片方案。卖点输入语言与最终图片语言可以不同。</p></details>
+            <details><summary>AI 预审通过就能直接导出吗？<i data-lucide="plus"></i></summary><p>不能。AI 只提示风险；仍需运营逐图审核，并由管理员最终放行后导出。</p></details>
+            <details><summary>重新生成会覆盖我喜欢的图片吗？<i data-lucide="plus"></i></summary><p>不会。再生成和局部修改都会产生新候选版本，原候选与历史判断仍然保留。</p></details>
+          </div>
+        </section>
+
+        <section class="guide-finish searchable-section">
+          <img src="/vistamz-lockup-h-white.svg" alt="Vistamz" />
+          <div><p class="eyebrow">READY TO CREATE</p><h2>把卖点变成看得见的证据</h2><p>现在回到 Vistamz，从一个真实项目开始。</p></div>
+          <a class="vz-btn finish-button" href="/"><i data-lucide="arrow-up-right"></i>进入工作台</a>
+        </section>
+      </main>
+    </div>
+
+    <div class="search-empty" id="search-empty" hidden>
+      <i data-lucide="search-x"></i><strong>没有找到相关内容</strong><p>试试搜索“局部修改”“品牌版本”或“生成失败”。</p>
+    </div>
+
+    <dialog class="tour-dialog" id="tour-dialog">
+      <button type="button" class="dialog-close vz-btn vz-btn--ghost vz-btn--icon" aria-label="关闭导览"><i data-lucide="x"></i></button>
+      <div class="tour-step is-active" data-tour-step="0"><span>01</span><i data-lucide="folder-plus"></i><h2>从项目资料开始</h2><p>上传主参考图，确认产品信息、目标站点、图片语言和品牌。</p></div>
+      <div class="tour-step" data-tour-step="1"><span>02</span><i data-lucide="layout-template"></i><h2>让方案先说清楚</h2><p>每张图先确定要证明的卖点和画面证据，再进入生图。</p></div>
+      <div class="tour-step" data-tour-step="2"><span>03</span><i data-lucide="scan-eye"></i><h2>AI 提醒，人工决定</h2><p>选择候选图，处理风险提示，提交给运营并完成管理员放行。</p></div>
+      <footer><span id="tour-position">1 / 3</span><button class="vz-btn vz-btn--secondary" id="tour-prev" type="button" disabled>上一步</button><button class="vz-btn vz-btn--primary" id="tour-next" type="button">下一步</button></footer>
+    </dialog>
+
+    <div class="guide-toast vz-toast" id="guide-toast" role="status" aria-live="polite" hidden><i data-lucide="info"></i><span></span></div>
+
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="/guide/guide.js"></script>
+  </body>
+</html>

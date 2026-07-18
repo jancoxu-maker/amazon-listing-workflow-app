@@ -9506,11 +9506,14 @@ function AdminReleasePage({ projects, onOpenProject }) {
 
 function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, onSubmit, isSubmitting = false }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
+  const totalSlots = activeSlots.length || STORYBOARD_SLOT_COUNT;
   const selectedRuns = activeSlots
     .map((slot) => ({ slot, run: getBestRunForSlot(slot.id, generationRuns) }))
     .filter((item) => item.run?.verdict === 'usable');
   const ready = isStoryboardPlanReady(storyboardBriefs, projectForm) && selectedRuns.length === activeSlots.length;
   const attentionCount = selectedRuns.filter((item) => item.run?.aiReview?.verdict !== 'pass').length;
+  const selectedCount = selectedRuns.length;
+  const completionPercent = totalSlots ? Math.min(100, Math.round((selectedCount / totalSlots) * 100)) : 0;
 
   return (
     <section className="handoff-page">
@@ -9523,10 +9526,20 @@ function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, on
         </div>
       </header>
 
-      <section className="handoff-overview">
-        <div className="handoff-number"><strong>{selectedRuns.length} / {activeSlots.length || STORYBOARD_SLOT_COUNT}</strong><span>图槽已选定</span></div>
-        <div><h3>{getProjectTitle(projectForm)}</h3><p>{getProjectPlanOutputPreset(projectForm).label} · 提交后将进入运营的审核队列</p></div>
-        <span className={ready ? 'handoff-ready-pill' : 'handoff-pending-pill'}>{ready ? '可以提交' : '等待补齐'}</span>
+      <section className={`handoff-overview ${ready ? 'is-ready' : 'is-pending'}`} style={{ '--handoff-progress': `${completionPercent}%` }}>
+        <div className="handoff-progress-card">
+          <div className="handoff-progress-ring"><strong>{selectedCount}</strong><span>/{totalSlots}</span></div>
+          <div><span>图槽已选定</span><small>{completionPercent}% 完成</small></div>
+        </div>
+        <div className="handoff-overview-main">
+          <h3>{getProjectTitle(projectForm)}</h3>
+          <p>{getProjectPlanOutputPreset(projectForm).label} · 提交后进入运营审核队列</p>
+          <div className="handoff-overview-meta"><span><Check size={14} />仅提交已选版本</span><span>{attentionCount ? `${attentionCount} 个风险提示会同步给运营` : '暂无 AI 风险提示'}</span></div>
+        </div>
+        <div className="handoff-status-block">
+          <span className={ready ? 'handoff-ready-pill' : 'handoff-pending-pill'}>{ready ? '可以提交' : '等待补齐'}</span>
+          <small>{ready ? '下一步：运营审核' : '补齐所有图槽后可提交'}</small>
+        </div>
       </section>
 
       <section className="handoff-checks">

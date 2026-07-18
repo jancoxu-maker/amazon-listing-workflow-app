@@ -11362,3 +11362,179 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
     flex-basis: 100%;
   }
 }
+
+/* Handoff summary: compact review-ready card for the designer submit step. */
+.role-designer .handoff-overview {
+  display: grid;
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr) minmax(140px, auto);
+  align-items: center;
+  gap: 22px;
+  padding: 22px 24px;
+  overflow: hidden;
+  border-color: #ffd1c3;
+  background:
+    linear-gradient(90deg, rgba(255, 111, 78, .1), rgba(255, 255, 255, .96) 34%),
+    #ffffff;
+}
+
+.role-designer .handoff-progress-card {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.role-designer .handoff-progress-ring {
+  display: grid;
+  position: relative;
+  width: 76px;
+  height: 76px;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(var(--vz-coral) var(--handoff-progress, 0%), #f0e7f5 0);
+  color: var(--vz-ink);
+}
+
+.role-designer .handoff-progress-ring::after {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px var(--vz-line);
+}
+
+.role-designer .handoff-progress-ring strong,
+.role-designer .handoff-progress-ring span {
+  position: relative;
+  z-index: 1;
+  line-height: 1;
+}
+
+.role-designer .handoff-progress-ring strong {
+  align-self: end;
+  font-size: 25px;
+  font-weight: 950;
+}
+
+.role-designer .handoff-progress-ring span {
+  align-self: start;
+  margin-top: 4px;
+  color: var(--vz-muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.role-designer .handoff-progress-card > div:last-child {
+  display: grid;
+  gap: 4px;
+}
+
+.role-designer .handoff-progress-card > div:last-child span {
+  color: var(--vz-ink);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.role-designer .handoff-progress-card > div:last-child small {
+  color: #9d5944;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.role-designer .handoff-overview-main {
+  min-width: 0;
+}
+
+.role-designer .handoff-overview-main h3 {
+  margin: 0 0 8px;
+  overflow: hidden;
+  color: var(--vz-ink);
+  font-size: clamp(22px, 2vw, 30px);
+  font-weight: 950;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-designer .handoff-overview-main p {
+  margin: 0;
+  color: var(--vz-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.role-designer .handoff-overview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 13px;
+}
+
+.role-designer .handoff-overview-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--vz-line);
+  border-radius: 999px;
+  background: #fffaf8;
+  color: #8a513f;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.role-designer .handoff-overview-meta svg {
+  color: var(--vz-coral);
+}
+
+.role-designer .handoff-status-block {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+
+.role-designer .handoff-ready-pill,
+.role-designer .handoff-pending-pill {
+  min-height: 38px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.role-designer .handoff-ready-pill {
+  background: var(--vz-coral);
+  color: var(--vz-ink);
+}
+
+.role-designer .handoff-pending-pill {
+  border: 1px solid #ffc8b9;
+  background: var(--vz-coral-soft);
+  color: #a53f24;
+}
+
+.role-designer .handoff-status-block small {
+  color: var(--vz-muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .role-designer .handoff-overview {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .role-designer .handoff-status-block {
+    justify-items: start;
+  }
+
+  .role-designer .handoff-overview-main h3 {
+    white-space: normal;
+  }
+}
