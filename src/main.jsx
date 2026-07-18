@@ -273,6 +273,17 @@ const reviewStatusMeta = {
   blocked: { text: '禁止导出', shortText: '禁止', className: 'blocked', icon: X }
 };
 
+const operatorRejectionReasons = [
+  { id: 'copy', label: '文字/文案错误' },
+  { id: 'claim', label: '卖点或证据不符' },
+  { id: 'product', label: '产品外观不一致' },
+  { id: 'physics', label: '比例/物理逻辑' },
+  { id: 'layout', label: '排版/可读性' },
+  { id: 'compliance', label: 'Amazon 合规' },
+  { id: 'crop', label: '尺寸/裁切' },
+  { id: 'other', label: '其他' }
+];
+
 const reviewerRoles = {
   human: {
     label: '人工',
@@ -297,10 +308,10 @@ const reviewerRoles = {
   },
   admin: {
     label: '管理员',
-    title: '最终放行',
-    helper: '确认运营审核已完成后，进行最终放行、退回或禁止导出。',
-    passText: '最终通过',
-    reworkText: '退回重审'
+    title: '进度查看',
+    helper: '只读查看设计提交、运营审核和返修进度。',
+    passText: '运营已通过',
+    reworkText: '运营已退回'
   }
 };
 
@@ -2303,20 +2314,20 @@ function normalizeStoryboardSequence(briefs = [], form = null, brands = defaultB
 }
 
 function deriveReviewStatus(decision = {}) {
-  if (decision.finalStatus === 'blocked' || decision.opsStatus === 'blocked') return 'blocked';
-  if (decision.finalStatus === 'rework' || decision.opsStatus === 'rework') return 'rework';
-  if (decision.finalStatus === 'approved' && decision.opsStatus === 'approved') return 'approved';
+  if (decision.opsStatus === 'blocked') return 'blocked';
+  if (decision.opsStatus === 'rework') return 'rework';
+  if (decision.opsStatus === 'approved') return 'approved';
   return 'review';
 }
 
 function getDefaultReviewNote(status, brief, decision = {}) {
-  if (status === 'approved') return '运营审核和管理员最终放行已完成，可以进入导出。';
+  if (status === 'approved') return '运营已通过这张图。';
   if (status === 'rework') {
-    if (decision.opsStatus === 'rework') return '运营退回：需要修改卖点、证据或图片文案。';
-    if (decision.finalStatus === 'rework') return '管理员退回：需要修改图片后重新提交审核。';
+    if (decision.rejectionNote) return decision.rejectionNote;
+    if (decision.opsStatus === 'rework') return '运营已退回，请按修改要求返修。';
     return '需要修改后重新提交审核。';
   }
-  if (status === 'blocked') return '运营或管理员已禁止该图进入最终导出。';
+  if (status === 'blocked') return '运营已禁止该图进入最终导出。';
   if (brief?.needsEvidence?.length) return `需要先确认：${brief.needsEvidence.join('、')}`;
   if (brief?.status === 'needs_claims') return '缺少可用卖点，建议回到 Ledger 补充或调整。';
   return '等待人工检查产品、比例、物理逻辑、卖点证据和合规表达。';
@@ -2330,12 +2341,18 @@ function normalizeReviewDecision(decision, slot, brief) {
   const finalStatus = decision?.finalStatus
     || (manualStatus === 'approved' ? 'approved' : manualStatus === 'blocked' ? 'blocked' : manualStatus === 'rework' ? 'rework' : 'review');
   const normalized = {
+    ...decision,
     slotId: slot.id,
     title: brief?.title || slot.title,
     manualStatus,
     opsStatus,
     finalStatus,
     planStatus: validManualStatuses.includes(decision?.planStatus) ? decision.planStatus : 'review',
+    rejectionReasons: Array.isArray(decision?.rejectionReasons) ? decision.rejectionReasons : [],
+    rejectionNote: String(decision?.rejectionNote || ''),
+    reviewRound: Math.max(1, Number(decision?.reviewRound || 1)),
+    reviewCommittedAt: decision?.reviewCommittedAt || '',
+    reviewedBy: decision?.reviewedBy || null,
     updatedAt: decision?.updatedAt || new Date().toISOString()
   };
   const status = deriveReviewStatus(normalized);
@@ -2362,7 +2379,7 @@ function getReviewDecision(reviewDecisions, slotId, storyboardBriefs = []) {
 }
 
 function isDecisionFullyApproved(decision = {}) {
-  return decision.opsStatus === 'approved' && decision.finalStatus === 'approved';
+  return decision.opsStatus === 'approved';
 }
 
 function getRoleStatusText(status) {
@@ -2370,14 +2387,14 @@ function getRoleStatusText(status) {
 }
 
 function getDualReviewSummary(decision = {}) {
-  if (isDecisionFullyApproved(decision)) return '运营与管理员已通过';
+  if (isDecisionFullyApproved(decision)) return '运营已通过';
   return getDualReviewMissingText(decision);
 }
 
 function getDualReviewMissingText(decision = {}) {
-  if (isDecisionFullyApproved(decision)) return '运营审核与管理员放行完成';
+  if (isDecisionFullyApproved(decision)) return '运营审核完成';
   if (decision.opsStatus !== 'approved') return `运营审核：${reviewStatusMeta[decision.opsStatus]?.shortText || '待审'}`;
-  return `管理员最终放行：${reviewStatusMeta[decision.finalStatus]?.shortText || '待审'}`;
+  return '运营审核完成';
 }
 
 function createGenerationRunId() {
@@ -3237,7 +3254,7 @@ function mergePromptOverride(current = '', ruleText = '') {
   return [current, trimmedRule].filter(Boolean).join('\n');
 }
 
-function updateDecisionByRole(decision, slot, brief, role, status, context = 'review') {
+function updateDecisionByRole(decision, slot, brief, role, status, context = 'review', details = {}) {
   const next = {
     ...decision,
     title: brief?.title || slot?.title || decision.title,
@@ -3254,7 +3271,11 @@ function updateDecisionByRole(decision, slot, brief, role, status, context = 're
     next.planStatus = status;
   } else if (role === 'ops') {
     next.opsStatus = status;
-    if (status !== 'approved') next.finalStatus = 'review';
+    next.finalStatus = 'review';
+    next.rejectionReasons = status === 'rework' ? (details.rejectionReasons || []) : [];
+    next.rejectionNote = status === 'rework' ? String(details.rejectionNote || '').trim() : '';
+    next.reviewCommittedAt = '';
+    next.reviewedBy = details.reviewedBy || next.reviewedBy || null;
   } else {
     next.finalStatus = status;
   }
@@ -4633,6 +4654,75 @@ function ReviewActions({
   );
 }
 
+function OperatorReviewActions({ decision, onUpdateReview }) {
+  const [showReturnForm, setShowReturnForm] = useState(decision?.opsStatus === 'rework');
+  const [reasonIds, setReasonIds] = useState(() => decision?.rejectionReasons || []);
+  const [note, setNote] = useState(() => decision?.rejectionNote || '');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setShowReturnForm(decision?.opsStatus === 'rework');
+    setReasonIds(decision?.rejectionReasons || []);
+    setNote(decision?.rejectionNote || '');
+    setError('');
+  }, [decision?.slotId]);
+
+  const toggleReason = (reasonId) => {
+    setReasonIds((current) => current.includes(reasonId)
+      ? current.filter((item) => item !== reasonId)
+      : [...current, reasonId]);
+  };
+  const approve = () => {
+    setShowReturnForm(false);
+    setError('');
+    onUpdateReview(decision.slotId, 'ops', 'approved', 'review');
+  };
+  const returnForChanges = () => {
+    const trimmed = note.trim();
+    if (!reasonIds.length) {
+      setError('请至少选择一个问题类型。');
+      return;
+    }
+    if (trimmed.length < 6) {
+      setError('请写清具体要改什么，至少 6 个字。');
+      return;
+    }
+    setError('');
+    onUpdateReview(decision.slotId, 'ops', 'rework', 'review', {
+      rejectionReasons: reasonIds,
+      rejectionNote: trimmed
+    });
+  };
+
+  return (
+    <section className="operator-review-actions">
+      <div className="operator-review-primary-actions">
+        <button className={decision.opsStatus === 'approved' ? 'vz-btn vz-btn--primary is-active' : 'vz-btn vz-btn--primary'} type="button" onClick={approve}>
+          <Check size={16} />通过此图
+        </button>
+        <button className={showReturnForm ? 'vz-btn operator-return-button is-active' : 'vz-btn operator-return-button'} type="button" onClick={() => setShowReturnForm((value) => !value)}>
+          <RefreshCcw size={16} />退回修改
+        </button>
+      </div>
+      {showReturnForm && (
+        <div className="operator-return-form">
+          <div><strong>选择问题类型</strong><small>可多选，设计会按这些标签定位问题。</small></div>
+          <div className="operator-reason-grid">
+            {operatorRejectionReasons.map((reason) => (
+              <button className={reasonIds.includes(reason.id) ? 'active' : ''} key={reason.id} type="button" onClick={() => toggleReason(reason.id)}>
+                {reasonIds.includes(reason.id) ? <Check size={13} /> : <Plus size={13} />}{reason.label}
+              </button>
+            ))}
+          </div>
+          <label><span>具体修改要求</span><textarea maxLength={220} value={note} onChange={(event) => setNote(event.target.value)} placeholder="例如：第二行英文单词拼写错误，同时将右侧尺寸标注改为 Ledger 中已确认的数值。" /></label>
+          {error && <p className="operator-return-error">{error}</p>}
+          <button className="vz-btn vz-btn--secondary" type="button" onClick={returnForChanges}><ClipboardCheck size={15} />保存退回决定</button>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function deriveRoleButtonClass(decision, activeRole, status) {
   const roleStatus = activeRole === 'human'
     ? decision.status
@@ -4770,14 +4860,18 @@ function getProjectNextAction(project, userRole) {
   const progress = getProjectProgress(project);
   if (userRole === 'operator') {
     if (!progress.runs.length) return { label: '等待候选图', detail: '设计完成生图后会进入你的审核队列', section: 'review' };
-    if (progress.approved >= progress.total) return { label: '等待管理员放行', detail: '运营审核已完成', section: 'review' };
-    return { label: '开始审核', detail: `${progress.approved}/${progress.total} 已放行`, section: 'review' };
+    if (progress.approved >= progress.total) return { label: '下载图片', detail: '运营审核已完成', section: 'export' };
+    return { label: '开始审核', detail: `${progress.approved}/${progress.total} 已通过`, section: 'review' };
+  }
+  if (userRole === 'designer' && project.cloud?.status === 'rework') {
+    const returned = (project.reviewDecisions || []).filter((decision) => decision.opsStatus === 'rework').length;
+    return { label: `返修 ${returned} 张图`, detail: '运营已写明退回原因，其余通过图保持锁定', section: 'generation' };
   }
   if (!progress.hasReference) return { label: '补充项目资料', detail: '先上传产品参考图', section: 'project' };
   if (!progress.claimCount) return { label: '整理卖点', detail: '生成并编辑可上图卖点', section: 'project' };
   if (!progress.briefCount) return { label: '生成图片方案', detail: '先为每张图确认要证明的卖点', section: 'storyboard' };
   if (!progress.runs.length) return { label: '生成候选图', detail: '按已确认方案开始出图', section: 'generation' };
-  return { label: '继续处理项目', detail: `${progress.approved}/${progress.total} 张已最终放行`, section: userRole === 'admin' ? 'review' : 'generation' };
+  return { label: '继续处理项目', detail: `${progress.approved}/${progress.total} 张已通过`, section: 'generation' };
 }
 
 function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProject, onTrashProject, onRestoreProject, isLoading }) {
@@ -7586,6 +7680,8 @@ function GenerationPage({
   selectedSlot,
   setSelectedSlot,
   generationRuns,
+  reviewDecisions = [],
+  projectStatus = 'design',
   promptOverrides,
   brandLibrary,
   brandSnapshot,
@@ -7632,6 +7728,14 @@ function GenerationPage({
   const activeSlots = useMemo(() => getActiveSlots(storyboardBriefs), [storyboardBriefs]);
   const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
   const selectedPromptOverride = promptOverrides?.[selectedSlot.id] || '';
+  const lockedSlotIds = useMemo(() => new Set(
+    projectStatus === 'rework'
+      ? createReviewDecisions(storyboardBriefs, reviewDecisions)
+        .filter((decision) => decision.opsStatus === 'approved')
+        .map((decision) => Number(decision.slotId))
+      : []
+  ), [projectStatus, reviewDecisions, storyboardBriefs]);
+  const selectedSlotLocked = lockedSlotIds.has(Number(selectedSlot.id));
   const structuredProductLock = useMemo(
     () => buildStructuredProductLock(projectForm, ledgerFacts),
     [projectForm, ledgerFacts]
@@ -7645,13 +7749,20 @@ function GenerationPage({
   }) : '';
   const generationPreviewImage = getReferenceImage(projectForm);
   const generationReferences = getGenerationReferenceItems(projectForm, selectedSlot.id, outputPreset.id, selectedBrief?.visualType);
-  const canGenerate = Boolean(selectedBrief && getReferenceImage(projectForm) && (baselineMode || hasSelectedBrand));
+  const hasGenerationInputs = Boolean(selectedBrief && getReferenceImage(projectForm) && (baselineMode || hasSelectedBrand));
+  const canGenerate = hasGenerationInputs && !selectedSlotLocked;
+  const canGenerateSet = Boolean(
+    getReferenceImage(projectForm)
+    && (baselineMode || hasSelectedBrand)
+    && activeSlots.some((slot) => !lockedSlotIds.has(Number(slot.id)))
+  );
   const slotRuns = useMemo(
     () => normalizeGenerationRuns(generationRuns.filter((run) => run.slotId === selectedSlot.id)),
     [generationRuns, selectedSlot.id]
   );
   const activeCandidate = generationRuns.find((run) => run.id === activeRunId) || slotRuns[0];
   const activeCandidateSlot = activeSlots.find((slot) => slot.id === activeCandidate?.slotId) || selectedSlot;
+  const activeCandidateLocked = lockedSlotIds.has(Number(activeCandidateSlot.id));
   const activeCandidateBrief = storyboardBriefs.find((brief) => brief.id === activeCandidateSlot.id) || selectedBrief;
   const activeCandidatePreset = activeCandidate ? getOutputPresetById(activeCandidate.outputPresetId) : outputPreset;
   const activeParentCandidate = activeCandidate?.parentRunId
@@ -7879,7 +7990,7 @@ function GenerationPage({
   };
 
   const markActiveCandidate = (verdict) => {
-    if (!activeCandidate) return;
+    if (!activeCandidate || activeCandidateLocked) return;
     onUpdateGenerationRun(activeCandidate.id, {
       verdict,
       reasons: verdict === 'usable' ? [] : activeCandidate.reasons
@@ -7894,7 +8005,7 @@ function GenerationPage({
   };
 
   const applyActiveReasonRulesToPrompt = () => {
-    if (!activeCandidate || !activeReasonSuggestions.length) return;
+    if (!activeCandidate || activeCandidateLocked || !activeReasonSuggestions.length) return;
     const currentOverride = promptOverrides?.[activeCandidateSlot.id] || '';
     const nextOverride = activeReasonSuggestions.reduce(
       (value, suggestion) => mergePromptOverride(value, suggestion.text),
@@ -7905,7 +8016,7 @@ function GenerationPage({
   };
 
   const saveReasonsAndGoNext = () => {
-    if (!activeCandidate) return;
+    if (!activeCandidate || activeCandidateLocked) return;
     if ((activeCandidate.verdict === 'needs_fix' || activeCandidate.verdict === 'reject') && !activeCandidate.reasons.length) {
       setGenerationStatus('请先选择至少一个问题原因，再进入下一张。');
       return;
@@ -7914,7 +8025,7 @@ function GenerationPage({
   };
 
   const applyAiSuggestionToActiveCandidate = () => {
-    if (!activeCandidate || (!activeCandidate.aiSuggestion && !activeCandidate.aiReview)) return;
+    if (!activeCandidate || activeCandidateLocked || (!activeCandidate.aiSuggestion && !activeCandidate.aiReview)) return;
     const suggestion = activeCandidate.aiSuggestion || deriveAiReviewSuggestion(activeCandidate.aiReview);
     onUpdateGenerationRun(activeCandidate.id, {
       verdict: suggestion.verdict,
@@ -8563,6 +8674,10 @@ function GenerationPage({
       setGenerationStatus('请先生成图片方案，再进入生图验证。');
       return;
     }
+    if (selectedSlotLocked && requestedMode !== 'all-one') {
+      setGenerationStatus('这张图已通过运营审核，本轮返修中已锁定。');
+      return;
+    }
     const referenceReadiness = getReferenceReadiness(projectForm);
     if (!referenceReadiness.ready) {
       appLogger.log('pipeline.generation.blocked', {
@@ -8575,6 +8690,7 @@ function GenerationPage({
     const activeGenerationMode = requestedMode;
     const tasks = activeGenerationMode === 'all-one'
       ? activeSlots
+        .filter((slot) => !lockedSlotIds.has(Number(slot.id)))
         .map((slot) => ({ slot, brief: storyboardBriefs.find((item) => item.id === slot.id) }))
         .filter((task) => task.brief)
         .sort((a, b) => Number(a.slot.id) - Number(b.slot.id))
@@ -8861,6 +8977,10 @@ function GenerationPage({
       setGenerationStatus('请先生成一张候选图，再进行 AI 预审。');
       return;
     }
+    if (activeCandidateLocked) {
+      setGenerationStatus('这张图已通过运营审核，本轮返修中已锁定。');
+      return;
+    }
     const runOutputPreset = getOutputPresetById(activeCandidate.outputPresetId);
     setIsAiReviewing(true);
     setGenerationStatus('AI 正在对照原始参考图预审候选图...');
@@ -8887,7 +9007,7 @@ function GenerationPage({
   };
 
   const generateLocalEdit = async ({ instruction, selection, maskDataUrl }) => {
-    if (!activeCandidate || !activeCandidateBrief || !maskDataUrl) return;
+    if (!activeCandidate || !activeCandidateBrief || !maskDataUrl || activeCandidateLocked) return;
     const runOutputPreset = getOutputPresetById(activeCandidate.outputPresetId);
     setIsLocalEditing(true);
     setGenerationStatus('正在基于当前候选图生成局部修正版...');
@@ -9054,7 +9174,7 @@ function GenerationPage({
             <div className="generation-setup">
             <div className="generation-setup-head">
               <span>生成方式</span>
-              <strong>{baselineMode ? '基线模式' : '品牌模式'}</strong>
+              <strong>{selectedSlotLocked ? '已通过·锁定' : baselineMode ? '基线模式' : '品牌模式'}</strong>
             </div>
 
             <div className="generation-method">
@@ -9072,7 +9192,7 @@ function GenerationPage({
                 </button>
                 <button
                   className="vz-btn vz-btn--primary primary-button generation-action-button"
-                  disabled={isGenerationBusy || !canGenerate}
+                  disabled={isGenerationBusy || !canGenerateSet}
                   onClick={() => {
                     setGenerationMode('all-one');
                     runGeneration('all-one');
@@ -9273,7 +9393,7 @@ function GenerationPage({
                       <ChevronRight size={16} />
                     </summary>
                     <div className="ai-review-action-row">
-                      <button className="vz-btn vz-btn--secondary secondary-button" disabled={isAiReviewing || isBatchRunning} onClick={runAiReview}>
+                      <button className="vz-btn vz-btn--secondary secondary-button" disabled={activeCandidateLocked || isAiReviewing || isBatchRunning} onClick={runAiReview}>
                         <ShieldCheck size={16} />
                         {isAiReviewing ? 'AI 预审中...' : activeCandidate.aiReview ? '重新 AI 预审' : 'AI 预审'}
                       </button>
@@ -9296,6 +9416,7 @@ function GenerationPage({
                         return (
                           <button
                             className={activeCandidate.verdict === id ? `active ${item.className}` : ''}
+                            disabled={activeCandidateLocked}
                             key={id}
                             onClick={() => markActiveCandidate(id)}
                           >
@@ -9304,7 +9425,7 @@ function GenerationPage({
                           </button>
                         );
                       })}
-                      <button className="ai-suggestion-action" disabled={!activeCandidate.aiSuggestion && !activeCandidate.aiReview} onClick={applyAiSuggestionToActiveCandidate}>
+                      <button className="ai-suggestion-action" disabled={activeCandidateLocked || (!activeCandidate.aiSuggestion && !activeCandidate.aiReview)} onClick={applyAiSuggestionToActiveCandidate}>
                         <Sparkles size={15} />采用 AI 建议
                       </button>
                       <button className="vz-btn vz-btn--secondary secondary-button" disabled={!unreviewedQualityRuns.length} onClick={() => selectNextUnreviewedRun()}>
@@ -9328,6 +9449,7 @@ function GenerationPage({
                           return (
                             <button
                               className={checked ? 'active' : ''}
+                              disabled={activeCandidateLocked}
                               key={reason.id}
                               onClick={() => {
                                 const reasons = checked ? activeCandidate.reasons.filter((item) => item !== reason.id) : [...activeCandidate.reasons, reason.id];
@@ -9345,8 +9467,8 @@ function GenerationPage({
                       <div className="reason-tuning-box">
                         <div><span>下轮生成建议</span><strong>已生成 {activeReasonSuggestions.length} 条限制规则</strong><p>{activeReasonSuggestions.map((suggestion) => suggestion.title).join('、')}</p></div>
                         <div className="reason-tuning-actions">
-                          <button className="vz-btn vz-btn--secondary secondary-button" onClick={applyActiveReasonRulesToPrompt}><Plus size={15} />加入提示词</button>
-                          <button className="vz-btn vz-btn--secondary secondary-button" onClick={saveReasonsAndGoNext}><ChevronRight size={15} />保存并下一张</button>
+                          <button className="vz-btn vz-btn--secondary secondary-button" disabled={activeCandidateLocked} onClick={applyActiveReasonRulesToPrompt}><Plus size={15} />加入提示词</button>
+                          <button className="vz-btn vz-btn--secondary secondary-button" disabled={activeCandidateLocked} onClick={saveReasonsAndGoNext}><ChevronRight size={15} />保存并下一张</button>
                         </div>
                       </div>
                     )}
@@ -9356,7 +9478,7 @@ function GenerationPage({
                     <div className="candidate-local-edit-copy"><PencilLine size={17} /><span><strong>局部修改</strong><small>仅修改选中区域，选区外保持原图不变。</small></span></div>
                     <div className="candidate-local-edit-actions">
                       {activeParentCandidate?.imageSrc && <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => setIsLocalCompareOpen(true)}><Eye size={16} />对比</button>}
-                      <button className="vz-btn vz-btn--secondary secondary-button" type="button" disabled={isGenerating || isBatchRunning || isLocalEditing || !activeCandidate.imageSrc} onClick={() => setIsLocalEditOpen(true)}><PencilLine size={16} />局部修改</button>
+                      <button className="vz-btn vz-btn--secondary secondary-button" type="button" disabled={activeCandidateLocked || isGenerating || isBatchRunning || isLocalEditing || !activeCandidate.imageSrc} onClick={() => setIsLocalEditOpen(true)}><PencilLine size={16} />{activeCandidateLocked ? '已通过·锁定' : '局部修改'}</button>
                     </div>
                   </div>
 
@@ -9436,20 +9558,20 @@ function SystemOverviewPage({ projects, onNavigate }) {
   return (
     <section className="system-overview-page">
       <header className="system-overview-heading">
-        <div><p className="eyebrow">SYSTEM HEALTH</p><h2>系统与日志</h2><p>用于分配项目、定位问题，并完成最终放行。</p></div>
+        <div><p className="eyebrow">SYSTEM HEALTH</p><h2>系统与日志</h2><p>用于分配项目、定位问题，并查看团队审核进度。</p></div>
         <span className="system-health-pill"><Check size={14} />日志记录已启用</span>
       </header>
       <div className="system-metric-grid">
         <article><small>团队项目</small><strong>{projects.length}</strong><span>当前可访问</span></article>
         <article><small>等待运营</small><strong>{inReview}</strong><span>已提交审核</span></article>
-        <article><small>等待放行</small><strong>{readyForRelease}</strong><span>运营已通过</span></article>
+        <article><small>审核完成</small><strong>{readyForRelease}</strong><span>运营已通过</span></article>
         <article><small>运行中任务</small><strong>{taskSummary.activeCount || 0}</strong><span>排队与生成中</span></article>
         <article><small>失败任务</small><strong>{taskSummary.failedCount || 0}</strong><span>需要管理员关注</span></article>
         <article><small>今日估算成本</small><strong>${Number(taskSummary.todayCostUsd || 0).toFixed(2)}</strong><span>{taskSummary.todayCount || 0} 个任务，非最终账单</span></article>
       </div>
       <div className="system-shortcut-grid">
         <button type="button" onClick={() => onNavigate('team')}><UsersRound size={20} /><strong>项目分配</strong><small>指定设计师与运营负责人</small></button>
-        <button type="button" onClick={() => onNavigate('admin-release')}><ShieldCheck size={20} /><strong>最终放行</strong><small>查看运营已通过的项目</small></button>
+        <button type="button" onClick={() => onNavigate('admin-release')}><ShieldCheck size={20} /><strong>审核进度</strong><small>只读查看运营审核与设计返修</small></button>
         <button type="button" onClick={() => onNavigate('quality')}><BarChart3 size={20} /><strong>质量与问题记录</strong><small>定位生图、预审和导出问题</small></button>
       </div>
       <section className="system-task-monitor">
@@ -9476,29 +9598,27 @@ function SystemOverviewPage({ projects, onNavigate }) {
   );
 }
 
-function AdminReleasePage({ projects, onOpenProject }) {
-  const readyProjects = projects.filter((project) => {
-    const activeSlots = getActiveSlots(project.storyboardBriefs || []);
-    return activeSlots.length > 0 && activeSlots.every((slot) => (
-      getReviewDecision(project.reviewDecisions || [], slot.id, project.storyboardBriefs || []).opsStatus === 'approved'
-    ));
-  });
+function AdminReleasePage({ projects }) {
+  const reviewProjects = projects.filter((project) => ['review', 'rework', 'approved', 'exported'].includes(project.cloud?.status));
 
   return (
     <section className="admin-release-page">
-      <header className="admin-release-heading"><div><p className="eyebrow">FINAL RELEASE</p><h2>管理员最终放行</h2><p>只显示运营已通过、等待管理员确认交付的项目。</p></div><div className="admin-release-count"><strong>{readyProjects.length}</strong><span>待放行</span></div></header>
+      <header className="admin-release-heading"><div><p className="eyebrow">REVIEW PROGRESS</p><h2>审核进度</h2><p>管理员只查看项目审核进度，不参与二次放行。</p></div><div className="admin-release-count"><strong>{reviewProjects.length}</strong><span>审核项目</span></div></header>
       <div className="admin-release-list">
-        {readyProjects.length ? readyProjects.map((project) => {
+        {reviewProjects.length ? reviewProjects.map((project) => {
           const form = project.form || {};
           const preview = form.referenceImages?.main?.displayPreview || form.sourceImageDisplayPreview || form.sourceImagePreview;
           const activeSlots = getActiveSlots(project.storyboardBriefs || []);
+          const decisions = activeSlots.map((slot) => getReviewDecision(project.reviewDecisions || [], slot.id, project.storyboardBriefs || []));
+          const approved = decisions.filter(isDecisionFullyApproved).length;
+          const rework = decisions.filter((decision) => decision.opsStatus === 'rework').length;
+          const pending = Math.max(0, activeSlots.length - approved - rework);
           return <article className="admin-release-row" key={project.id}>
             <div className="admin-release-thumb">{preview ? <img src={preview} alt="" /> : <FileImage size={22} />}</div>
-            <div><span className="admin-ops-chip">运营已通过</span><h3>{getProjectTitle(form)}</h3><p>{getProjectPlanOutputPreset(form).label} · {activeSlots.length}/{activeSlots.length} 张运营通过</p></div>
-            <div className="admin-release-meta"><small>待确认</small><strong>管理员最终放行</strong></div>
-            <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(project.id, 'review')}>检查并放行</button>
+            <div><span className="admin-ops-chip">{project.cloud?.status === 'approved' || project.cloud?.status === 'exported' ? '运营已完成' : project.cloud?.status === 'rework' ? '已退回设计' : '运营审核中'}</span><h3>{getProjectTitle(form)}</h3><p>{getProjectPlanOutputPreset(form).label} · {approved} 通过 / {rework} 退回 / {pending} 待审</p></div>
+            <div className="admin-release-meta"><small>只读</small><strong>{approved}/{activeSlots.length || STORYBOARD_SLOT_COUNT}</strong></div>
           </article>;
-        }) : <div className="admin-release-empty"><ShieldCheck size={24} /><strong>暂时没有等待放行的项目</strong><p>运营完成整套审核后，项目会自动出现在这里。</p></div>}
+        }) : <div className="admin-release-empty"><ShieldCheck size={24} /><strong>暂时没有进入审核的项目</strong><p>设计提交整套图片后，这里会显示审核进度。</p></div>}
       </div>
     </section>
   );
@@ -9555,9 +9675,30 @@ function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, on
   );
 }
 
-function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns, onUpdateReview, onManageLedger, focusRequest, userRole, brandSnapshot, brandVersionState }) {
+function DesignerReturnNotice({ projectStatus, reviewDecisions, storyboardBriefs, onSelectSlot }) {
+  if (projectStatus !== 'rework') return null;
+  const returned = createReviewDecisions(storyboardBriefs, reviewDecisions).filter((decision) => decision.opsStatus === 'rework');
+  if (!returned.length) return null;
+  return (
+    <section className="designer-return-notice">
+      <div><p className="eyebrow">RETURNED BY OPERATOR</p><h3>运营退回 {returned.length} 张图</h3><p>只需修改下列图槽；已通过图保持锁定，不再重新生成。</p></div>
+      <div className="designer-return-list">
+        {returned.map((decision) => (
+          <button key={decision.slotId} type="button" onClick={() => onSelectSlot(decision.slotId)}>
+            <span>{String(decision.slotId).padStart(2, '0')}</span>
+            <strong>{decision.title}</strong>
+            <p>{decision.rejectionNote}</p>
+            <ChevronRight size={16} />
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generationRuns, onUpdateReview, onFinalizeReview, isFinalizingReview, onManageLedger, focusRequest, userRole, brandSnapshot, brandVersionState }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
-  const activeRole = userRole === 'admin' ? 'admin' : 'ops';
+  const activeRole = 'ops';
   const decisions = activeSlots.map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs));
   const approved = decisions.filter(isDecisionFullyApproved).length;
   const rework = decisions.filter((decision) => decision.status === 'rework' || decision.status === 'blocked').length;
@@ -9601,7 +9742,7 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
   return (
     <section className={activeRole === 'ops' ? 'review-workspace operator-review-workspace' : 'review-workspace'}>
       <aside className="review-slot-panel">
-        <div className="review-slot-panel-head"><p className="eyebrow">REVIEW QUEUE</p><strong>图片审核</strong><span>{approved}/{activeSlots.length || STORYBOARD_SLOT_COUNT} 已最终放行</span></div>
+        <div className="review-slot-panel-head"><p className="eyebrow">REVIEW QUEUE</p><strong>图片审核</strong><span>{approved}/{activeSlots.length || STORYBOARD_SLOT_COUNT} 已通过</span></div>
         <div className="review-slot-list">
           {activeSlots.map((slot) => {
             const decision = getReviewDecision(reviewDecisions, slot.id, storyboardBriefs);
@@ -9627,7 +9768,7 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
       </FocusFrame>
 
       <aside className="review-action-panel">
-        <div className="review-action-head"><p className="eyebrow">YOUR DECISION</p><h3>{activeRole === 'admin' ? '管理员最终放行' : '运营审核'}</h3><p>{activeRole === 'admin' ? '确认运营已通过后，决定是否允许导出。' : '核对产品、卖点、文字和物理逻辑。'}</p></div>
+        <div className="review-action-head"><p className="eyebrow">YOUR DECISION</p><h3>运营审核</h3><p>逐张保存判断，全部完成后再统一提交本轮结果。</p></div>
         <section className="review-brand-context">
           <div className="review-brand-context-head">
             <span><Palette size={16} /><strong>{reviewBrand?.name || '基线模式'}</strong></span>
@@ -9658,11 +9799,23 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
             </>
           ) : <p className="review-brand-baseline">本项目使用统一商业基线，不需要核对品牌示例。</p>}
         </section>
-        <RoleChecklist decision={selectedDecision} />
-        <ReviewActions decision={selectedDecision} activeRole={activeRole} onUpdateReview={onUpdateReview} />
+        <OperatorReviewActions decision={selectedDecision} onUpdateReview={onUpdateReview} />
+        {selectedDecision.opsStatus === 'rework' && selectedDecision.rejectionNote && (
+          <div className="review-return-summary">
+            <strong>已记录的退回要求</strong>
+            <div>{selectedDecision.rejectionReasons.map((reasonId) => <span key={reasonId}>{operatorRejectionReasons.find((item) => item.id === reasonId)?.label || reasonId}</span>)}</div>
+            <p>{selectedDecision.rejectionNote}</p>
+          </div>
+        )}
         <div className="review-checklist-mini"><strong>本张审核要点</strong>{auditItems.slice(0, 4).map((item) => <span key={item.label}>{item.state === 'pass' ? <Check size={14} /> : <MessageSquareWarning size={14} />}{item.label}</span>)}</div>
         <button className="vz-btn vz-btn--ghost text-button strong review-ledger-link" onClick={onManageLedger} type="button">查看关联卖点 <ChevronRight size={15} /></button>
-        <div className="review-workspace-summary"><span><strong>{pending}</strong> 待确认</span><span><strong>{rework}</strong> 需处理</span></div>
+        <div className="review-workspace-summary"><span><strong>{pending}</strong> 待判断</span><span><strong>{rework}</strong> 已退回</span></div>
+        <div className="review-round-submit">
+          <div><strong>本轮审核</strong><small>{pending ? `还有 ${pending} 张未判断` : rework ? `将退回 ${rework} 张，其余图片锁定` : '全部通过后可进入 ZIP 下载'}</small></div>
+          <button className="vz-btn vz-btn--primary" disabled={pending > 0 || isFinalizingReview} type="button" onClick={() => onFinalizeReview({ approved, rework, total: activeSlots.length })}>
+            <ClipboardCheck size={16} />{isFinalizingReview ? '正在提交...' : pending ? `还有 ${pending} 张未审核` : rework ? `完成审核，退回 ${rework} 张` : '完成审核并进入下载'}
+          </button>
+        </div>
       </aside>
     </section>
   );
@@ -9716,7 +9869,7 @@ function ExportPage({
   const reviewReady = activeSlots.length > 0
     && isStoryboardPlanReady(storyboardBriefs, projectForm)
     && activeSlots.every((slot) => isDecisionFullyApproved(getReviewDecision(reviewDecisions, slot.id, storyboardBriefs)));
-  const canExportZip = readyForZip && reviewReady && userRole === 'admin';
+  const canExportZip = readyForZip && reviewReady && userRole === 'operator';
   const firstMissingReview = activeSlots
     .map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs))
     .find((decision) => !isDecisionFullyApproved(decision));
@@ -9728,8 +9881,8 @@ function ExportPage({
         : '最终图已选齐，但仍有图片未完全通过审核。'
     : `还缺 ${Math.max(0, slotTotal - selectedImageCount)} 张最终图。`;
   const exportImagesZip = async () => {
-    if (userRole !== 'admin') {
-      setExportStatus('请等待管理员完成最终放行并由管理员导出。');
+    if (userRole !== 'operator') {
+      setExportStatus('请由项目运营负责人完成审核并导出。');
       return;
     }
     if (!storyboardBriefs.length) {
@@ -9827,7 +9980,7 @@ function ExportPage({
             <p>只导出右侧最终图清单中选中的图片。图片会自动打包成 ZIP，保存到本机 exports 文件夹。</p>
             <button className="vz-btn vz-btn--primary primary-button" disabled={isExporting || !canExportZip} onClick={exportImagesZip}>
               <Download size={17} />
-              {isExporting ? '打包中...' : canExportZip ? '导出图片 ZIP' : userRole !== 'admin' ? '等待管理员导出' : '等待审核完成'}
+              {isExporting ? '打包中...' : canExportZip ? '导出图片 ZIP' : userRole !== 'operator' ? '由运营负责人导出' : '等待审核完成'}
             </button>
             {exportStatus && <div className="generation-status success">{exportStatus}</div>}
             {savedZip && (
@@ -9929,6 +10082,7 @@ function WorkspaceApp({ session, onLogout }) {
   const [focusRequest, setFocusRequest] = useState(null);
   const [isPlanningStoryboard, setIsPlanningStoryboard] = useState(false);
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [isFinalizingReview, setIsFinalizingReview] = useState(false);
   const [isUpgradingBrandSnapshot, setIsUpgradingBrandSnapshot] = useState(false);
   const [regeneratingSlotId, setRegeneratingSlotId] = useState(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -10113,8 +10267,8 @@ function WorkspaceApp({ session, onLogout }) {
   );
   const roleWorkspaceAccess = {
     designer: ['projects', 'project', 'ledger', 'storyboard', 'generation', 'handoff', 'brands'],
-    operator: ['projects', 'review'],
-    admin: ['system', 'team', 'admin-release', 'brands', 'quality', 'review', 'export']
+    operator: ['projects', 'review', 'export'],
+    admin: ['system', 'team', 'admin-release', 'brands', 'quality']
   };
   const allowedSections = roleWorkspaceAccess[session.user.role] || ['project'];
   const workspaceNavItems = session.user.role === 'designer'
@@ -10125,12 +10279,13 @@ function WorkspaceApp({ session, onLogout }) {
     : session.user.role === 'operator'
       ? [
         { id: 'projects', label: '我的项目', icon: FolderOpen },
-        { id: 'review', label: '审核队列', icon: ShieldCheck }
+        { id: 'review', label: '审核队列', icon: ShieldCheck },
+        { id: 'export', label: '下载图片', icon: Download }
       ]
       : [
         { id: 'system', label: '系统与日志', icon: BarChart3 },
         { id: 'team', label: '项目分配', icon: UsersRound },
-        { id: 'admin-release', label: '最终放行', icon: ShieldCheck },
+        { id: 'admin-release', label: '审核进度', icon: ShieldCheck },
         { id: 'brands', label: '品牌库', icon: Palette },
         { id: 'quality', label: '质量记录', icon: MessageSquareWarning }
       ];
@@ -10138,8 +10293,8 @@ function WorkspaceApp({ session, onLogout }) {
   const canCreateProject = ['designer', 'admin'].includes(session.user.role);
   const currentNav = [...navItems, ...globalNavItems,
     { id: 'projects', eyebrow: 'Projects', title: '项目中心', subtitle: '查看并继续你负责的项目。' },
-    { id: 'system', eyebrow: 'System Health', title: '系统与日志', subtitle: '管理员专用。用于定位问题、分配项目和最终放行。' },
-    { id: 'admin-release', eyebrow: 'Final Release', title: '管理员最终放行', subtitle: '只显示运营已通过、等待管理员确认交付的项目。' }
+    { id: 'system', eyebrow: 'System Health', title: '系统与日志', subtitle: '管理员专用。用于定位问题、分配项目和查看审核进度。' },
+    { id: 'admin-release', eyebrow: 'Review Progress', title: '审核进度', subtitle: '只读查看运营审核与设计返修进度。' }
   ]
     .find((item) => item.id === activeSection) || visibleNavItems[0] || navItems[0];
   const currentProject = projects.find((project) => project.id === activeProjectId);
@@ -11015,12 +11170,15 @@ function WorkspaceApp({ session, onLogout }) {
       setRegeneratingSlotId(null);
     }
   };
-  const updateReviewDecision = (slotId, role, status, context = 'review') => {
+  const updateReviewDecision = (slotId, role, status, context = 'review', details = {}) => {
     const slot = activeSlots.find((item) => item.id === slotId) || getFallbackSlot(slotId);
     const brief = storyboardBriefs.find((item) => item.id === slotId);
     const normalized = reviewDecisions.length ? reviewDecisions : createReviewDecisions(storyboardBriefs);
     const nextDecisions = normalized.map((decision) => (
-      decision.slotId === slotId ? updateDecisionByRole(decision, slot, brief, role, status, context) : decision
+      decision.slotId === slotId ? updateDecisionByRole(decision, slot, brief, role, status, context, {
+        ...details,
+        reviewedBy: { id: session.user.id, name: session.user.displayName || '运营' }
+      }) : decision
     ));
     setReviewDecisions(nextDecisions);
     const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, nextDecisions, generationRuns, promptOverrides, exportSelections);
@@ -11033,11 +11191,61 @@ function WorkspaceApp({ session, onLogout }) {
       role,
       status,
       context,
+      rejectionReasons: details.rejectionReasons || [],
       slotTitle: slot?.title || ''
     }, { projectId: activeProjectId, step: 'review' });
     setSaveStatus(context === 'plan'
       ? `${slot?.title || '图槽'} 的方案方向已更新。`
       : `${slot?.title || '图槽'} 已由${reviewerRoles[role]?.label || '审核人'}标记为${reviewStatusMeta[status]?.text || '待审核'}，已自动保存`);
+  };
+  const finalizeOperatorReview = async ({ rework = 0 } = {}) => {
+    if (isFinalizingReview || session.user.role !== 'operator') return;
+    const normalized = activeSlots.map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs));
+    const pending = normalized.filter((decision) => !['approved', 'rework'].includes(decision.opsStatus));
+    if (pending.length) {
+      setSaveStatus(`还有 ${pending.length} 张图未完成运营判断。`);
+      return;
+    }
+    const invalidReturns = normalized.filter((decision) => decision.opsStatus === 'rework' && (
+      !decision.rejectionReasons?.length || String(decision.rejectionNote || '').trim().length < 6
+    ));
+    if (invalidReturns.length) {
+      setSaveStatus(`第 ${invalidReturns.map((item) => String(item.slotId).padStart(2, '0')).join('、')} 张缺少完整的退回原因。`);
+      return;
+    }
+    const committedAt = new Date().toISOString();
+    const nextDecisions = normalized.map((decision) => ({
+      ...decision,
+      reviewCommittedAt: committedAt,
+      status: deriveReviewStatus(decision),
+      updatedAt: committedAt
+    }));
+    const nextStatus = rework > 0 ? 'rework' : 'approved';
+    const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, nextDecisions, generationRuns, promptOverrides, exportSelections);
+    nextProject.cloud = { ...(currentProject?.cloud || {}), status: nextStatus };
+    const nextProjects = projects.map((project) => project.id === activeProjectId ? nextProject : project);
+    setIsFinalizingReview(true);
+    setSaveStatus(rework ? `正在统一退回 ${rework} 张图...` : '正在完成本轮审核...');
+    try {
+      await persistProjects(nextProjects, nextProject.id, { throwOnError: true });
+      setReviewDecisions(nextDecisions);
+      appLogger.log('workflow.review.round_finalized', {
+        result: nextStatus,
+        approvedCount: nextDecisions.filter((item) => item.opsStatus === 'approved').length,
+        reworkCount: nextDecisions.filter((item) => item.opsStatus === 'rework').length
+      }, { projectId: activeProjectId, step: 'review' });
+      if (rework) {
+        setSaveStatus(`本轮审核已提交，${rework} 张图已退回设计。`);
+        setActiveSection('projects');
+      } else {
+        setSaveStatus('运营审核已全部通过，可下载图片 ZIP。');
+        setActiveSection('export');
+      }
+    } catch (error) {
+      setSaveStatus(error instanceof Error ? `审核提交失败：${error.message}` : '审核提交失败。');
+    } finally {
+      setIsFinalizingReview(false);
+    }
   };
   const saveGenerationRun = (run) => {
     const nextRuns = normalizeGenerationRuns([stripTransientGenerationRun(run), ...generationRuns]).slice(0, QUALITY_MAX_STORED_RUNS);
@@ -11153,7 +11361,30 @@ function WorkspaceApp({ session, onLogout }) {
   const submitForOpsReview = async () => {
     if (isSubmittingReview) return;
     const previousProjects = projects;
-    const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    const resubmittingReturnedProject = currentProject?.cloud?.status === 'rework';
+    const nextRound = Math.max(1, ...reviewDecisions.map((decision) => Number(decision.reviewRound || 1))) + (resubmittingReturnedProject ? 1 : 0);
+    const nextReviewDecisions = createReviewDecisions(storyboardBriefs, reviewDecisions).map((decision) => {
+      if (!resubmittingReturnedProject || decision.opsStatus === 'approved') return decision;
+      return {
+        ...decision,
+        opsStatus: 'review',
+        finalStatus: 'review',
+        status: 'review',
+        reviewRound: nextRound,
+        reviewCommittedAt: '',
+        previousRejections: [
+          ...(Array.isArray(decision.previousRejections) ? decision.previousRejections : []),
+          {
+            round: decision.reviewRound || 1,
+            reasons: decision.rejectionReasons || [],
+            note: decision.rejectionNote || '',
+            returnedAt: decision.updatedAt || new Date().toISOString()
+          }
+        ],
+        updatedAt: new Date().toISOString()
+      };
+    });
+    const nextProject = createProjectRecord(projectForm, ledgerFacts, activeProjectId, storyboardBriefs, nextReviewDecisions, generationRuns, promptOverrides, exportSelections);
     nextProject.cloud = { ...(currentProject?.cloud || {}), status: 'review' };
     const nextProjects = projects.some((project) => project.id === activeProjectId)
       ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
@@ -11162,6 +11393,7 @@ function WorkspaceApp({ session, onLogout }) {
     setSaveStatus('正在提交整套图片给运营审核...');
     try {
       await persistProjects(nextProjects, nextProject.id, { throwOnError: true });
+      setReviewDecisions(nextReviewDecisions);
       appLogger.log('workflow.review.submitted', {
         selectedRunCount: activeSlots.filter((slot) => getBestRunForSlot(slot.id, generationRuns)?.verdict === 'usable').length
       }, { projectId: activeProjectId, step: 'handoff' });
@@ -11209,8 +11441,8 @@ function WorkspaceApp({ session, onLogout }) {
     session.user.role === 'designer'
       ? ['project', 'ledger', 'storyboard', 'generation'].includes(item.id)
       : session.user.role === 'operator'
-        ? ['review'].includes(item.id)
-        : ['project', 'ledger', 'storyboard', 'generation', 'review', 'export'].includes(item.id)
+        ? ['review', 'export'].includes(item.id)
+        : false
   ));
   const isProjectWorkspace = projectStageItems.some((item) => item.id === activeSection) || activeSection === 'handoff';
   const shouldShowSimpleHeader = !isProjectWorkspace && activeSection !== 'projects' && session.user.role !== 'admin';
@@ -11262,7 +11494,7 @@ function WorkspaceApp({ session, onLogout }) {
         focusRequest={focusRequest}
       />
     ),
-    'admin-release': <AdminReleasePage projects={projects} onOpenProject={selectProject} />,
+    'admin-release': <AdminReleasePage projects={projects} />,
     quality: (
       <QualityConsolePage
         activeProjectId={activeProjectId}
@@ -11308,27 +11540,40 @@ function WorkspaceApp({ session, onLogout }) {
       />
     ),
     generation: (
-      <GenerationPage
-        activeProjectId={activeProjectId}
-        projectForm={projectForm}
-        ledgerFacts={ledgerFacts}
-        storyboardBriefs={storyboardBriefs}
-        selectedSlot={selectedSlot}
-        setSelectedSlot={setSelectedSlot}
-        generationRuns={generationRuns}
-        promptOverrides={promptOverrides}
-        brandLibrary={projectBrandLibrary}
-        brandSnapshot={currentProject?.brandSnapshot || null}
-        brandLibraryStatus={brandLibraryStatus}
-        brandVersionState={projectBrandVersionState}
-        onUpgradeBrandSnapshot={upgradeCurrentProjectBrandSnapshot}
-        onSaveGenerationRun={saveGenerationRun}
-        onSaveGenerationRuns={saveGenerationRuns}
-        onUpdateGenerationRun={updateGenerationRun}
-        onUpdatePromptOverride={updatePromptOverride}
-        onGoReview={goReview}
-        focusRequest={focusRequest}
-      />
+      <>
+        <DesignerReturnNotice
+          projectStatus={currentProject?.cloud?.status}
+          reviewDecisions={reviewDecisions}
+          storyboardBriefs={storyboardBriefs}
+          onSelectSlot={(slotId) => {
+            const slot = activeSlots.find((item) => item.id === slotId);
+            if (slot) setSelectedSlot(slot);
+          }}
+        />
+        <GenerationPage
+          activeProjectId={activeProjectId}
+          projectForm={projectForm}
+          ledgerFacts={ledgerFacts}
+          storyboardBriefs={storyboardBriefs}
+          selectedSlot={selectedSlot}
+          setSelectedSlot={setSelectedSlot}
+          generationRuns={generationRuns}
+          reviewDecisions={reviewDecisions}
+          projectStatus={currentProject?.cloud?.status || 'design'}
+          promptOverrides={promptOverrides}
+          brandLibrary={projectBrandLibrary}
+          brandSnapshot={currentProject?.brandSnapshot || null}
+          brandLibraryStatus={brandLibraryStatus}
+          brandVersionState={projectBrandVersionState}
+          onUpgradeBrandSnapshot={upgradeCurrentProjectBrandSnapshot}
+          onSaveGenerationRun={saveGenerationRun}
+          onSaveGenerationRuns={saveGenerationRuns}
+          onUpdateGenerationRun={updateGenerationRun}
+          onUpdatePromptOverride={updatePromptOverride}
+          onGoReview={goReview}
+          focusRequest={focusRequest}
+        />
+      </>
     ),
     handoff: (
       <HandoffPage
@@ -11347,6 +11592,8 @@ function WorkspaceApp({ session, onLogout }) {
         reviewDecisions={reviewDecisions}
         generationRuns={generationRuns}
         onUpdateReview={updateReviewDecision}
+        onFinalizeReview={finalizeOperatorReview}
+        isFinalizingReview={isFinalizingReview}
         userRole={session.user.role}
         brandSnapshot={currentProject?.brandSnapshot || null}
         brandVersionState={projectBrandVersionState}

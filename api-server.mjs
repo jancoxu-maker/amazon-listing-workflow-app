@@ -2717,7 +2717,7 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/save-export') {
     try {
       const payload = await readJsonBody(request);
-      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['admin'], requireApproved: true });
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['operator'], requireApproved: true });
       const authoritativePayload = getAuthoritativeProjectPayload(payload, project);
       const result = await saveExportFile(payload);
       await auditProjectAction(session.user, payload.projectId, 'pipeline.export_file.saved', {
@@ -2746,7 +2746,7 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && requestPath === '/api/export-images-zip') {
     try {
       const payload = await readJsonBody(request);
-      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['admin'], requireApproved: true });
+      const { session, project } = await requireProjectAction(request, payload, { allowedRoles: ['operator'], requireApproved: true });
       const authoritativePayload = getAuthoritativeProjectPayload(payload, project);
       const result = await saveImagesZipFile(payload);
       await auditProjectAction(session.user, payload.projectId, 'pipeline.images_zip.saved', {

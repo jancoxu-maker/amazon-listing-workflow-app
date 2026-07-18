@@ -76,8 +76,39 @@ function isProjectFullyApproved(projectData = {}) {
   if (!activeSlotIds.size) return false;
   return Array.from(activeSlotIds).every((slotId) => {
     const decision = decisions.find((item) => Number(item?.slotId) === slotId);
-    return decision?.opsStatus === 'approved' && decision?.finalStatus === 'approved';
+    return decision?.opsStatus === 'approved';
   });
+}
+
+function validateOperatorReviewRound(projectData = {}, nextStatus = 'review') {
+  if (!['rework', 'approved'].includes(nextStatus)) return;
+  const data = safeObject(projectData);
+  const briefs = Array.isArray(data.storyboardBriefs) ? data.storyboardBriefs : [];
+  const decisions = Array.isArray(data.reviewDecisions) ? data.reviewDecisions : [];
+  const slotIds = Array.from(new Set(briefs.map((brief) => Number(brief?.id)).filter(Number.isFinite)));
+  if (!slotIds.length) {
+    throw new Stage1Error('图片方案尚未完成，不能提交运营审核结果。', 409, 'REVIEW_ROUND_EMPTY');
+  }
+  const activeDecisions = slotIds.map((slotId) => decisions.find((item) => Number(item?.slotId) === slotId));
+  const pendingSlotIds = slotIds.filter((slotId, index) => !['approved', 'rework'].includes(activeDecisions[index]?.opsStatus));
+  if (pendingSlotIds.length) {
+    throw new Stage1Error(`还有 ${pendingSlotIds.length} 张图未完成运营判断。`, 409, 'REVIEW_ROUND_INCOMPLETE');
+  }
+  const invalidReturns = activeDecisions.filter((decision) => decision?.opsStatus === 'rework' && (
+    !Array.isArray(decision.rejectionReasons)
+    || !decision.rejectionReasons.length
+    || String(decision.rejectionNote || '').trim().length < 6
+  ));
+  if (invalidReturns.length) {
+    throw new Stage1Error('退回图片必须选择问题类型并填写具体修改要求。', 409, 'REVIEW_RETURN_REASON_REQUIRED');
+  }
+  const reworkCount = activeDecisions.filter((decision) => decision?.opsStatus === 'rework').length;
+  if (nextStatus === 'approved' && reworkCount) {
+    throw new Stage1Error('仍有退回图片，项目不能标记为全部通过。', 409, 'REVIEW_ROUND_HAS_REWORK');
+  }
+  if (nextStatus === 'rework' && !reworkCount) {
+    throw new Stage1Error('没有需要退回的图片，请将本轮标记为全部通过。', 409, 'REVIEW_ROUND_NO_REWORK');
+  }
 }
 
 function getReviewSubmissionState(projectData = {}) {
@@ -179,8 +210,11 @@ export function createStage1Store(database) {
     if (user.role === 'operator' && !OPERATOR_VISIBLE_PROJECT_STATUSES.has(project.status)) {
       throw new Stage1Error('项目尚未由设计提交运营审核。', 404, 'PROJECT_NOT_SUBMITTED_FOR_REVIEW');
     }
-    if (options.requireApproved && !isProjectFullyApproved(safeObject(project.project_data))) {
-      throw new Stage1Error('项目尚未完成运营审核和管理员最终放行，不能导出。', 409, 'PROJECT_NOT_APPROVED');
+    if (options.requireApproved && (
+      !['approved', 'exported'].includes(project.status)
+      || !isProjectFullyApproved(safeObject(project.project_data))
+    )) {
+      throw new Stage1Error('项目尚未完成运营审核，不能导出。', 409, 'PROJECT_NOT_APPROVED');
     }
     return {
       id: project.id,
@@ -542,6 +576,7 @@ export function createStage1Store(database) {
         ...currentData,
         reviewDecisions: Array.isArray(reviewDecisions) ? reviewDecisions : []
       };
+      validateOperatorReviewRound(nextProjectData, nextStatus);
       assertNoInlineAssets(nextProjectData);
       await database.transaction(async (client) => {
         await client.query(
@@ -550,10 +585,13 @@ export function createStage1Store(database) {
            WHERE id = $1`,
           [id, nextStatus, JSON.stringify(nextProjectData)]
         );
+        const eventName = ['rework', 'approved'].includes(nextStatus)
+          ? 'project.review_round_finalized'
+          : 'project.review_updated';
         await client.query(
           `INSERT INTO audit_logs (id, actor_id, project_id, event_name, payload)
-           VALUES ($1, $2, $3, 'project.review_updated', $4::jsonb)`,
-          [createId('audit'), user.id, id, JSON.stringify({ status: nextStatus })]
+           VALUES ($1, $2, $3, $4, $5::jsonb)`,
+          [createId('audit'), user.id, id, eventName, JSON.stringify({ status: nextStatus })]
         );
       });
       return {

@@ -142,40 +142,108 @@ test('role-scoped administrator invites remain one-time use', async () => {
   );
 });
 
-test('export remains blocked until every planned slot has ops and final approval', async () => {
+test('export remains blocked until the operator finalizes the project review round', async () => {
   const store = createStage1Store(createProjectDatabase({
     id: 'prj_four',
     status: 'review',
-    has_role_assignment: false,
+    has_role_assignment: true,
     project_data: {
       storyboardBriefs: [{ id: 1 }, { id: 2 }],
       reviewDecisions: [
-        { slotId: 1, opsStatus: 'approved', finalStatus: 'approved' },
-        { slotId: 2, opsStatus: 'approved', finalStatus: 'review' }
+        { slotId: 1, opsStatus: 'approved' },
+        { slotId: 2, opsStatus: 'approved' }
       ]
     }
   }));
   await assert.rejects(
-    store.requireProjectAccess(admin, 'prj_four', { allowedRoles: ['admin'], requireApproved: true }),
+    store.requireProjectAccess(operator, 'prj_four', { allowedRoles: ['operator'], requireApproved: true }),
     (error) => error instanceof Stage1Error && error.status === 409 && error.code === 'PROJECT_NOT_APPROVED'
   );
 });
 
-test('export is allowed after every planned slot is fully approved', async () => {
+test('operator can export after every planned slot is approved', async () => {
   const store = createStage1Store(createProjectDatabase({
     id: 'prj_five',
     status: 'approved',
-    has_role_assignment: false,
+    has_role_assignment: true,
     project_data: {
       storyboardBriefs: [{ id: 1 }, { id: 2 }],
       reviewDecisions: [
-        { slotId: 1, opsStatus: 'approved', finalStatus: 'approved' },
-        { slotId: 2, opsStatus: 'approved', finalStatus: 'approved' }
+        { slotId: 1, opsStatus: 'approved', finalStatus: 'review' },
+        { slotId: 2, opsStatus: 'approved', finalStatus: 'review' }
       ]
     }
   }));
-  const project = await store.requireProjectAccess(admin, 'prj_five', { allowedRoles: ['admin'], requireApproved: true });
+  const project = await store.requireProjectAccess(operator, 'prj_five', { allowedRoles: ['operator'], requireApproved: true });
   assert.equal(project.id, 'prj_five');
+});
+
+test('operator cannot finalize a review round while any slot is still pending', async () => {
+  const database = {
+    configured: true,
+    async query(sql) {
+      if (sql.includes('FROM projects p')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'prj_pending_review',
+            project_name: 'Pending review',
+            output_type: 'main-image',
+            status: 'review',
+            brand_snapshot: {},
+            project_data: { storyboardBriefs: [{ id: 1 }, { id: 2 }], reviewDecisions: [] },
+            has_role_assignment: true
+          }]
+        };
+      }
+      throw new Error(`Unexpected query in test: ${sql}`);
+    },
+    async transaction() {
+      throw new Error('transaction should not run for an incomplete review round');
+    }
+  };
+  const store = createStage1Store(database);
+  await assert.rejects(
+    store.updateProject(operator, 'prj_pending_review', {
+      status: 'approved',
+      projectData: { reviewDecisions: [{ slotId: 1, opsStatus: 'approved' }] }
+    }),
+    (error) => error instanceof Stage1Error && error.code === 'REVIEW_ROUND_INCOMPLETE'
+  );
+});
+
+test('operator return requires a reason tag and concrete note', async () => {
+  const database = {
+    configured: true,
+    async query(sql) {
+      if (sql.includes('FROM projects p')) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: 'prj_invalid_return',
+            project_name: 'Invalid return',
+            output_type: 'main-image',
+            status: 'review',
+            brand_snapshot: {},
+            project_data: { storyboardBriefs: [{ id: 1 }], reviewDecisions: [] },
+            has_role_assignment: true
+          }]
+        };
+      }
+      throw new Error(`Unexpected query in test: ${sql}`);
+    },
+    async transaction() {
+      throw new Error('transaction should not run for an invalid return');
+    }
+  };
+  const store = createStage1Store(database);
+  await assert.rejects(
+    store.updateProject(operator, 'prj_invalid_return', {
+      status: 'rework',
+      projectData: { reviewDecisions: [{ slotId: 1, opsStatus: 'rework', rejectionReasons: [], rejectionNote: '改一下' }] }
+    }),
+    (error) => error instanceof Stage1Error && error.code === 'REVIEW_RETURN_REASON_REQUIRED'
+  );
 });
 
 test('designer cannot submit review until every planned slot has a usable image', async () => {

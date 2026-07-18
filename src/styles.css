@@ -610,6 +610,235 @@ textarea:focus {
   }
 }
 
+/* Operator-owned review round: per-image draft decisions, then one project-level submit. */
+.operator-review-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.operator-review-primary-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.operator-review-primary-actions .vz-btn {
+  min-height: 42px;
+  justify-content: center;
+  border-radius: var(--vz-radius-sm);
+}
+
+.operator-return-button {
+  border: 1px solid var(--vz-line);
+  background: #ffffff;
+  color: var(--vz-ink-soft);
+}
+
+.operator-return-button.is-active {
+  border-color: var(--vz-coral);
+  background: var(--vz-coral-soft);
+  color: #a53f24;
+}
+
+.operator-return-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #ffc8b9;
+  border-radius: var(--vz-radius-md);
+  background: #fffaf8;
+}
+
+.operator-return-form > div:first-child,
+.operator-return-form label {
+  display: grid;
+  gap: 4px;
+}
+
+.operator-return-form small,
+.operator-return-form label span {
+  color: var(--vz-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.operator-reason-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.operator-reason-grid button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--vz-line);
+  border-radius: var(--vz-radius-sm);
+  background: #ffffff;
+  color: var(--vz-ink-soft);
+  font-weight: 800;
+}
+
+.operator-reason-grid button.active {
+  border-color: var(--vz-coral);
+  background: var(--vz-coral-soft);
+  color: #a53f24;
+}
+
+.operator-return-form textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--vz-line);
+  border-radius: var(--vz-radius-sm);
+  background: #ffffff;
+  color: var(--vz-ink);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.operator-return-error {
+  margin: 0;
+  color: var(--vz-danger);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.review-return-summary {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #ffc8b9;
+  border-radius: var(--vz-radius-sm);
+  background: var(--vz-coral-soft);
+}
+
+.review-return-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-return-summary span {
+  padding: 4px 8px;
+  border-radius: var(--vz-radius-sm);
+  background: #ffffff;
+  color: #a53f24;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.review-return-summary p {
+  margin: 0;
+  color: var(--vz-ink-soft);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.review-round-submit {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--vz-line);
+}
+
+.review-round-submit > div {
+  display: grid;
+  gap: 3px;
+}
+
+.review-round-submit small {
+  color: var(--vz-muted);
+  line-height: 1.45;
+}
+
+.review-round-submit .vz-btn {
+  min-height: 44px;
+  justify-content: center;
+}
+
+.designer-return-notice {
+  display: grid;
+  grid-template-columns: minmax(240px, .7fr) minmax(0, 1.3fr);
+  gap: 18px;
+  margin: 18px 24px 0;
+  padding: 18px;
+  border: 1px solid #ffc8b9;
+  border-radius: var(--vz-radius-md);
+  background: #fffaf8;
+}
+
+.designer-return-notice h3,
+.designer-return-notice p {
+  margin: 0;
+}
+
+.designer-return-notice h3 {
+  color: var(--vz-ink);
+}
+
+.designer-return-notice p {
+  margin-top: 6px;
+  color: var(--vz-muted);
+  line-height: 1.5;
+}
+
+.designer-return-list {
+  display: grid;
+  gap: 8px;
+}
+
+.designer-return-list button {
+  display: grid;
+  grid-template-columns: 32px minmax(100px, .55fr) minmax(160px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 9px 12px;
+  border: 1px solid var(--vz-line);
+  border-radius: var(--vz-radius-sm);
+  background: #ffffff;
+  color: var(--vz-ink);
+  text-align: left;
+}
+
+.designer-return-list button > span {
+  color: var(--vz-coral);
+  font-weight: 950;
+}
+
+.designer-return-list button p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--vz-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .designer-return-notice {
+    grid-template-columns: 1fr;
+    margin-inline: 16px;
+  }
+
+  .designer-return-list button {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .designer-return-list button p {
+    grid-column: 2 / -1;
+    white-space: normal;
+  }
+}
+
 .project-list-card {
   display: grid;
   gap: 12px;
