@@ -40,6 +40,7 @@ import {
   ZoomOut
 } from 'lucide-react';
 import { appLogger, installGlobalErrorLogging } from './eventLogger.js';
+import { isReworkRunReady } from './rework-policy.mjs';
 import {
   MARKETPLACE_OPTIONS,
   OUTPUT_LANGUAGE_OPTIONS,
@@ -2352,6 +2353,8 @@ function normalizeReviewDecision(decision, slot, brief) {
     rejectionNote: String(decision?.rejectionNote || ''),
     reviewRound: Math.max(1, Number(decision?.reviewRound || 1)),
     reviewCommittedAt: decision?.reviewCommittedAt || '',
+    returnedAt: decision?.returnedAt || '',
+    returnedRunId: decision?.returnedRunId || '',
     reviewedBy: decision?.reviewedBy || null,
     updatedAt: decision?.updatedAt || new Date().toISOString()
   };
@@ -2909,6 +2912,11 @@ function getBestRunForSlot(slotId, generationRuns = []) {
     || runs.find((run) => run.verdict === 'needs_fix')
     || runs[0]
     || null;
+}
+
+function getReworkSlotProgress(decision, generationRuns = []) {
+  const run = getBestRunForSlot(decision?.slotId, generationRuns);
+  return { ready: isReworkRunReady(decision, run), run };
 }
 
 function getSlotCandidateRuns(slotId, generationRuns = []) {
@@ -7693,6 +7701,8 @@ function GenerationPage({
   onUpdateGenerationRun,
   onUpdatePromptOverride,
   onGoReview,
+  onSubmitRework,
+  isSubmittingRework = false,
   focusRequest
 }) {
   const [activeRunId, setActiveRunId] = useState('');
@@ -7722,6 +7732,7 @@ function GenerationPage({
   const [isLocalEditOpen, setIsLocalEditOpen] = useState(false);
   const [isLocalEditing, setIsLocalEditing] = useState(false);
   const [isLocalCompareOpen, setIsLocalCompareOpen] = useState(false);
+  const [slotFilter, setSlotFilter] = useState('all');
   const [serverGenerationTasks, setServerGenerationTasks] = useState([]);
   const recoveredTaskIdsRef = useRef(new Set());
   const outputPreset = outputPresets.find((preset) => preset.id === outputPresetId) || outputPresets[0];
@@ -7736,6 +7747,38 @@ function GenerationPage({
       : []
   ), [projectStatus, reviewDecisions, storyboardBriefs]);
   const selectedSlotLocked = lockedSlotIds.has(Number(selectedSlot.id));
+  const normalizedReviewDecisions = useMemo(
+    () => createReviewDecisions(storyboardBriefs, reviewDecisions),
+    [storyboardBriefs, reviewDecisions]
+  );
+  const returnedDecisions = useMemo(
+    () => projectStatus === 'rework'
+      ? normalizedReviewDecisions.filter((decision) => decision.opsStatus === 'rework')
+      : [],
+    [projectStatus, normalizedReviewDecisions]
+  );
+  const returnedSlotIds = useMemo(
+    () => new Set(returnedDecisions.map((decision) => Number(decision.slotId))),
+    [returnedDecisions]
+  );
+  const reworkProgress = useMemo(
+    () => returnedDecisions.map((decision) => ({
+      decision,
+      ...getReworkSlotProgress(decision, generationRuns)
+    })),
+    [returnedDecisions, generationRuns]
+  );
+  const repairedSlotIds = useMemo(
+    () => new Set(reworkProgress.filter((item) => item.ready).map((item) => Number(item.decision.slotId))),
+    [reworkProgress]
+  );
+  const reworkReadyCount = reworkProgress.filter((item) => item.ready).length;
+  const reworkReadyToSubmit = returnedDecisions.length > 0 && reworkReadyCount === returnedDecisions.length;
+  const nextPendingRework = reworkProgress.find((item) => !item.ready);
+  const selectedReturnDecision = returnedDecisions.find((decision) => Number(decision.slotId) === Number(selectedSlot.id));
+  const visibleSlots = slotFilter === 'rework'
+    ? activeSlots.filter((slot) => returnedSlotIds.has(Number(slot.id)))
+    : activeSlots;
   const structuredProductLock = useMemo(
     () => buildStructuredProductLock(projectForm, ledgerFacts),
     [projectForm, ledgerFacts]
@@ -7857,6 +7900,18 @@ function GenerationPage({
       setSelectedSlot(activeSlots[0]);
     }
   }, [activeSlots, selectedSlot.id, setSelectedSlot]);
+
+  useEffect(() => {
+    if (projectStatus !== 'rework' || !returnedDecisions.length) {
+      setSlotFilter('all');
+      return;
+    }
+    const selectedIsReturned = returnedSlotIds.has(Number(selectedSlot.id));
+    if (!selectedIsReturned) {
+      const firstReturnedSlot = activeSlots.find((slot) => returnedSlotIds.has(Number(slot.id)));
+      if (firstReturnedSlot) setSelectedSlot(firstReturnedSlot);
+    }
+  }, [projectStatus, returnedDecisions, returnedSlotIds, activeSlots, selectedSlot.id, setSelectedSlot]);
 
   useEffect(() => {
     let mounted = true;
@@ -9087,12 +9142,27 @@ function GenerationPage({
               已连接
             </span>
           </div>
+          {returnedDecisions.length > 0 && (
+            <div className="generation-return-filter" role="group" aria-label="返修图槽筛选">
+              <button className={slotFilter === 'all' ? 'active' : ''} type="button" onClick={() => setSlotFilter('all')}>全部 {activeSlots.length}</button>
+              <button className={slotFilter === 'rework' ? 'active' : ''} type="button" onClick={() => setSlotFilter('rework')}>需返修 {returnedDecisions.length}</button>
+            </div>
+          )}
           <div className="generation-slot-list">
-            {activeSlots.map((slot) => {
+            {visibleSlots.map((slot) => {
               const brief = storyboardBriefs.find((item) => item.id === slot.id);
+              const isReturned = returnedSlotIds.has(Number(slot.id));
+              const isRepaired = repairedSlotIds.has(Number(slot.id));
+              const isLocked = lockedSlotIds.has(Number(slot.id));
               return (
               <button
-                className={selectedSlot.id === slot.id ? 'generation-slot active' : 'generation-slot'}
+                className={[
+                  'generation-slot',
+                  selectedSlot.id === slot.id ? 'active' : '',
+                  isReturned ? 'is-returned' : '',
+                  isRepaired ? 'is-repaired' : '',
+                  isLocked ? 'is-locked' : ''
+                ].filter(Boolean).join(' ')}
                 data-slot-number={String(slot.id).padStart(2, '0')}
                 key={slot.id}
                 onClick={() => {
@@ -9105,7 +9175,12 @@ function GenerationPage({
                           <strong>{brief?.title || slot.title}</strong>
                   <small>{brief ? brief.goal : '等待方案'}</small>
                 </span>
-                <SlotGenerationStatusPill slotId={slot.id} generationRuns={generationRuns} />
+                {projectStatus === 'rework' ? (
+                  <span className={`status-pill generation-review-status ${isLocked ? 'approved' : isRepaired ? 'approved' : 'rework'}`}>
+                    {isLocked ? <LockKeyhole size={13} /> : isRepaired ? <Check size={13} /> : <RefreshCcw size={13} />}
+                    {isLocked ? '已锁定' : isRepaired ? '已返修' : '需返修'}
+                  </span>
+                ) : <SlotGenerationStatusPill slotId={slot.id} generationRuns={generationRuns} />}
               </button>
               );
             })}
@@ -9262,6 +9337,23 @@ function GenerationPage({
                 <div className="generation-context-head">
                   <span className="eyebrow">Generation Context</span>
                 </div>
+                {selectedReturnDecision && (
+                  <section className="generation-return-feedback" aria-label="运营返修反馈">
+                    <div className="generation-return-feedback-head">
+                      <span><MessageSquareWarning size={15} />运营反馈</span>
+                      <b>第 {selectedReturnDecision.reviewRound || 1} 轮</b>
+                    </div>
+                    <strong>{selectedReturnDecision.rejectionNote || '请根据运营意见修改当前图。'}</strong>
+                    {selectedReturnDecision.rejectionReasons?.length > 0 && (
+                      <div>
+                        {selectedReturnDecision.rejectionReasons.map((reasonId) => {
+                          const reason = operatorRejectionReasons.find((item) => item.id === reasonId);
+                          return <span key={reasonId}>{reason?.label || reasonId}</span>;
+                        })}
+                      </div>
+                    )}
+                  </section>
+                )}
                 <div className="generation-brief-summary">
                   <span>本图证明什么</span>
                   <strong>{selectedBrief.primaryClaim || '暂未分配主卖点'}</strong>
@@ -9499,15 +9591,41 @@ function GenerationPage({
 
       </div>
       <footer className="generation-submit-bar">
-        <div>
-          <strong>{reviewedSlotCount} / {activeSlots.length || STORYBOARD_SLOT_COUNT} 张已审核</strong>
-          <small>{generationReadyForReview
-            ? '每个图槽均已选定一张可用版本，可以提交审核。'
-            : `已选定 ${approvedSlotRuns.length} 张可用图，还需处理 ${Math.max(0, (activeSlots.length || STORYBOARD_SLOT_COUNT) - reviewedSlotCount)} 张。`}</small>
-        </div>
-        <button className="vz-btn vz-btn--primary primary-button" disabled={!generationReadyForReview} onClick={onGoReview} type="button">
-          <ShieldCheck size={16} />提交审核
-        </button>
+        {returnedDecisions.length > 0 ? (
+          <>
+            <div>
+              <strong>返修进度 {reworkReadyCount} / {returnedDecisions.length}</strong>
+              <small>{reworkReadyToSubmit
+                ? '退回图槽均已选定新的可用版本，可以重新提交运营。'
+                : `还需完成 ${returnedDecisions.length - reworkReadyCount} 张；已通过图保持锁定。`}</small>
+            </div>
+            <div className="generation-rework-submit-actions">
+              {nextPendingRework && (
+                <button className="vz-btn vz-btn--ghost" type="button" onClick={() => {
+                  const slot = activeSlots.find((item) => Number(item.id) === Number(nextPendingRework.decision.slotId));
+                  if (slot) setSelectedSlot(slot);
+                }}>
+                  下一张返修 <ChevronRight size={15} />
+                </button>
+              )}
+              <button className="vz-btn vz-btn--primary primary-button" disabled={!reworkReadyToSubmit || isSubmittingRework} onClick={onSubmitRework} type="button">
+                <ShieldCheck size={16} />{isSubmittingRework ? '正在提交...' : `提交返修（${returnedDecisions.length}张）`}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>{reviewedSlotCount} / {activeSlots.length || STORYBOARD_SLOT_COUNT} 张已审核</strong>
+              <small>{generationReadyForReview
+                ? '每个图槽均已选定一张可用版本，可以提交审核。'
+                : `已选定 ${approvedSlotRuns.length} 张可用图，还需处理 ${Math.max(0, (activeSlots.length || STORYBOARD_SLOT_COUNT) - reviewedSlotCount)} 张。`}</small>
+            </div>
+            <button className="vz-btn vz-btn--primary primary-button" disabled={!generationReadyForReview} onClick={onGoReview} type="button">
+              <ShieldCheck size={16} />提交审核
+            </button>
+          </>
+        )}
       </footer>
       {isLocalEditOpen && <LocalEditModal
         candidate={activeCandidate}
@@ -9671,27 +9789,6 @@ function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, on
 
       <label className="handoff-note-field"><span>给运营的说明（可选）</span><textarea placeholder="例如：已核对第 3 张人物与产品比例；第 6 张的尺寸数据来自说明书。" /></label>
       <footer className="handoff-actions"><button className="vz-btn vz-btn--secondary secondary-button" disabled={isSubmitting} type="button" onClick={onBack}>返回继续修改</button><button className="vz-btn vz-btn--primary primary-button" disabled={!ready || isSubmitting} type="button" onClick={onSubmit}><ClipboardCheck size={16} />{isSubmitting ? '正在提交...' : `提交 ${selectedRuns.length} 张给运营审核`}</button></footer>
-    </section>
-  );
-}
-
-function DesignerReturnNotice({ projectStatus, reviewDecisions, storyboardBriefs, onSelectSlot }) {
-  if (projectStatus !== 'rework') return null;
-  const returned = createReviewDecisions(storyboardBriefs, reviewDecisions).filter((decision) => decision.opsStatus === 'rework');
-  if (!returned.length) return null;
-  return (
-    <section className="designer-return-notice">
-      <div><p className="eyebrow">RETURNED BY OPERATOR</p><h3>运营退回 {returned.length} 张图</h3><p>只需修改下列图槽；已通过图保持锁定，不再重新生成。</p></div>
-      <div className="designer-return-list">
-        {returned.map((decision) => (
-          <button key={decision.slotId} type="button" onClick={() => onSelectSlot(decision.slotId)}>
-            <span>{String(decision.slotId).padStart(2, '0')}</span>
-            <strong>{decision.title}</strong>
-            <p>{decision.rejectionNote}</p>
-            <ChevronRight size={16} />
-          </button>
-        ))}
-      </div>
     </section>
   );
 }
@@ -10298,6 +10395,12 @@ function WorkspaceApp({ session, onLogout }) {
   ]
     .find((item) => item.id === activeSection) || visibleNavItems[0] || navItems[0];
   const currentProject = projects.find((project) => project.id === activeProjectId);
+  const currentReturnedDecisions = useMemo(
+    () => currentProject?.cloud?.status === 'rework'
+      ? createReviewDecisions(storyboardBriefs, reviewDecisions).filter((decision) => decision.opsStatus === 'rework')
+      : [],
+    [currentProject?.cloud?.status, storyboardBriefs, reviewDecisions]
+  );
   const projectBrandLibrary = useMemo(
     () => getProjectScopedBrandLibrary(projectForm, currentProject, brandLibrary),
     [brandLibrary, currentProject?.brandSnapshot, projectForm.brandId]
@@ -11217,6 +11320,10 @@ function WorkspaceApp({ session, onLogout }) {
     const nextDecisions = normalized.map((decision) => ({
       ...decision,
       reviewCommittedAt: committedAt,
+      returnedAt: decision.opsStatus === 'rework' ? committedAt : decision.returnedAt || '',
+      returnedRunId: decision.opsStatus === 'rework'
+        ? getBestRunForSlot(decision.slotId, generationRuns)?.id || ''
+        : decision.returnedRunId || '',
       status: deriveReviewStatus(decision),
       updatedAt: committedAt
     }));
@@ -11362,6 +11469,17 @@ function WorkspaceApp({ session, onLogout }) {
     if (isSubmittingReview) return;
     const previousProjects = projects;
     const resubmittingReturnedProject = currentProject?.cloud?.status === 'rework';
+    if (resubmittingReturnedProject) {
+      const returned = createReviewDecisions(storyboardBriefs, reviewDecisions)
+        .filter((decision) => decision.opsStatus === 'rework');
+      const incomplete = returned.filter((decision) => !getReworkSlotProgress(decision, generationRuns).ready);
+      if (!returned.length || incomplete.length) {
+        setSaveStatus(incomplete.length
+          ? `还有 ${incomplete.length} 张退回图片没有新的可用版本，暂不能提交返修。`
+          : '当前项目没有需要提交的返修图片。');
+        return;
+      }
+    }
     const nextRound = Math.max(1, ...reviewDecisions.map((decision) => Number(decision.reviewRound || 1))) + (resubmittingReturnedProject ? 1 : 0);
     const nextReviewDecisions = createReviewDecisions(storyboardBriefs, reviewDecisions).map((decision) => {
       if (!resubmittingReturnedProject || decision.opsStatus === 'approved') return decision;
@@ -11540,16 +11658,6 @@ function WorkspaceApp({ session, onLogout }) {
       />
     ),
     generation: (
-      <>
-        <DesignerReturnNotice
-          projectStatus={currentProject?.cloud?.status}
-          reviewDecisions={reviewDecisions}
-          storyboardBriefs={storyboardBriefs}
-          onSelectSlot={(slotId) => {
-            const slot = activeSlots.find((item) => item.id === slotId);
-            if (slot) setSelectedSlot(slot);
-          }}
-        />
         <GenerationPage
           activeProjectId={activeProjectId}
           projectForm={projectForm}
@@ -11571,9 +11679,10 @@ function WorkspaceApp({ session, onLogout }) {
           onUpdateGenerationRun={updateGenerationRun}
           onUpdatePromptOverride={updatePromptOverride}
           onGoReview={goReview}
+          onSubmitRework={submitForOpsReview}
+          isSubmittingRework={isSubmittingReview}
           focusRequest={focusRequest}
         />
-      </>
     ),
     handoff: (
       <HandoffPage
@@ -11673,6 +11782,11 @@ function WorkspaceApp({ session, onLogout }) {
               <small>{projectForm.sku || '当前项目'}</small>
               <strong>{getProjectTitle(projectForm)}</strong>
             </div>
+            {activeSection === 'generation' && currentReturnedDecisions.length > 0 && (
+              <span className="workspace-return-status">
+                <RefreshCcw size={14} />第 {Math.max(...currentReturnedDecisions.map((decision) => Number(decision.reviewRound || 1)))} 轮 · 返修 {currentReturnedDecisions.length} 张
+              </span>
+            )}
             <nav className="workspace-stage-nav" aria-label="项目步骤">
               {projectStageItems.map((item) => {
                 const index = navItems.findIndex((candidate) => candidate.id === item.id);
