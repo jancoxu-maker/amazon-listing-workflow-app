@@ -4939,6 +4939,99 @@ function getProjectProgress(project) {
   };
 }
 
+function getProjectDeliveryType(project = {}) {
+  return getProjectPlanOutputPresetId(project.form || {}) === 'aplus' ? 'aplus' : 'main-image';
+}
+
+function getProjectProductGroupKey(project = {}) {
+  const form = project.form || {};
+  const normalize = (value) => String(value || '').trim().toLowerCase();
+  if (normalize(form.sku)) {
+    return [
+      form.sku,
+      getProjectBrandId(form),
+      form.marketplaceId,
+      form.outputLanguage
+    ].map(normalize).join('|') || project.id;
+  }
+  return [
+    form.productName,
+    form.projectName,
+    getProjectBrandId(form),
+    form.marketplaceId,
+    form.outputLanguage
+  ].map(normalize).filter(Boolean).slice(0, 4).join('|') || project.id;
+}
+
+function groupProjectsByProduct(projects = []) {
+  const groups = [];
+  const byKey = new Map();
+  for (const project of projects) {
+    const key = getProjectProductGroupKey(project);
+    if (!byKey.has(key)) {
+      const form = project.form || {};
+      byKey.set(key, {
+        key,
+        projects: [],
+        mainProject: null,
+        aplusProject: null,
+        title: getProjectTitle(form),
+        productName: form.productName || '',
+        sku: form.sku || '',
+        marketplace: getMarketplaceOption(form.marketplaceId)?.label || form.marketplaceId || '未指定站点',
+        language: getOutputLanguageOption(form.outputLanguage)?.label || form.outputLanguage || '未指定语言',
+        brand: '',
+        updatedAt: project.updatedAt || ''
+      });
+      groups.push(byKey.get(key));
+    }
+    const group = byKey.get(key);
+    const deliveryType = getProjectDeliveryType(project);
+    group.projects.push(project);
+    if (deliveryType === 'aplus') group.aplusProject = project;
+    else group.mainProject = project;
+    if (!group.sku && project.form?.sku) group.sku = project.form.sku;
+    if (!group.productName && project.form?.productName) group.productName = project.form.productName;
+    if (!group.title || group.title === '未命名项目') group.title = getProjectTitle(project.form);
+    if (!group.updatedAt || new Date(project.updatedAt || 0) > new Date(group.updatedAt || 0)) group.updatedAt = project.updatedAt || group.updatedAt;
+  }
+  return groups;
+}
+
+function getDeliveryPackageMeta(project, deliveryType, userRole) {
+  if (!project) {
+    return {
+      label: deliveryType === 'aplus' ? 'A+ 模块' : '主图套图',
+      state: 'missing',
+      status: '未创建',
+      detail: deliveryType === 'aplus' ? '复用当前资料创建 A+ 内容模块' : '等待创建',
+      action: deliveryType === 'aplus' ? '创建 A+' : '创建',
+      section: 'storyboard'
+    };
+  }
+  const progress = getProjectProgress(project);
+  const nextAction = getProjectNextAction(project, userRole);
+  const isAPlus = getProjectDeliveryType(project) === 'aplus';
+  const status = project.cloud?.status === 'review'
+    ? '审核中'
+    : project.cloud?.status === 'approved' || project.cloud?.status === 'exported'
+      ? '已通过'
+      : project.cloud?.status === 'rework'
+        ? '需返修'
+        : progress.briefCount
+          ? `${progress.approved}/${progress.total} 已通过`
+          : '准备中';
+  return {
+    label: isAPlus ? 'A+ 模块' : '主图套图',
+    state: project.cloud?.status || 'draft',
+    status,
+    detail: nextAction.detail,
+    action: isAPlus && !progress.briefCount ? '继续 A+' : nextAction.label,
+    section: nextAction.section,
+    progress
+  };
+}
+
 function getProjectNextAction(project, userRole) {
   const progress = getProjectProgress(project);
   if (userRole === 'operator') {
@@ -4957,7 +5050,7 @@ function getProjectNextAction(project, userRole) {
   return { label: '继续处理项目', detail: `${progress.approved}/${progress.total} 张已通过`, section: 'generation' };
 }
 
-function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProject, onTrashProject, onRestoreProject, isLoading }) {
+function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProject, onCreateAPlusProject, onTrashProject, onRestoreProject, isLoading }) {
   const [query, setQuery] = useState('');
   const [showTrash, setShowTrash] = useState(false);
   const [trashedProjects, setTrashedProjects] = useState([]);
@@ -4965,14 +5058,15 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
   const [trashMessage, setTrashMessage] = useState('');
   const userRole = currentUser.role;
   const visibleProjects = userRole === 'operator' ? projects.filter(isOperatorVisibleProject) : projects;
-  const filteredProjects = visibleProjects.filter((project) => {
+  const productGroups = groupProjectsByProduct(visibleProjects);
+  const filteredGroups = productGroups.filter((group) => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return true;
-    const form = project.form || {};
-    return [form.projectName, form.productName, form.sku].some((value) => String(value || '').toLowerCase().includes(keyword));
+    return [group.title, group.productName, group.sku, group.marketplace, group.language].some((value) => String(value || '').toLowerCase().includes(keyword));
   });
   const canCreate = userRole === 'designer' || userRole === 'admin';
   const roleLabel = userRole === 'designer' ? '设计工作台' : userRole === 'operator' ? '运营审核队列' : '管理员工作台';
+  const firstProject = visibleProjects[0];
   const openTrash = async () => {
     const next = !showTrash;
     setShowTrash(next);
@@ -5003,7 +5097,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
         <div>
           <p className="eyebrow">{roleLabel}</p>
           <h2>{userRole === 'operator' ? '待我审核的项目' : '项目中心'}</h2>
-          <p>{userRole === 'operator' ? '这里只显示设计已完整提交、并分配给你的项目；未提交的设计稿不会提前出现。' : '从一个项目开始，依次完成资料、卖点、图片方案和审核。'}</p>
+          <p>{userRole === 'operator' ? '这里只显示设计已完整提交、并分配给你的项目；未提交的设计稿不会提前出现。' : '一个产品只显示一张卡片，主图套图、A+ 等交付包在卡片内继续。'}</p>
         </div>
         <div className="project-center-header-actions">
           {canCreate && <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={openTrash}><Archive size={17} />回收站</button>}
@@ -5031,20 +5125,20 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
         </section>
       )}
 
-      {!isLoading && visibleProjects.length > 0 && (
+      {!isLoading && firstProject && (
         <section className="project-center-next">
           <div className="project-center-next-icon"><Sparkles size={20} /></div>
           <div>
             <small>建议从这里继续</small>
-            <strong>{getProjectTitle(visibleProjects[0].form)} · {getProjectNextAction(visibleProjects[0], userRole).label}</strong>
-            <p>{getProjectNextAction(visibleProjects[0], userRole).detail}</p>
+            <strong>{getProjectTitle(firstProject.form)} · {getProjectNextAction(firstProject, userRole).label}</strong>
+            <p>{getProjectNextAction(firstProject, userRole).detail}</p>
           </div>
-          <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(visibleProjects[0].id, getProjectNextAction(visibleProjects[0], userRole).section)}>继续</button>
+          <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onOpenProject(firstProject.id, getProjectNextAction(firstProject, userRole).section)}>继续</button>
         </section>
       )}
 
       <div className="project-center-toolbar">
-        <strong>{isLoading ? '正在加载项目...' : `${filteredProjects.length} 个项目`}</strong>
+        <strong>{isLoading ? '正在加载项目...' : `${filteredGroups.length} 个产品项目 · ${visibleProjects.length} 个交付包`}</strong>
         <label className="project-search">
           <span className="sr-only">搜索项目</span>
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索项目或 SKU" />
@@ -5052,45 +5146,67 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
       </div>
 
       <div className="project-center-list">
-        {!isLoading && !filteredProjects.length && (
+        {!isLoading && !filteredGroups.length && (
           <div className="project-center-empty">
             <FolderOpen size={25} />
             <strong>{visibleProjects.length ? '没有匹配的项目' : userRole === 'operator' ? '还没有设计提交给你的项目' : '还没有项目'}</strong>
             <p>{canCreate ? '创建第一个项目后，就可以开始上传产品资料。' : '设计完成整套图片并提交审核后，项目会出现在这里。'}</p>
           </div>
         )}
-        {filteredProjects.map((project) => {
-          const progress = getProjectProgress(project);
-          const nextAction = getProjectNextAction(project, userRole);
-          const preview = project.form?.referenceImages?.main?.displayPreview || project.form?.sourceImageDisplayPreview || project.form?.referenceImages?.main?.preview || project.form?.sourceImagePreview;
+        {filteredGroups.map((group) => {
+          const primaryProject = group.mainProject || group.aplusProject || group.projects[0];
+          const preview = primaryProject?.form?.referenceImages?.main?.displayPreview || primaryProject?.form?.sourceImageDisplayPreview || primaryProject?.form?.referenceImages?.main?.preview || primaryProject?.form?.sourceImagePreview;
+          const mainMeta = getDeliveryPackageMeta(group.mainProject, 'main-image', userRole);
+          const aplusMeta = getDeliveryPackageMeta(group.aplusProject, 'aplus', userRole);
+          const deliveryRows = [
+            { type: 'main-image', project: group.mainProject, meta: mainMeta },
+            { type: 'aplus', project: group.aplusProject, meta: aplusMeta }
+          ];
           return (
-            <article className="project-center-row" key={project.id}>
+            <article className="project-center-row project-center-product-row" key={group.key}>
               <div className="project-center-thumb">
                 {preview ? <img src={preview} alt="" /> : <FileImage size={22} />}
               </div>
               <div className="project-center-summary">
-                <small>{project.form?.sku || '无 SKU'}</small>
-                <h3>{getProjectTitle(project.form)}</h3>
-                <p>{project.form?.productName || '等待填写产品信息'}</p>
+                <small>{group.sku || '无 SKU'} · {group.marketplace} · {group.language}</small>
+                <h3>{group.title}</h3>
+                <p>{group.productName || '等待填写产品信息'}</p>
               </div>
-              <div className="project-center-progress">
-                <span>{progress.complete}/5 已完成</span>
-                <div><i style={{ width: `${progress.percent}%` }} /></div>
-                <small>{progress.claimCount ? `${progress.claimCount} 个卖点` : '尚未生成卖点'}</small>
+              <div className="project-delivery-list">
+                {deliveryRows.map(({ type, project, meta }) => {
+                  const canCreateAPlus = type === 'aplus' && !project && canCreate && primaryProject;
+                  return (
+                    <div className={`project-delivery-row is-${type} ${project ? '' : 'is-empty'}`} key={type}>
+                      <div>
+                        <span className="project-delivery-label">{meta.label}</span>
+                        <strong>{meta.status}</strong>
+                        <small>{meta.detail}</small>
+                      </div>
+                      {project && meta.progress && (
+                        <div className="project-delivery-progress" aria-label={`${meta.label}进度`}>
+                          <i style={{ width: `${meta.progress.percent}%` }} />
+                        </div>
+                      )}
+                      {project ? (
+                        <button className="project-open-button" type="button" onClick={() => onOpenProject(project.id, meta.section)}>
+                          {meta.action}<ChevronRight size={16} />
+                        </button>
+                      ) : canCreateAPlus ? (
+                        <button className="project-open-button project-create-package-button" type="button" onClick={() => onCreateAPlusProject(primaryProject)}>
+                          <Plus size={15} />创建 A+
+                        </button>
+                      ) : (
+                        <span className="project-delivery-muted">未创建</span>
+                      )}
+                      {canCreate && project?.cloud?.remote && (
+                        <button className="project-trash-button" type="button" title={`移入回收站：${meta.label}`} onClick={() => onTrashProject(project)}>
+                          <Trash2 size={17} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="project-center-next-copy">
-                <small>下一步</small>
-                <strong>{nextAction.label}</strong>
-                <span>{nextAction.detail}</span>
-              </div>
-              <button className="project-open-button" type="button" onClick={() => onOpenProject(project.id, nextAction.section)}>
-                打开<ChevronRight size={16} />
-              </button>
-              {canCreate && project.cloud?.remote && (userRole === 'admin' || project.cloud?.createdBy?.id === currentUser.id) && (
-                <button className="project-trash-button" type="button" title="移入回收站" onClick={() => onTrashProject(project)}>
-                  <Trash2 size={17} />
-                </button>
-              )}
             </article>
           );
         })}
@@ -10990,6 +11106,73 @@ function WorkspaceApp({ session, onLogout }) {
     appLogger.log('audit.project.created', {}, { projectId: nextProject.id, step: 'project' });
     setActiveSection('project');
   };
+  const createAPlusProjectFromSource = async (sourceProject) => {
+    if (!sourceProject || !['designer', 'admin'].includes(session.user.role)) {
+      setSaveStatus('当前身份不能创建 A+ 交付包。');
+      return;
+    }
+    const existingAPlus = projects.find((project) => (
+      project.id !== sourceProject.id
+      && getProjectProductGroupKey(project) === getProjectProductGroupKey(sourceProject)
+      && getProjectDeliveryType(project) === 'aplus'
+    ));
+    if (existingAPlus) {
+      selectProject(existingAPlus.id, 'storyboard');
+      return;
+    }
+    const sourceForm = sourceProject.form || {};
+    const aplusForm = {
+      ...sourceForm,
+      planOutputPresetId: 'aplus',
+      projectName: sourceForm.projectName || sourceForm.productName || sourceForm.sku || ''
+    };
+    const aplusProject = createProjectRecord(
+      aplusForm,
+      Array.isArray(sourceProject.ledgerFacts) ? sourceProject.ledgerFacts : [],
+      createProjectId(),
+      [],
+      [],
+      [],
+      {},
+      {}
+    );
+    let remote;
+    setSaveStatus('正在基于当前产品资料创建 A+ 交付包...');
+    try {
+      remote = await createTeamProject(makeTeamProjectPayload(aplusProject));
+    } catch (error) {
+      appLogger.error('team.project.aplus_create_failed', error, { projectId: sourceProject.id, step: 'projects' });
+      setSaveStatus(error instanceof Error ? `A+ 创建失败：${error.message}` : 'A+ 创建失败，请稍后重试。');
+      return;
+    }
+    const cloudProject = {
+      ...aplusProject,
+      id: remote.id,
+      brandSnapshot: remote.brandSnapshot || sourceProject.brandSnapshot || null,
+      cloud: {
+        remote: true,
+        status: remote.status || 'draft',
+        assignments: sourceProject.cloud?.assignments || [],
+        createdBy: session.user
+      }
+    };
+    const nextProjects = [cloudProject, ...projects];
+    persistProjects(nextProjects, cloudProject.id);
+    setActiveProjectId(cloudProject.id);
+    setProjectForm(cloudProject.form);
+    setLedgerFacts(cloudProject.ledgerFacts);
+    setStoryboardBriefs([]);
+    setReviewDecisions([]);
+    setGenerationRuns([]);
+    setPromptOverrides({});
+    setExportSelections({});
+    setSelectedSlot(slots[0]);
+    setSaveStatus('已创建 A+ 交付包，资料和卖点已继承。下一步生成 A+ 图片方案。');
+    appLogger.log('audit.project.aplus_created', {
+      sourceProjectId: sourceProject.id
+    }, { projectId: cloudProject.id, step: 'storyboard' });
+    setActiveSection('storyboard');
+  };
   const deleteProject = (projectId) => {
     const remainingProjects = projects.filter((project) => project.id !== projectId);
     persistProjects(remainingProjects);
@@ -11627,22 +11810,27 @@ function WorkspaceApp({ session, onLogout }) {
   const trashProjectFromCenter = async (project) => {
     const title = getProjectTitle(project.form);
     if (!window.confirm(`将「${title}」移入回收站？项目会保留 30 天。`)) return;
-    await trashTeamProject(project.id);
-    const nextProjects = projects.filter((item) => item.id !== project.id);
-    setProjects(nextProjects);
-    storeProjects(nextProjects);
-    if (activeProjectId === project.id) {
-      const nextActive = nextProjects[0];
-      setActiveProjectId(nextActive?.id || '');
-      setProjectForm(nextActive?.form || blankProjectForm);
-      setLedgerFacts(nextActive?.ledgerFacts || []);
-      setStoryboardBriefs(nextActive?.storyboardBriefs || []);
-      setReviewDecisions(nextActive?.reviewDecisions || []);
-      setGenerationRuns(normalizeGenerationRuns(nextActive?.generationRuns || []));
-      setPromptOverrides(nextActive?.promptOverrides || {});
-      setExportSelections(nextActive?.exportSelections || {});
+    try {
+      await trashTeamProject(project.id);
+      const nextProjects = projects.filter((item) => item.id !== project.id);
+      setProjects(nextProjects);
+      storeProjects(nextProjects);
+      if (activeProjectId === project.id) {
+        const nextActive = nextProjects[0];
+        setActiveProjectId(nextActive?.id || '');
+        setProjectForm(nextActive?.form || blankProjectForm);
+        setLedgerFacts(nextActive?.ledgerFacts || []);
+        setStoryboardBriefs(nextActive?.storyboardBriefs || []);
+        setReviewDecisions(nextActive?.reviewDecisions || []);
+        setGenerationRuns(normalizeGenerationRuns(nextActive?.generationRuns || []));
+        setPromptOverrides(nextActive?.promptOverrides || {});
+        setExportSelections(nextActive?.exportSelections || {});
+      }
+      setSaveStatus(`「${title}」已移入回收站。`);
+    } catch (error) {
+      appLogger.error('team.project.trash_failed', error, { projectId: project.id, step: 'projects' });
+      setSaveStatus(error instanceof Error ? `删除失败：${error.message}` : '删除失败，请稍后重试。');
     }
-    setSaveStatus(`「${title}」已移入回收站。`);
   };
   const restoreProjectFromTrash = async (project) => {
     await restoreTrashedTeamProject(project.id);
@@ -11673,6 +11861,7 @@ function WorkspaceApp({ session, onLogout }) {
         currentUser={session.user}
         onOpenProject={selectProject}
         onCreateProject={createNewProject}
+        onCreateAPlusProject={createAPlusProjectFromSource}
         onTrashProject={trashProjectFromCenter}
         onRestoreProject={restoreProjectFromTrash}
         isLoading={isLoadingTeamProjects}
