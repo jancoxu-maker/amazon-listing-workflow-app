@@ -951,6 +951,81 @@ function normalizeHexColor(value = '') {
   return '';
 }
 
+function normalizeEditableHexColor(value = '') {
+  const raw = String(value || '').trim();
+  const candidate = raw.startsWith('#') ? raw : `#${raw}`;
+  return /^#[0-9a-fA-F]{6}$/.test(candidate) ? candidate.toUpperCase() : '';
+}
+
+function BrandHexInput({ ariaLabel, className = '', disabled, fieldKey, onCommit, onValidityChange, value }) {
+  const normalizedValue = normalizeHexColor(value) || String(value || '').toUpperCase();
+  const [draft, setDraft] = useState(normalizedValue);
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setDraft(normalizedValue);
+    setInvalid(false);
+  }, [fieldKey, normalizedValue]);
+
+  const commitDraft = (nextDraft) => {
+    const normalized = normalizeEditableHexColor(nextDraft);
+    if (!normalized) {
+      setInvalid(true);
+      onValidityChange(fieldKey, false);
+      return false;
+    }
+    setDraft(normalized);
+    setInvalid(false);
+    onValidityChange(fieldKey, true);
+    onCommit(normalized);
+    return true;
+  };
+
+  const handleChange = (event) => {
+    const nextDraft = event.target.value.toUpperCase();
+    setDraft(nextDraft);
+    const normalized = normalizeEditableHexColor(nextDraft);
+    if (normalized) {
+      setInvalid(false);
+      onValidityChange(fieldKey, true);
+      onCommit(normalized);
+      return;
+    }
+    setInvalid(true);
+    onValidityChange(fieldKey, false);
+  };
+
+  return (
+    <span className={`vz-field brand-hex-input-wrap${invalid ? ' vz-field--error' : ''}`}>
+      <input
+        aria-invalid={invalid}
+        aria-label={ariaLabel}
+        className={`vz-input ${className}`.trim()}
+        disabled={disabled}
+        inputMode="text"
+        spellCheck="false"
+        value={draft}
+        onBlur={() => commitDraft(draft)}
+        onChange={handleChange}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            commitDraft(draft);
+            event.currentTarget.blur();
+          }
+          if (event.key === 'Escape') {
+            setDraft(normalizedValue);
+            setInvalid(false);
+            onValidityChange(fieldKey, true);
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      {invalid && <small className="vz-help vz-help--error brand-hex-input-error">请输入 6 位 HEX 色号，例如 #F7F3EA</small>}
+    </span>
+  );
+}
+
 const brandColorRoleOptions = [
   { id: 'background', label: '背景/色块' },
   { id: 'accent', label: '强调/箭头' },
@@ -5832,6 +5907,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
   const [historyState, setHistoryState] = useState('idle');
   const [selectedHistoryVersion, setSelectedHistoryVersion] = useState(null);
   const [cloneState, setCloneState] = useState('idle');
+  const [hexInputValidity, setHexInputValidity] = useState({});
   const selectedBrand = getBrandProfile(selectedBrandId, brandLibrary);
   const editable = selectedBrand.id !== 'none';
   const brandColorTotal = getBrandColorRatioTotal(selectedBrand.colors);
@@ -5840,6 +5916,12 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
   const logoBrandCount = managedBrands.filter((brand) => brand.logoPreview || brand.logoStorageKey).length;
   const exampleReadyCount = managedBrands.filter((brand) => normalizeBrandExampleImages(brand.exampleImages).length >= 2).length;
   const paletteIssueCount = managedBrands.filter((brand) => getBrandColorRatioTotal(brand.colors) !== 100).length;
+  const titleHexFieldKey = `${selectedBrand.id}:title-color`;
+  const activeHexFieldKeys = [
+    titleHexFieldKey,
+    ...selectedBrand.colors.map((color, index) => `${selectedBrand.id}:brand-color:${color.id || index}`)
+  ];
+  const hasInvalidHexInput = activeHexFieldKeys.some((fieldKey) => hexInputValidity[fieldKey] === false);
 
   useEffect(() => {
     if (!brandLibrary.some((brand) => brand.id === selectedBrandId)) {
@@ -5851,6 +5933,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
     setDeleteChallenge('');
     setDeleteConfirmText('');
     setSaveError('');
+    setHexInputValidity({});
     setSaveState(selectedBrand.id === 'none' || selectedBrand.version ? 'saved' : 'dirty');
   }, [selectedBrand.id, selectedBrand.version]);
 
@@ -5884,6 +5967,12 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
     onUpdateBrands(brandLibrary.map((brand) => (
       brand.id === selectedBrand.id ? normalizeBrandProfile({ ...brand, ...patch }) : brand
     )));
+  };
+  const setHexFieldValidity = (fieldKey, valid) => {
+    setHexInputValidity((current) => (
+      current[fieldKey] === valid ? current : { ...current, [fieldKey]: valid }
+    ));
+    if (!valid) setSaveState('dirty');
   };
   const addBrand = () => {
     const nextBrand = normalizeBrandProfile({
@@ -6010,6 +6099,11 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
   };
   const saveSelectedBrand = async () => {
     if (!editable || !onSaveBrand || saveState === 'saving') return;
+    if (hasInvalidHexInput) {
+      setSaveError('请先修正标红的 HEX 色号，再保存品牌规则。');
+      setSaveState('dirty');
+      return;
+    }
     const validationError = validateBrandProfileForSave(selectedBrand);
     if (validationError) {
       setSaveError(validationError);
@@ -6114,9 +6208,9 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             </div>
             <div className="brand-header-actions">
               <button className="vz-btn vz-btn--ghost text-button" onClick={resetBrands}>恢复默认品牌库</button>
-              {editable && <button className="vz-btn vz-btn--primary primary-button" disabled={saveState === 'saving'} onClick={saveSelectedBrand} type="button">
+              {editable && <button className="vz-btn vz-btn--primary primary-button" disabled={saveState === 'saving' || hasInvalidHexInput} onClick={saveSelectedBrand} type="button">
                 <Save size={15} />
-                {saveState === 'saving' ? '保存中…' : saveState === 'dirty' ? '保存品牌规则' : `已保存${selectedBrand.version ? ` · v${selectedBrand.version}` : ''}`}
+                {hasInvalidHexInput ? '请修正色号' : saveState === 'saving' ? '保存中…' : saveState === 'dirty' ? '保存品牌规则' : `已保存${selectedBrand.version ? ` · v${selectedBrand.version}` : ''}`}
               </button>}
               {editable && userRole === 'admin' && (
                 <button className="vz-btn vz-btn--ghost text-button danger" onClick={startDeleteBrand}>
@@ -6160,17 +6254,20 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
                   disabled={!editable}
                   type="color"
                   value={selectedBrand.titleColor}
-                  onChange={(event) => updateBrand({ titleColor: normalizeHexColor(event.target.value) || selectedBrand.titleColor })}
-                />
-                <input
-                  aria-label="统一标题颜色 HEX"
-                  disabled={!editable}
-                  pattern="^#[0-9A-Fa-f]{6}$"
-                  value={selectedBrand.titleColor}
                   onChange={(event) => {
-                    const nextHex = normalizeHexColor(event.target.value);
-                    if (nextHex) updateBrand({ titleColor: nextHex });
+                    setHexFieldValidity(titleHexFieldKey, true);
+                    updateBrand({ titleColor: normalizeHexColor(event.target.value) || selectedBrand.titleColor });
                   }}
+                />
+                <BrandHexInput
+                  ariaLabel="统一标题颜色 HEX"
+                  className="brand-title-color-hex"
+                  disabled={!editable}
+                  fieldKey={titleHexFieldKey}
+                  key={`${titleHexFieldKey}:${selectedBrand.titleColor}`}
+                  value={selectedBrand.titleColor}
+                  onCommit={(nextHex) => updateBrand({ titleColor: nextHex })}
+                  onValidityChange={setHexFieldValidity}
                 />
               </div>
             </label>
@@ -6221,18 +6318,20 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
                         disabled={!editable}
                         type="color"
                         value={color.hex}
-                        onChange={(event) => updateBrandColor(index, { hex: event.target.value })}
+                        onChange={(event) => {
+                          setHexFieldValidity(`${selectedBrand.id}:brand-color:${color.id || index}`, true);
+                          updateBrandColor(index, { hex: event.target.value });
+                        }}
                       />
-                      <input
-                        aria-label="品牌色 HEX"
+                      <BrandHexInput
+                        ariaLabel="品牌色 HEX"
                         className="brand-color-hex"
                         disabled={!editable}
-                        pattern="^#[0-9A-Fa-f]{6}$"
+                        fieldKey={`${selectedBrand.id}:brand-color:${color.id || index}`}
+                        key={`${selectedBrand.id}:brand-color:${color.id || index}:${color.hex}`}
                         value={color.hex}
-                        onChange={(event) => {
-                          const nextHex = normalizeHexColor(event.target.value);
-                          if (nextHex) updateBrandColor(index, { hex: nextHex });
-                        }}
+                        onCommit={(nextHex) => updateBrandColor(index, { hex: nextHex })}
+                        onValidityChange={setHexFieldValidity}
                       />
                       <input
                         aria-label="颜色使用比例"
