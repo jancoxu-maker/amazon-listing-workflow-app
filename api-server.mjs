@@ -48,6 +48,7 @@ const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1';
 const IMAGE_API_PROVIDER = process.env.IMAGE_API_PROVIDER || (GEMINI_API_KEY ? 'gemini' : OPENAI_API_KEY ? 'openai' : 'gemini');
 const MAX_BODY_BYTES = 18 * 1024 * 1024;
 const GEMINI_PLANNER_TIMEOUT_MS = Number(process.env.GEMINI_PLANNER_TIMEOUT_MS || 60000);
+const GEMINI_PLANNER_MAX_OUTPUT_TOKENS = Number(process.env.GEMINI_PLANNER_MAX_OUTPUT_TOKENS || 8192);
 const GEMINI_REVIEW_TIMEOUT_MS = Number(process.env.GEMINI_REVIEW_TIMEOUT_MS || 45000);
 const GEMINI_IMAGE_TIMEOUT_MS = Number(process.env.GEMINI_IMAGE_TIMEOUT_MS || 120000);
 const GENERATED_IMAGE_DIR = resolve(process.env.GENERATED_IMAGE_DIR || 'generated-images');
@@ -827,6 +828,14 @@ function extractJsonObject(text = '') {
   throw new Error('AI response JSON object was incomplete.');
 }
 
+function collectCandidateText(candidate = {}) {
+  const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+  return parts
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .filter(Boolean)
+    .join('');
+}
+
 function normalizeStringArray(value, limit = 6) {
   if (!Array.isArray(value)) return [];
   return value
@@ -863,6 +872,60 @@ const imageReviewResponseSchema = {
   },
   required: ['verdict', 'score', 'summary', 'checks', 'issues', 'recommendedAction']
 };
+
+function getStoryboardPlannerTargetSlotCount(payload = {}) {
+  const outputPresetId = payload.outputPresetId || payload.projectForm?.planOutputPresetId || 'main-image';
+  return outputPresetId === 'aplus'
+    ? Math.min(7, Math.max(4, Number(payload.targetSlotCount) || 5))
+    : Math.min(9, Math.max(1, Number(payload.targetSlotCount) || 7));
+}
+
+function buildStoryboardPlannerResponseSchema(payload = {}) {
+  const targetSlotCount = getStoryboardPlannerTargetSlotCount(payload);
+  return {
+    type: 'OBJECT',
+    properties: {
+      productType: { type: 'STRING' },
+      productName: { type: 'STRING' },
+      slots: {
+        type: 'ARRAY',
+        maxItems: targetSlotCount,
+        items: {
+          type: 'OBJECT',
+          properties: {
+            id: { type: 'INTEGER' },
+            title: { type: 'STRING' },
+            goal: { type: 'STRING' },
+            roleType: { type: 'STRING' },
+            visualType: { type: 'STRING' },
+            composition: { type: 'STRING' },
+            primaryClaim: { type: 'STRING' },
+            visualProof: { type: 'STRING' },
+            allowedCopy: { type: 'ARRAY', items: { type: 'STRING' }, maxItems: 5 },
+            usableClaims: { type: 'ARRAY', items: { type: 'STRING' }, maxItems: 3 },
+            needsEvidence: { type: 'ARRAY', items: { type: 'STRING' }, maxItems: 3 },
+            reviewClaims: { type: 'ARRAY', items: { type: 'STRING' }, maxItems: 3 }
+          },
+          required: [
+            'id',
+            'title',
+            'goal',
+            'roleType',
+            'visualType',
+            'composition',
+            'primaryClaim',
+            'visualProof',
+            'allowedCopy',
+            'usableClaims',
+            'needsEvidence',
+            'reviewClaims'
+          ]
+        }
+      }
+    },
+    required: ['productType', 'productName', 'slots']
+  };
+}
 
 function normalizeBrandColorList(colors = []) {
   if (!Array.isArray(colors)) return [];
@@ -986,9 +1049,7 @@ function normalizeStoryboardPlan(plan, payload) {
   const slots = Array.isArray(plan?.slots) ? plan.slots : [];
   const outputPresetId = payload?.outputPresetId || payload?.projectForm?.planOutputPresetId || 'main-image';
   const isAPlusOutput = outputPresetId === 'aplus';
-  const targetSlotCount = isAPlusOutput
-    ? Math.min(7, Math.max(4, Number(payload?.targetSlotCount) || 5))
-    : Math.min(9, Math.max(1, Number(payload?.targetSlotCount) || 7));
+  const targetSlotCount = getStoryboardPlannerTargetSlotCount(payload);
   if (slots.length !== targetSlotCount) {
     throw new Error(`AI plan must contain exactly ${targetSlotCount} slots.`);
   }
@@ -1137,9 +1198,7 @@ function buildStoryboardPlannerPrompt(payload) {
   const strategyRules = normalizeStringArray(payload.strategyRules, 8);
   const outputPresetId = payload.outputPresetId || project.planOutputPresetId || 'main-image';
   const isAPlusOutput = outputPresetId === 'aplus';
-  const targetSlotCount = isAPlusOutput
-    ? Math.min(7, Math.max(4, Number(payload.targetSlotCount) || 5))
-    : Math.min(9, Math.max(1, Number(payload.targetSlotCount) || 7));
+  const targetSlotCount = getStoryboardPlannerTargetSlotCount(payload);
   const ledgerText = ledgerFacts.map((fact, index) => (
     `${index + 1}. ${fact.claim} | state=${fact.state || 'review'} | allowed=${fact.allowed !== false} | source=${fact.source || 'unknown'} | owner=${fact.owner || 'unknown'}`
   )).join('\n');
@@ -1226,7 +1285,7 @@ function buildStoryboardPlannerPrompt(payload) {
     'Ledger facts:',
     ledgerText || 'No Ledger facts provided.',
     '',
-    'JSON shape:',
+    'Return the compact JSON shape below. Do not repeat brand rules, output specifications, evidence maps, or compliance contracts in the response; the server adds those fixed fields after planning.',
     JSON.stringify({
       productType: 'short detected category',
       productName: 'clean product name',
@@ -1235,42 +1294,15 @@ function buildStoryboardPlannerPrompt(payload) {
           id: 1,
           title: `short internal slot title; use ${shortCopyDescription} if it will also appear in the image`,
           goal: 'short Chinese goal',
-          roleType: 'main | hero_with_claim | feature_callout | scale_human_ref | dimension_spec | material_macro | use_scenario | comparison | before_after | bundle_contents | durability_proof | cleaning_ease | safety_cert | brand_hero | benefit_story | lifestyle_module | detail_proof | function_module | structure_specs | care_guide | trust_proof',
-          visualType: 'main | benefits | lifestyle | detail | state | structure | dimensions',
-          composition: 'Chinese visual direction',
+          roleType: 'one allowed role type',
+          visualType: 'one allowed visual type',
+          composition: 'concise Chinese visual direction',
           primaryClaim: 'single most important claim this slot proves',
-          visualProof: 'Chinese explanation of how the image visually proves the primary claim',
-          evidenceMap: [{ claim: 'same primary claim', evidence: 'specific visible proof in the composition' }],
+          visualProof: 'concise Chinese explanation of how the image proves the claim',
           allowedCopy: [`up to 5 short phrases in ${shortCopyDescription}; empty when no visible copy is needed`],
-          copyPolicy: 'Chinese instruction describing how little text may be used',
-          scenePlan: {
-            type: 'studio-white | product-led-layout | real-use | product-detail | function-state | specification-layout',
-            environment: 'Chinese description of the exact setting or background',
-            requiredElements: ['visible elements required to prove the claim'],
-            forbiddenElements: ['objects, implications, or states that must not appear'],
-            physicalLogic: 'Chinese physical-logic rule for this product and scene'
-          },
-          brandRules: {
-            allowedColors: ['configured HEX colors only'],
-            titleColor: 'configured title HEX color',
-            arrowStyle: 'configured arrow style',
-            iconStyle: 'configured icon family',
-            annotationStyle: 'configured leader-line treatment',
-            cornerStyle: 'configured graphic corner treatment',
-            labelStyle: 'configured information label treatment',
-            logoPolicy: 'whether and how the uploaded logo may appear'
-          },
-          outputSpec: {
-            size: 'selected output size',
-            aspectRatio: 'selected output ratio',
-            backgroundRule: 'slot-specific background rule',
-            titlePlacement: 'slot-specific title placement'
-          },
-          complianceRules: ['slot-specific Amazon and claim restrictions'],
           usableClaims: ['claims allowed in image'],
           needsEvidence: ['claims that need evidence before final export'],
-          reviewClaims: ['uncertain claims to review'],
-          guardrails: ['specific restrictions for this slot']
+          reviewClaims: ['uncertain claims to review']
         }
       ]
     })
@@ -1319,7 +1351,10 @@ async function planStoryboardWithGemini(payload) {
           ]
         }],
         generationConfig: {
-          responseMimeType: 'application/json'
+          responseMimeType: 'application/json',
+          responseSchema: buildStoryboardPlannerResponseSchema(payload),
+          maxOutputTokens: GEMINI_PLANNER_MAX_OUTPUT_TOKENS,
+          temperature: 0.35
         }
       })
     }
@@ -1336,8 +1371,21 @@ async function planStoryboardWithGemini(payload) {
     };
   }
 
-  const text = result?.candidates?.[0]?.content?.parts?.find((part) => part.text)?.text || '';
-  const plan = extractJsonObject(text);
+  const candidate = result?.candidates?.[0] || {};
+  const text = collectCandidateText(candidate);
+  let plan;
+  try {
+    plan = extractJsonObject(text);
+  } catch (error) {
+    const finishReason = String(candidate?.finishReason || 'UNKNOWN');
+    const outputTokens = Number(result?.usageMetadata?.candidatesTokenCount || 0);
+    const plannerError = new Error(
+      `AI 方案返回不完整（结束原因：${finishReason}${outputTokens ? `，输出 ${outputTokens} tokens` : ''}）。`
+    );
+    plannerError.code = 'AI_PLANNER_INCOMPLETE_JSON';
+    plannerError.cause = error;
+    throw plannerError;
+  }
   return {
     ok: true,
     status: 200,
