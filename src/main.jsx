@@ -1107,7 +1107,7 @@ function validateBrandProfileForSave(brand = {}) {
   const colors = normalizeBrandColors(brand.colors);
   const exampleImages = Array.isArray(brand.exampleImages) ? brand.exampleImages : [];
   if (!String(brand.name || '').trim()) return '请填写品牌名。';
-  if (exampleImages.length < 2 || exampleImages.length > 5) return '请上传 2–5 张品牌示例图。';
+  if (exampleImages.length > 5) return '品牌示例图最多 5 张。';
   if (!colors.length) return '请至少添加一个品牌色。';
   if (getBrandColorRatioTotal(colors) !== 100) return '品牌色使用比例合计必须等于 100%。';
   if (!colors.some((color) => color.role === 'background' || color.role === 'neutral')) {
@@ -6030,7 +6030,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
   const managedBrands = brandLibrary.filter((brand) => brand.id !== 'none');
   const savedBrandCount = managedBrands.filter((brand) => brand.version).length;
   const logoBrandCount = managedBrands.filter((brand) => brand.logoPreview || brand.logoStorageKey).length;
-  const exampleReadyCount = managedBrands.filter((brand) => normalizeBrandExampleImages(brand.exampleImages).length >= 2).length;
+  const exampleReadyCount = managedBrands.filter((brand) => normalizeBrandExampleImages(brand.exampleImages).length > 0).length;
   const paletteIssueCount = managedBrands.filter((brand) => getBrandColorRatioTotal(brand.colors) !== 100).length;
   const titleHexFieldKey = `${selectedBrand.id}:title-color`;
   const activeHexFieldKeys = [
@@ -6276,7 +6276,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             <span><strong>{managedBrands.length}</strong>品牌</span>
             <span><strong>{savedBrandCount}</strong>已保存版本</span>
             <span><strong>{logoBrandCount}</strong>Logo 素材</span>
-            <span><strong>{exampleReadyCount}</strong>示例图就绪</span>
+            <span><strong>{exampleReadyCount}</strong>示例图辅助</span>
             <span><strong>{paletteIssueCount}</strong>色彩待校准</span>
           </div>
           <div className="brand-card-list">
@@ -6340,7 +6340,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             <span><strong>{selectedBrand.version ? `v${selectedBrand.version}` : '未保存'}</strong>版本</span>
             <span className={brandColorTotal === 100 ? 'ok' : 'warn'}><strong>{brandColorTotal}%</strong>色彩比例</span>
             <span><strong>{selectedBrand.colors.length}</strong>品牌色</span>
-            <span className={selectedBrand.exampleImages.length >= 2 ? 'ok' : 'warn'}><strong>{selectedBrand.exampleImages.length}/5</strong>示例图</span>
+            <span><strong>{selectedBrand.exampleImages.length}/5</strong>示例图</span>
             <span className={selectedBrand.logoPreview || selectedBrand.logoStorageKey ? 'ok' : 'warn'}><strong>{selectedBrand.logoPreview || selectedBrand.logoStorageKey ? '已上传' : '未上传'}</strong>Logo</span>
           </div>
           {saveError && <div className="brand-save-error" role="alert">{saveError}</div>}
@@ -6579,15 +6579,15 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
             <div>
               <p className="eyebrow">Visual Examples</p>
               <h3>品牌示例图</h3>
-              <small>上传 2–5 张最能代表品牌构图、字体层级和标注方式的图片。</small>
+              <small>可选上传，用来辅助识别品牌构图、字体层级和标注方式。</small>
             </div>
             <label className={editable && selectedBrand.exampleImages.length < 5 ? 'vz-btn vz-btn--secondary secondary-button upload-button' : 'vz-btn vz-btn--secondary secondary-button upload-button disabled'} htmlFor="brand-example-upload">
               <ImagePlus size={16} />添加示例图
             </label>
             <input id="brand-example-upload" type="file" accept="image/*" multiple disabled={!editable || selectedBrand.exampleImages.length >= 5} onChange={uploadBrandExamples} />
           </div>
-          <div className={`brand-example-readiness ${selectedBrand.exampleImages.length >= 2 ? 'ready' : 'waiting'}`}>
-            <strong>{selectedBrand.exampleImages.length >= 2 ? '可用于品牌生图' : `还需 ${2 - selectedBrand.exampleImages.length} 张`}</strong>
+          <div className={`brand-example-readiness ${selectedBrand.exampleImages.length ? 'ready' : 'waiting'}`}>
+            <strong>{selectedBrand.exampleImages.length ? '可用于品牌生图' : '可选素材'}</strong>
             <span>示例图只控制视觉语言，不会复制其中的产品、文案或卖点。</span>
           </div>
           {selectedBrand.exampleImages.length ? (
@@ -6616,7 +6616,7 @@ function BrandLibraryPage({ brandLibrary, brandLibraryStatus, onUpdateBrands, on
                 </article>
               ))}
             </div>
-          ) : <div className="brand-example-empty"><ImagePlus size={26} /><strong>还没有品牌示例图</strong><span>先选择 2 张最典型的历史成图。</span></div>}
+          ) : <div className="brand-example-empty"><ImagePlus size={26} /><strong>还没有品牌示例图</strong><span>可以直接保存品牌规则，后续再补充示例图。</span></div>}
         </section>
 
         {editable && selectedBrand.version > 0 && (
