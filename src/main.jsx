@@ -1537,6 +1537,172 @@ const MAIN_MIN_SLOT_COUNT = 1;
 const MAIN_MAX_SLOT_COUNT = 9;
 const APLUS_MIN_MODULE_COUNT = 4;
 const APLUS_MAX_MODULE_COUNT = 7;
+const STORYBOARD_REQUIRED_CLAIM_LIMIT = 3;
+
+const storyboardExpressionModes = [
+  {
+    id: 'realistic',
+    label: '真实证明',
+    shortLabel: '真实',
+    prompt: 'Keep the scene literal and commercially realistic. Prove the claim with believable product placement, detail, scale, state, or use context.'
+  },
+  {
+    id: 'scene',
+    label: '场景演示',
+    shortLabel: '场景',
+    prompt: 'Use a realistic usage scene where people, props, background, and product interaction exist only to make the chosen benefit clear.'
+  },
+  {
+    id: 'comparison',
+    label: '对比说明',
+    shortLabel: '对比',
+    prompt: 'Use a restrained before/after, state comparison, or side-by-side layout. The comparison must be visually supported and must not attack competitors.'
+  },
+  {
+    id: 'detail',
+    label: '细节特写',
+    shortLabel: '细节',
+    prompt: 'Use close-up crops, callouts, pointers, or material details to prove the claim through visible product parts.'
+  },
+  {
+    id: 'structure',
+    label: '结构拆解',
+    shortLabel: '结构',
+    prompt: 'Use structural annotation, exploded-view feeling, or part relationships only for components confirmed by the reference images.'
+  },
+  {
+    id: 'metaphor',
+    label: '创意隐喻',
+    shortLabel: '隐喻',
+    prompt: 'Use an obvious advertising metaphor or exaggerated visual language to express the idea, but do not present the metaphor as a literal product test, factual certification, or real-world promise.'
+  }
+];
+
+function uniqueTextList(items = []) {
+  const seen = new Set();
+  return items
+    .map((item) => String(item || '').trim())
+    .filter((item) => {
+      const key = item.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function normalizeClaimKey(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isStoryboardUsableFact(fact = {}) {
+  return ['allowed', 'evidence', 'review'].includes(fact.state);
+}
+
+function isRequiredStoryboardClaim(fact = {}) {
+  return Boolean(fact.requiredInStoryboard || fact.mandatory || fact.mustInclude);
+}
+
+function getRequiredStoryboardFacts(ledgerFacts = []) {
+  return ledgerFacts.filter((fact) => isRequiredStoryboardClaim(fact) && isStoryboardUsableFact(fact));
+}
+
+function getStoryboardExpressionMode(modeId = '') {
+  return storyboardExpressionModes.find((mode) => mode.id === modeId) || storyboardExpressionModes[0];
+}
+
+function getDefaultStoryboardExpressionMode(visualType = 'benefits', aPlusMode = false) {
+  if (aPlusMode) return 'scene';
+  if (visualType === 'detail') return 'detail';
+  if (visualType === 'structure' || visualType === 'dimensions') return 'structure';
+  if (visualType === 'state') return 'comparison';
+  if (visualType === 'lifestyle') return 'scene';
+  return 'realistic';
+}
+
+function buildStoryboardExpressionDraft(brief = {}, form = {}, modeId = '') {
+  const mode = getStoryboardExpressionMode(modeId || brief.expressionMode || getDefaultStoryboardExpressionMode(brief.visualType, isAPlusPlan(form)));
+  const claim = String(brief.primaryClaim || '').trim() || '当前主卖点';
+  const productName = form.productName || form.projectName || brief.productName || '该产品';
+  const targetCopy = getShortCopyDescription(form);
+  const modeDrafts = {
+    realistic: {
+      visualProof: `用真实、可信的产品画面直接证明“${claim}”，让用户通过产品外观、材质、比例、使用状态或细节自然理解卖点，不依赖夸张符号。`,
+      composition: `${productName}作为画面主体，使用干净的电商构图和少量${targetCopy}标注；背景、道具和光影只服务于证明“${claim}”，避免装饰性堆叠。`
+    },
+    scene: {
+      visualProof: `把“${claim}”放进真实使用场景中证明，通过环境、人物动作、道具关系或产品摆放结果，让卖点变成可被看见的使用价值。`,
+      composition: `构建一个采光自然、比例可信的生活/使用场景，${productName}保持清晰可识别；场景元素围绕“${claim}”组织，文案短而直接。`
+    },
+    comparison: {
+      visualProof: `用状态对比、前后对比或左右分区说明“${claim}”，让差异来自可见结构、尺寸、使用状态或画面结果，不做无法证明的竞品攻击。`,
+      composition: `采用清晰的双区或多区对比构图，${productName}在每个状态中保持真实比例；用箭头、分隔线或短标签强化差异点。`
+    },
+    detail: {
+      visualProof: `通过局部特写证明“${claim}”，把注意力集中到真实存在的材质、纹理、部件、接口、工艺或可见细节上。`,
+      composition: `使用大面积产品细节特写配少量指向性标注，必要时保留一张小的整体产品参照；所有标注必须指向画面中真实可见的位置。`
+    },
+    structure: {
+      visualProof: `用结构拆解或部件关系说明“${claim}”，只呈现参考图和项目资料已确认的结构、零件和状态，不新增功能或部件。`,
+      composition: `以${productName}为中心做克制的结构说明图，可使用线框、箭头、编号或局部放大；信息层级清楚，避免像说明书页面一样拥挤。`
+    },
+    metaphor: {
+      visualProof: `用明确的广告隐喻表达“${claim}”，让夸张画面只承担创意表达，不被呈现为真实测试、认证结果或现实承诺。`,
+      composition: `采用一眼能看懂的创意隐喻场景，${productName}仍保持真实外观和主体地位；用画面气氛强化“${claim}”，并避免让隐喻造成事实误导。`
+    }
+  };
+  return {
+    expressionMode: mode.id,
+    ...(modeDrafts[mode.id] || modeDrafts.realistic)
+  };
+}
+
+function getStoryboardClaimSignals(brief = {}) {
+  return uniqueTextList([
+    brief.primaryClaim,
+    ...(brief.requiredClaims || []),
+    ...(brief.usableClaims || []),
+    ...(brief.needsEvidence || [])
+  ]);
+}
+
+function getMandatoryClaimCoverage(ledgerFacts = [], storyboardBriefs = []) {
+  return getRequiredStoryboardFacts(ledgerFacts).map((fact) => {
+    const claim = String(fact.claim || '').trim();
+    const claimKey = normalizeClaimKey(claim);
+    const coveredSlots = storyboardBriefs
+      .filter((brief) => getStoryboardClaimSignals(brief).some((signal) => normalizeClaimKey(signal) === claimKey))
+      .map((brief) => Number(brief.id || 0))
+      .filter(Boolean);
+    return { claim, coveredSlots };
+  });
+}
+
+function getStoryboardPromptOutputRule(form = {}) {
+  return isAPlusPlan(form)
+    ? 'Output type: Amazon A+ module. Do not use the primary white-background rule. Headings may follow the module layout. Related allowed Ledger claims may be combined when they create a stronger A+ content story.'
+    : 'Output type: Standard Amazon listing image set. Slot 01 is the white-background main image; standard listing images keep title placement and visual system consistent.';
+}
+
+function buildStoryboardPromptBriefFromFields(brief = {}, form = {}, slotContract = brief, outputRule = getStoryboardPromptOutputRule(form)) {
+  const blockedClaims = brief.blockedClaims || [];
+  const needsEvidence = brief.needsEvidence || [];
+  const usableClaims = brief.usableClaims || [];
+  const guardrails = brief.guardrails || [];
+  return [
+    `Use the locked original product reference for ${form.productName || form.projectName || 'the product'}.`,
+    outputRule,
+    `Listing image strategy rules: ${getListingImageStrategyText(form)}`,
+    brief.composition,
+    brief.primaryClaim ? `Primary claim to prove visually: ${brief.primaryClaim}.` : getNoPrimaryClaimInstruction(brief),
+    brief.visualProof ? `Visual proof plan: ${brief.visualProof}` : '',
+    formatStoryboardSlotContract(slotContract),
+    `Slot quality guardrail: ${getSlotQualityGuardrailText(brief.visualType)}.`,
+    usableClaims.length ? `Allowed claims: ${usableClaims.join('; ')}.` : 'No allowed claims assigned yet.',
+    needsEvidence.length ? `Claims needing evidence before final export: ${needsEvidence.join('; ')}.` : '',
+    blockedClaims.length ? `Do not mention or imply: ${blockedClaims.join('; ')}.` : '',
+    guardrails.join('; ')
+  ].filter(Boolean).join(' ');
+}
 
 function getOutputPresetById(presetId) {
   return outputPresets.find((preset) => preset.id === presetId) || outputPresets[0];
@@ -1573,7 +1739,7 @@ function getStoryboardTargetSlotCount(form = {}, ledgerFacts = []) {
   );
 }
 
-function getStoryboardPlanReadinessIssues(storyboardBriefs = [], form = {}) {
+function getStoryboardPlanReadinessIssues(storyboardBriefs = [], form = {}, ledgerFacts = []) {
   if (!Array.isArray(storyboardBriefs) || !storyboardBriefs.length) return ['还没有生成图片方案'];
   const aPlus = isAPlusPlan(form) || storyboardBriefs[0]?.outputPresetId === 'aplus';
   const countValid = aPlus
@@ -1605,10 +1771,14 @@ function getStoryboardPlanReadinessIssues(storyboardBriefs = [], form = {}) {
   const mismatchedOutputSlots = hasOutputContext
     ? storyboardBriefs.filter((brief) => brief.outputPresetId && brief.outputPresetId !== targetOutputPreset).map((brief) => brief.id)
     : [];
+  const uncoveredRequiredClaims = getMandatoryClaimCoverage(ledgerFacts, storyboardBriefs)
+    .filter((item) => item.claim && !item.coveredSlots.length)
+    .map((item) => item.claim);
   return [
     ...(!countValid ? [aPlus ? 'A+ 方案需要 4–7 个模块' : '主图方案需要 7–9 个图槽'] : []),
     ...(!uniqueIds ? ['图槽编号存在重复'] : []),
     ...(incompleteSlots.length ? [`图槽 ${incompleteSlots.join('、')} 缺少卖点或画面证据`] : []),
+    ...(uncoveredRequiredClaims.length ? [`必选卖点未覆盖：${uncoveredRequiredClaims.join('、')}`] : []),
     ...(missingLanguageSlots.length ? [`图槽 ${missingLanguageSlots.join('、')} 缺少输出语言`] : []),
     ...(mismatchedLanguageSlots.length ? [`图槽 ${mismatchedLanguageSlots.join('、')} 的语言与项目 ${targetLanguage} 不一致`] : []),
     ...(missingOutputSlots.length ? [`图槽 ${missingOutputSlots.join('、')} 缺少输出类型`] : []),
@@ -1616,8 +1786,8 @@ function getStoryboardPlanReadinessIssues(storyboardBriefs = [], form = {}) {
   ];
 }
 
-function isStoryboardPlanReady(storyboardBriefs = [], form = {}) {
-  return getStoryboardPlanReadinessIssues(storyboardBriefs, form).length === 0;
+function isStoryboardPlanReady(storyboardBriefs = [], form = {}, ledgerFacts = []) {
+  return getStoryboardPlanReadinessIssues(storyboardBriefs, form, ledgerFacts).length === 0;
 }
 
 const generationVerdicts = {
@@ -2168,14 +2338,19 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
   const brandProfile = getBrandProfile(getProjectBrandId(form, brands), brands);
   const outputPreset = getProjectPlanOutputPreset(form);
   const aPlusMode = isAPlusPlan(form);
-  const allowedClaims = ledgerFacts
+  const requiredFacts = getRequiredStoryboardFacts(ledgerFacts).slice(0, STORYBOARD_REQUIRED_CLAIM_LIMIT);
+  const allowedClaims = uniqueTextList([
+    ...requiredFacts.filter((fact) => fact.state === 'allowed').map((fact) => fact.claim),
+    ...ledgerFacts
     .filter((fact) => fact.state === 'allowed')
     .map((fact) => fact.claim)
-    .slice(0, IMAGE_CLAIM_POOL_LIMIT);
-  const evidenceClaims = ledgerFacts
+  ]).slice(0, IMAGE_CLAIM_POOL_LIMIT);
+  const evidenceClaims = uniqueTextList([
+    ...requiredFacts.filter((fact) => fact.state !== 'allowed').map((fact) => fact.claim),
+    ...ledgerFacts
     .filter((fact) => fact.state === 'evidence')
     .map((fact) => fact.claim)
-    .slice(0, Math.ceil(IMAGE_CLAIM_POOL_LIMIT / 2));
+  ]).slice(0, Math.ceil(IMAGE_CLAIM_POOL_LIMIT / 2));
   const reviewClaims = ledgerFacts
     .filter((fact) => fact.state === 'review')
     .map((fact) => fact.claim);
@@ -2183,13 +2358,26 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
     .filter((fact) => fact.state === 'blocked' || (!fact.state && fact.allowed === false))
     .map((fact) => fact.claim);
 
+  let requiredFactCursor = 0;
   return getStoryboardTemplates(form, ledgerFacts)
     .slice(0, getStoryboardTargetSlotCount(form, ledgerFacts))
     .map((template) => {
     const claimLimit = aPlusMode ? CLAIMS_PER_IMAGE_LIMIT : template.visualType === 'main' ? 1 : CLAIMS_PER_IMAGE_LIMIT;
-    const usableClaims = pickClaimsByTemplate(allowedClaims, template, claimLimit);
-    const needsEvidence = pickClaimsByTemplate(evidenceClaims, template, template.evidenceLimit);
-    const primaryClaim = usableClaims[0] || needsEvidence[0] || '';
+    const canCarryRequiredClaim = aPlusMode || template.visualType !== 'main';
+    const requiredFact = canCarryRequiredClaim && requiredFactCursor < requiredFacts.length
+      ? requiredFacts[requiredFactCursor++]
+      : null;
+    const requiredClaim = String(requiredFact?.claim || '').trim();
+    const pickedUsableClaims = pickClaimsByTemplate(allowedClaims, template, claimLimit);
+    const pickedEvidenceClaims = pickClaimsByTemplate(evidenceClaims, template, template.evidenceLimit);
+    const usableClaims = requiredClaim && requiredFact?.state === 'allowed'
+      ? uniqueTextList([requiredClaim, ...pickedUsableClaims]).slice(0, claimLimit)
+      : pickedUsableClaims;
+    const needsEvidence = requiredClaim && requiredFact?.state !== 'allowed'
+      ? uniqueTextList([requiredClaim, ...pickedEvidenceClaims]).slice(0, Math.max(1, template.evidenceLimit || 1))
+      : pickedEvidenceClaims;
+    const primaryClaim = requiredClaim || usableClaims[0] || needsEvidence[0] || '';
+    const expressionMode = getDefaultStoryboardExpressionMode(template.visualType, aPlusMode);
     const visualProof = getVisualProofInstruction(template, primaryClaim, form);
     const slotContract = normalizeStoryboardSlotContract({
       slot: template,
@@ -2212,9 +2400,18 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
         : usableClaims.length > 0
           ? 'ready'
           : 'needs_claims';
-    const outputRule = aPlusMode
-      ? 'Output type: Amazon A+ module. Do not use the primary white-background rule. Headings may follow the module layout. Related allowed Ledger claims may be combined when they create a stronger A+ content story.'
-      : 'Output type: Standard Amazon listing image set. Slot 01 is the white-background main image; standard listing images keep title placement and visual system consistent.';
+    const outputRule = getStoryboardPromptOutputRule(form);
+    const briefFields = {
+      ...template,
+      ...slotContract,
+      primaryClaim,
+      usableClaims,
+      needsEvidence,
+      visualProof,
+      blockedClaims,
+      guardrails: template.guardrails,
+      expressionMode
+    };
 
     return {
       ...template,
@@ -2230,25 +2427,14 @@ function buildStoryboardBriefs(ledgerFacts, form, brands = defaultBrandLibrary) 
       productName: form.productName || form.projectName || form.sku || 'Current product',
       usableClaims,
       needsEvidence,
+      requiredClaims: requiredClaim ? [requiredClaim] : [],
+      expressionMode,
       primaryClaim,
       visualProof,
       reviewClaims: reviewClaims.slice(0, 3),
       blockedClaims,
       status,
-      promptBrief: [
-        `Use the locked original product reference for ${form.productName || form.projectName || 'the product'}.`,
-        outputRule,
-        `Listing image strategy rules: ${getListingImageStrategyText(form)}`,
-        template.composition,
-        primaryClaim ? `Primary claim to prove visually: ${primaryClaim}.` : getNoPrimaryClaimInstruction(template),
-        `Visual proof plan: ${visualProof}`,
-        formatStoryboardSlotContract(slotContract),
-        `Slot quality guardrail: ${getSlotQualityGuardrailText(template.visualType)}.`,
-        usableClaims.length ? `Allowed claims: ${usableClaims.join('; ')}.` : 'No allowed claims assigned yet.',
-        needsEvidence.length ? `Claims needing evidence before final export: ${needsEvidence.join('; ')}.` : '',
-        blockedClaims.length ? `Do not mention or imply: ${blockedClaims.join('; ')}.` : '',
-        template.guardrails.join('; ')
-      ].filter(Boolean).join(' ')
+      promptBrief: buildStoryboardPromptBriefFromFields(briefFields, form, slotContract, outputRule)
     };
     });
 }
@@ -2274,6 +2460,7 @@ function createOptionalStoryboardBrief({ id, form, ledgerFacts = [], existingBri
   const composition = aPlusMode
     ? 'Create a clean supporting A+ module with one clear visual hierarchy and product-led evidence.'
     : 'Create a distinct secondary listing image that proves one supported product benefit without duplicating another slot.';
+  const expressionMode = getDefaultStoryboardExpressionMode('benefits', aPlusMode);
   const guardrails = [
     'Do not duplicate another slot role.',
     'Use only uploaded product references and confirmed Ledger facts.',
@@ -2312,21 +2499,25 @@ function createOptionalStoryboardBrief({ id, form, ledgerFacts = [], existingBri
     productName: form.productName || form.projectName || form.sku || 'Current product',
     usableClaims: primaryClaim && usableFact?.state === 'allowed' ? [primaryClaim] : [],
     needsEvidence: primaryClaim && usableFact?.state === 'evidence' ? [primaryClaim] : [],
+    requiredClaims: isRequiredStoryboardClaim(usableFact) && primaryClaim ? [primaryClaim] : [],
+    expressionMode,
     primaryClaim,
     visualProof,
     reviewClaims: [],
     blockedClaims,
     status: primaryClaim ? (usableFact?.state === 'evidence' ? 'needs_review' : 'ready') : 'needs_claims',
     guardrails,
-    promptBrief: [
-      `Use the locked original product reference for ${form.productName || form.projectName || 'the product'}.`,
-      aPlusMode ? 'Output type: Amazon A+ module.' : 'Output type: secondary Amazon listing image.',
-      `Listing image strategy rules: ${getListingImageStrategyText(form)}`,
+    promptBrief: buildStoryboardPromptBriefFromFields({
+      visualType: 'benefits',
+      primaryClaim,
+      usableClaims: primaryClaim && usableFact?.state === 'allowed' ? [primaryClaim] : [],
+      needsEvidence: primaryClaim && usableFact?.state === 'evidence' ? [primaryClaim] : [],
       visualProof,
-      formatStoryboardSlotContract(slotContract),
-      primaryClaim ? `Primary claim to prove visually: ${primaryClaim}.` : 'No confirmed primary claim is assigned yet.',
-      blockedClaims.length ? `Do not mention or imply: ${blockedClaims.join('; ')}.` : ''
-    ].filter(Boolean).join(' ')
+      composition,
+      blockedClaims,
+      guardrails,
+      expressionMode
+    }, form, slotContract, aPlusMode ? 'Output type: Amazon A+ module.' : 'Output type: secondary Amazon listing image.')
   };
 }
 
@@ -2365,6 +2556,103 @@ function applyStoryboardProjectContract(briefs = [], form = {}, brands = default
       ...contract
     };
   });
+}
+
+function rebuildEditableStoryboardBrief(brief = {}, patch = {}, form = {}, ledgerFacts = [], brands = defaultBrandLibrary, options = {}) {
+  const outputPreset = getProjectPlanOutputPreset(form);
+  const brandProfile = getBrandProfile(getProjectBrandId(form, brands), brands);
+  const primaryClaim = Object.prototype.hasOwnProperty.call(patch, 'primaryClaim')
+    ? String(patch.primaryClaim || '').trim()
+    : String(brief.primaryClaim || '').trim();
+  const primaryFact = ledgerFacts.find((fact) => normalizeClaimKey(fact.claim) === normalizeClaimKey(primaryClaim));
+  const expressionMode = patch.expressionMode || brief.expressionMode || getDefaultStoryboardExpressionMode(brief.visualType, isAPlusPlan(form));
+  const previousPlan = {
+    visualProof: brief.visualProof || '',
+    composition: brief.composition || '',
+    expressionMode: brief.expressionMode || expressionMode
+  };
+  const rewriteDraft = options.rewritePlan || options.autoRewritePlan
+    ? buildStoryboardExpressionDraft({ ...brief, ...patch, primaryClaim, expressionMode }, form, expressionMode)
+    : null;
+  const restoresPreviousPlan = Boolean(options.restorePreviousPlan);
+  const manualTextEdit = Boolean(options.manualTextEdit);
+  const strategyChanged = Object.prototype.hasOwnProperty.call(patch, 'expressionMode')
+    && patch.expressionMode
+    && patch.expressionMode !== brief.expressionMode;
+  const primaryClaimChanged = Object.prototype.hasOwnProperty.call(patch, 'primaryClaim')
+    && primaryClaim !== String(brief.primaryClaim || '').trim();
+  const next = {
+    ...brief,
+    ...patch,
+    primaryClaim,
+    expressionMode,
+    ...(rewriteDraft ? {
+      visualProof: rewriteDraft.visualProof,
+      composition: rewriteDraft.composition
+    } : {}),
+    editedByHuman: true,
+    manualEditCount: Number(brief.manualEditCount || 0) + 1,
+    lastEditedAt: new Date().toISOString()
+  };
+  if (manualTextEdit) {
+    next.planTextDirty = true;
+    next.planTextStale = false;
+  } else if (rewriteDraft) {
+    next.planTextDirty = false;
+    next.planTextStale = false;
+    next.strategyGeneratedFrom = expressionMode;
+    next.strategyRewriteCount = Number(brief.strategyRewriteCount || 0) + 1;
+    next.strategyRewriteUndo = previousPlan;
+    next.lastStrategyRewriteAt = new Date().toISOString();
+  } else if (restoresPreviousPlan) {
+    next.planTextDirty = true;
+    next.planTextStale = false;
+    next.strategyRewriteUndo = null;
+  } else if (options.keepPlanText) {
+    next.planTextStale = false;
+  } else if ((strategyChanged || primaryClaimChanged) && !brief.planTextDirty) {
+    const draft = buildStoryboardExpressionDraft({ ...brief, ...patch, primaryClaim, expressionMode }, form, expressionMode);
+    next.visualProof = draft.visualProof;
+    next.composition = draft.composition;
+    next.planTextDirty = false;
+    next.planTextStale = false;
+    next.strategyGeneratedFrom = expressionMode;
+    next.strategyRewriteUndo = previousPlan;
+    next.lastStrategyRewriteAt = new Date().toISOString();
+  } else if (strategyChanged || primaryClaimChanged) {
+    next.planTextStale = true;
+  }
+  const restUsableClaims = (brief.usableClaims || []).filter((claim) => normalizeClaimKey(claim) !== normalizeClaimKey(primaryClaim));
+  const restEvidenceClaims = (brief.needsEvidence || []).filter((claim) => normalizeClaimKey(claim) !== normalizeClaimKey(primaryClaim));
+  next.usableClaims = primaryClaim && primaryFact?.state === 'allowed'
+    ? uniqueTextList([primaryClaim, ...restUsableClaims]).slice(0, CLAIMS_PER_IMAGE_LIMIT)
+    : restUsableClaims;
+  next.needsEvidence = primaryClaim && primaryFact && primaryFact.state !== 'allowed'
+    ? uniqueTextList([primaryClaim, ...restEvidenceClaims]).slice(0, CLAIMS_PER_IMAGE_LIMIT)
+    : restEvidenceClaims;
+  next.requiredClaims = primaryClaim && primaryFact && isRequiredStoryboardClaim(primaryFact) ? [primaryClaim] : [];
+  next.status = primaryClaim
+    ? primaryFact && primaryFact.state !== 'allowed' ? 'needs_review' : 'ready'
+    : 'needs_claims';
+  const slotContract = normalizeStoryboardSlotContract({
+    slot: next,
+    id: next.id,
+    visualType: next.visualType,
+    primaryClaim: next.primaryClaim,
+    visualProof: next.visualProof,
+    composition: next.composition,
+    outputPresetId: outputPreset.id,
+    outputPresetSize: outputPreset.size,
+    projectForm: form,
+    brand: brandProfile,
+    blockedClaims: next.blockedClaims,
+    guardrails: next.guardrails
+  });
+  return {
+    ...next,
+    ...slotContract,
+    promptBrief: buildStoryboardPromptBriefFromFields(next, form, slotContract)
+  };
 }
 
 function repairStoredStoryboardProjectMetadata(briefs = [], form = {}) {
@@ -3046,10 +3334,12 @@ function buildStoryboardCsv(storyboardBriefs = [], reviewDecisions = []) {
     'visual_type',
     'goal',
     'primary_claim',
+    'expression_mode',
     'visual_proof',
     'usable_claims',
     'needs_evidence',
     'blocked_claims',
+    'edited_by_human',
     'review_status'
   ];
   const rows = getActiveSlots(storyboardBriefs).map((slot) => {
@@ -3062,10 +3352,12 @@ function buildStoryboardCsv(storyboardBriefs = [], reviewDecisions = []) {
       brief.visualType || '',
       brief.goal || slot.goal,
       brief.primaryClaim || '',
+      getStoryboardExpressionMode(brief.expressionMode).label,
       brief.visualProof || '',
       (brief.usableClaims || []).join('; '),
       (brief.needsEvidence || []).join('; '),
       (brief.blockedClaims || []).join('; '),
+      brief.editedByHuman ? 'yes' : '',
       decision.status
     ];
   });
@@ -3119,7 +3411,9 @@ function buildDeliveryManifest({ projectForm, ledgerFacts, storyboardBriefs, rev
       roleType: brief.roleType || '',
       visualType: brief.visualType || '',
       primaryClaim: brief.primaryClaim || '',
+      expressionMode: getStoryboardExpressionMode(brief.expressionMode).label,
       visualProof: brief.visualProof || '',
+      editedByHuman: Boolean(brief.editedByHuman),
       reviewStatus: decision.status,
       selectedCandidate: run ? {
         id: run.id,
@@ -4281,13 +4575,13 @@ function buildGenerationPrompt(brief, slot, outputPreset, options = {}) {
     learningTower: 'Physical logic rules: toddlers must stand naturally with feet fully supported; the tower must rest on the floor; countertop height and product height must look believable; no floating, bending, impossible shadows, duplicated legs, extra rails, or distorted steps.',
     generic: 'Physical logic rules: the product must sit, hang, stand, open, close, or be used only in ways supported by the reference images and confirmed facts; scale, shadows, contact points, reflections, parts, and scene context must be believable.'
   }[brief.productType || 'generic'];
-
   return [
     `Create one Amazon listing image candidate for slot ${String(slot.id).padStart(2, '0')} - ${brief.title || slot.title}.`,
     outputPreset.prompt,
     backgroundInstruction,
     `Listing image strategy rules: ${getListingImageStrategyText(projectForm)}`,
-    brief.promptBrief,
+    brief.goal ? `Visible plan goal: ${brief.goal}` : '',
+    brief.composition ? `Visible composition plan: ${brief.composition}` : '',
     brief.primaryClaim ? `Primary claim: ${brief.primaryClaim}. The composition must visually prove this claim.` : '',
     brief.visualProof ? `Visual proof requirement: ${brief.visualProof}` : '',
     formatStoryboardSlotContract(brief),
@@ -5065,6 +5359,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
     return [group.title, group.productName, group.sku, group.marketplace, group.language].some((value) => String(value || '').toLowerCase().includes(keyword));
   });
   const canCreate = userRole === 'designer' || userRole === 'admin';
+  const isAdmin = userRole === 'admin';
   const roleLabel = userRole === 'designer' ? '设计工作台' : userRole === 'operator' ? '运营审核队列' : '管理员工作台';
   const firstProject = visibleProjects[0];
   const openTrash = async () => {
@@ -5125,7 +5420,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
         </section>
       )}
 
-      {!isLoading && firstProject && (
+      {!isAdmin && !isLoading && firstProject && (
         <section className="project-center-next">
           <div className="project-center-next-icon"><Sparkles size={20} /></div>
           <div>
@@ -5174,7 +5469,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
               </div>
               <div className="project-delivery-list">
                 {deliveryRows.map(({ type, project, meta }) => {
-                  const canCreateAPlus = type === 'aplus' && !project && canCreate && primaryProject;
+                  const canCreateAPlus = type === 'aplus' && !project && canCreate && !isAdmin && primaryProject;
                   return (
                     <div className={`project-delivery-row is-${type} ${project ? '' : 'is-empty'}`} key={type}>
                       <div>
@@ -5187,7 +5482,7 @@ function ProjectCenterPage({ projects, currentUser, onOpenProject, onCreateProje
                           <i style={{ width: `${meta.progress.percent}%` }} />
                         </div>
                       )}
-                      {project ? (
+                      {project && !isAdmin ? (
                         <button className="project-open-button" type="button" onClick={() => onOpenProject(project.id, meta.section)}>
                           {meta.action}<ChevronRight size={16} />
                         </button>
@@ -5814,7 +6109,7 @@ function ProjectPage({
   );
 }
 
-function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact, onDeleteFact, onMergeFacts }) {
+function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact, onDeleteFact, onMergeFacts, onToggleRequiredFact }) {
   const [editingIndex, setEditingIndex] = useState(null);
   const [draftClaim, setDraftClaim] = useState('');
   const [isAdding, setIsAdding] = useState(false);
@@ -5860,6 +6155,7 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact,
     setSelectedIndices([]);
     setEditingIndex(null);
   };
+  const requiredCount = getRequiredStoryboardFacts(ledgerFacts).length;
 
   const deleteFact = (index, claim) => {
     if (!window.confirm(`确认删除卖点“${claim}”吗？`)) return;
@@ -5876,6 +6172,7 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact,
         <div>
           <p className="eyebrow">Claims</p>
           <h3>可用于图片的内容</h3>
+          <p className="ledger-editor-note">设计师可标记最多 {STORYBOARD_REQUIRED_CLAIM_LIMIT} 条“必选上图”，系统会在图片方案里检查覆盖。</p>
         </div>
         <div className="ledger-header-actions">
           {selectedIndices.length >= 2 && (
@@ -5935,6 +6232,16 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact,
                     </span>
                   </div>
                   <div className="ledger-row-actions">
+                    {onToggleRequiredFact && isStoryboardUsableFact(fact) && (
+                      <button
+                        className={isRequiredStoryboardClaim(fact) ? 'vz-btn vz-btn--secondary secondary-button ledger-required-button active' : 'vz-btn vz-btn--secondary secondary-button ledger-required-button'}
+                        title={isRequiredStoryboardClaim(fact) ? '取消必选上图' : '设为必选上图'}
+                        type="button"
+                        onClick={() => onToggleRequiredFact(index)}
+                      >
+                        <Check size={15} />{isRequiredStoryboardClaim(fact) ? '必选' : requiredCount >= STORYBOARD_REQUIRED_CLAIM_LIMIT ? '已满' : '必选上图'}
+                      </button>
+                    )}
                     <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => startEdit(index, fact.claim)}>
                       <PencilLine size={16} />编辑
                     </button>
@@ -5960,7 +6267,7 @@ function EditableFactLedgerPanel({ ledgerFacts = facts, onUpdateFact, onAddFact,
   );
 }
 
-function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAddFact, onDeleteFact, onMergeFacts, onGoStoryboard, focusRequest }) {
+function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAddFact, onDeleteFact, onMergeFacts, onToggleRequiredFact, onGoStoryboard, focusRequest }) {
   const referenceItems = getReferenceItems(projectForm).filter((item) => item.preview);
   const primaryReference = referenceItems.find((item) => item.id === 'main') || referenceItems[0];
   const brand = getBrandProfile(getProjectBrandId(projectForm, brandLibrary), brandLibrary);
@@ -6001,6 +6308,7 @@ function LedgerPage({ projectForm, brandLibrary, ledgerFacts, onUpdateFact, onAd
             onAddFact={onAddFact}
             onDeleteFact={onDeleteFact}
             onMergeFacts={onMergeFacts}
+            onToggleRequiredFact={onToggleRequiredFact}
           />
           <footer className="ledger-next-bar">
             <span><strong>{ledgerFacts.length ? `${ledgerFacts.length} 条内容已就绪` : '先添加至少一个卖点'}</strong><small>下一步会依据这些内容规划每张图要证明什么。</small></span>
@@ -6815,7 +7123,7 @@ function StoryboardPage({
             </div>
           )}
 
-          {isStoryboardPlanReady(storyboardBriefs, projectForm) && (
+          {isStoryboardPlanReady(storyboardBriefs, projectForm, ledgerFacts) && (
             <div className="inline-next-step">
               <div>
                 <Check size={18} />
@@ -6950,13 +7258,17 @@ function StoryboardPlanPage({
   onAddStoryboardSlot,
   onRemoveStoryboardSlot,
   onMoveStoryboardSlot,
+  onUpdateStoryboardBrief,
+  onRewriteStoryboardBriefPlan,
+  onKeepStoryboardBriefPlan,
+  onUndoStoryboardBriefRewrite,
   onGoGeneration,
   focusRequest
 }) {
   const activeSlots = useMemo(() => getActiveSlots(storyboardBriefs), [storyboardBriefs]);
   const selectedBrief = storyboardBriefs.find((brief) => brief.id === selectedSlot.id);
   const selectedPreset = getProjectPlanOutputPreset(projectForm);
-  const readinessIssues = getStoryboardPlanReadinessIssues(storyboardBriefs, projectForm);
+  const readinessIssues = getStoryboardPlanReadinessIssues(storyboardBriefs, projectForm, ledgerFacts);
   const isReady = readinessIssues.length === 0;
   const isAPlus = selectedPreset.id === 'aplus';
   const selectedIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(selectedBrief?.id));
@@ -6996,6 +7308,15 @@ function StoryboardPlanPage({
     || !String(brief?.visualProof || '').trim()
     || ((isAPlus || index > 0) && !String(brief?.primaryClaim || '').trim())
   )).length;
+  const requiredCoverage = getMandatoryClaimCoverage(ledgerFacts, storyboardBriefs);
+  const editableClaimOptions = uniqueTextList(
+    ledgerFacts
+      .filter(isStoryboardUsableFact)
+      .map((fact) => fact.claim)
+  );
+  const selectedExpressionMode = getStoryboardExpressionMode(selectedBrief?.expressionMode || getDefaultStoryboardExpressionMode(selectedBrief?.visualType, isAPlus));
+  const selectedPlanTextDirty = Boolean(selectedBrief?.planTextDirty);
+  const selectedPlanTextStale = Boolean(selectedBrief?.planTextStale);
 
   return (
     <section className="storyboard-plan-page">
@@ -7038,6 +7359,24 @@ function StoryboardPlanPage({
         <span>{ledgerFacts.length} 条已确认内容</span>
       </section>
 
+      {requiredCoverage.length > 0 && (
+        <section className="storyboard-required-coverage">
+          <div className="storyboard-required-heading">
+            <p className="eyebrow">MUST COVER</p>
+            <h3>必选卖点覆盖</h3>
+          </div>
+          <div className="storyboard-required-list">
+            {requiredCoverage.map((item) => (
+              <span className={item.coveredSlots.length ? 'covered' : 'missing'} key={item.claim}>
+                <Check size={14} />
+                <strong>{item.claim}</strong>
+                <small>{item.coveredSlots.length ? `图 ${item.coveredSlots.map((id) => String(id).padStart(2, '0')).join('、')}` : '未分配'}</small>
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
       {isPlanningStoryboard && (
         <div className="planning-status storyboard-plan-progress">
           <VistamzLoader size={24} label="正在生成图片方案" />
@@ -7054,7 +7393,9 @@ function StoryboardPlanPage({
               <span>{String(slot.id).padStart(2, '0')}</span>
               <h3>{brief?.title || slot.title}</h3>
               <p>{brief?.goal || '等待生成该图片的卖点与画面证明方式。'}</p>
+              {brief?.expressionMode && <em>{getStoryboardExpressionMode(brief.expressionMode).shortLabel}</em>}
               <strong>主卖点：{brief?.primaryClaim || '待分配'}</strong>
+              {brief?.requiredClaims?.length > 0 && <b>覆盖必选卖点</b>}
               <small>查看方案</small>
             </button>
           );
@@ -7083,6 +7424,89 @@ function StoryboardPlanPage({
             <div><span>品牌与输出规格</span><strong>{`${selectedContract?.brandRules?.mode === 'brand' ? '品牌模式' : '基线模式'} · ${selectedContract?.outputSpec?.size || selectedPreset.size} · ${selectedContract?.outputSpec?.backgroundRule || '按方案背景'}`}</strong></div>
             <div><span>禁止与合规边界</span><strong>{selectedContract?.complianceRules?.join(' · ') || selectedBrief.guardrails?.join(' · ') || '仅使用已确认事实，不改变产品结构'}</strong></div>
           </div>
+          {onUpdateStoryboardBrief && (
+            <div className="storyboard-plan-editor" key={`editor-${selectedBrief.id}-${selectedBrief.lastEditedAt || ''}-${selectedBrief.lastStrategyRewriteAt || ''}`}>
+              <div className="storyboard-editor-head">
+                <div><p className="eyebrow">EDIT PLAN</p><h4>微调当前图槽</h4></div>
+                <div className="storyboard-editor-state">
+                  {selectedPlanTextDirty && <span>人工编辑</span>}
+                  {selectedPlanTextStale && <span className="stale">待同步</span>}
+                  {selectedBrief.strategyGeneratedFrom && !selectedPlanTextDirty && <span>{getStoryboardExpressionMode(selectedBrief.strategyGeneratedFrom).label}生成</span>}
+                </div>
+              </div>
+              <div className="storyboard-editor-fields">
+                <div className="storyboard-editor-main-fields">
+                  <label className="storyboard-editor-claim-field">
+                    <span>主卖点</span>
+                    <select
+                      value={selectedBrief.primaryClaim || ''}
+                      onChange={(event) => onUpdateStoryboardBrief(selectedBrief.id, { primaryClaim: event.target.value })}
+                    >
+                      <option value="">不指定主卖点</option>
+                      {editableClaimOptions.map((claim) => (
+                        <option key={claim} value={claim}>{claim}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>画面证明</span>
+                    <textarea
+                      defaultValue={selectedBrief.visualProof || ''}
+                      rows={3}
+                      onBlur={(event) => onUpdateStoryboardBrief(selectedBrief.id, { visualProof: event.target.value }, { manualTextEdit: true })}
+                    />
+                  </label>
+                  <label>
+                    <span>构图说明</span>
+                    <textarea
+                      defaultValue={selectedBrief.composition || ''}
+                      rows={3}
+                      onBlur={(event) => onUpdateStoryboardBrief(selectedBrief.id, { composition: event.target.value }, { manualTextEdit: true })}
+                    />
+                  </label>
+                </div>
+                <div className="storyboard-expression-field">
+                  <div className="storyboard-expression-label">
+                    <span>表达策略</span>
+                    <small>选择一种表达方向，再重写左侧方案。</small>
+                  </div>
+                  <div className="storyboard-expression-options">
+                    {storyboardExpressionModes.map((mode) => (
+                      <button
+                        className={(selectedBrief.expressionMode || getDefaultStoryboardExpressionMode(selectedBrief.visualType, isAPlus)) === mode.id ? 'active' : ''}
+                        key={mode.id}
+                        type="button"
+                        onClick={() => onUpdateStoryboardBrief(selectedBrief.id, { expressionMode: mode.id })}
+                      >
+                        <strong>{mode.label}</strong>
+                        <small>{mode.shortLabel}</small>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedPlanTextStale && (
+                    <div className="storyboard-strategy-notice">
+                      <strong>已切换到「{selectedExpressionMode.label}」</strong>
+                      <span>当前画面方案被人工编辑过，先不覆盖。</span>
+                      <div>
+                        <button className="vz-btn vz-btn--primary primary-button" type="button" onClick={() => onRewriteStoryboardBriefPlan?.(selectedBrief.id)}>重写方案</button>
+                        <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onKeepStoryboardBriefPlan?.(selectedBrief.id)}>保留当前内容</button>
+                      </div>
+                    </div>
+                  )}
+                  <div className="storyboard-strategy-actions">
+                    <button className="vz-btn vz-btn--primary primary-button" type="button" onClick={() => onRewriteStoryboardBriefPlan?.(selectedBrief.id)}>
+                      <RefreshCcw size={15} />按当前策略重写方案
+                    </button>
+                    {selectedBrief.strategyRewriteUndo && (
+                      <button className="vz-btn vz-btn--secondary secondary-button" type="button" onClick={() => onUndoStoryboardBriefRewrite?.(selectedBrief.id)}>
+                        <RotateCcw size={15} />撤销重写
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -7114,14 +7538,14 @@ function StoryboardPlanPage({
   );
 }
 
-function ExportGate({ reviewDecisions, storyboardBriefs, compact = false }) {
+function ExportGate({ reviewDecisions, storyboardBriefs, ledgerFacts = [], compact = false }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
   const slotTotal = activeSlots.length || STORYBOARD_SLOT_COUNT;
   const decisions = activeSlots.map((slot) => getReviewDecision(reviewDecisions, slot.id, storyboardBriefs));
   const approved = decisions.filter(isDecisionFullyApproved).length;
   const rework = decisions.filter((decision) => decision.status === 'rework').length;
   const blocked = decisions.filter((decision) => decision.status === 'blocked').length;
-  const exportReady = approved === slotTotal && isStoryboardPlanReady(storyboardBriefs);
+  const exportReady = approved === slotTotal && isStoryboardPlanReady(storyboardBriefs, {}, ledgerFacts);
   const incomplete = slotTotal - approved;
   const nextMissing = decisions.find((decision) => !isDecisionFullyApproved(decision));
 
@@ -8043,7 +8467,7 @@ function GenerationPage({
     return selectedRun && selectedRun.verdict !== 'unreviewed';
   }).length;
   const generationReadyForReview = activeSlots.length > 0
-    && isStoryboardPlanReady(storyboardBriefs, projectForm)
+    && isStoryboardPlanReady(storyboardBriefs, projectForm, ledgerFacts)
     && approvedSlotRuns.length === activeSlots.length;
   const batchProgress = useMemo(() => {
     const total = batchLog.length;
@@ -9891,7 +10315,7 @@ function SystemOverviewPage({ projects, onNavigate }) {
   return (
     <section className="system-overview-page">
       <header className="system-overview-heading">
-        <div><p className="eyebrow">SYSTEM HEALTH</p><h2>系统与日志</h2><p>用于分配项目、定位问题，并查看团队审核进度。</p></div>
+        <div><p className="eyebrow">SYSTEM HEALTH</p><h2>系统与日志</h2><p>用于管理项目、分配成员、定位问题，并查看团队审核进度。</p></div>
         <span className="system-health-pill"><Check size={14} />日志记录已启用</span>
       </header>
       <div className="system-metric-grid">
@@ -9903,6 +10327,7 @@ function SystemOverviewPage({ projects, onNavigate }) {
         <article><small>今日估算成本</small><strong>${Number(taskSummary.todayCostUsd || 0).toFixed(2)}</strong><span>{taskSummary.todayCount || 0} 个任务，非最终账单</span></article>
       </div>
       <div className="system-shortcut-grid">
+        <button type="button" onClick={() => onNavigate('projects')}><FolderOpen size={20} /><strong>项目中心</strong><small>查看、删除和恢复团队项目</small></button>
         <button type="button" onClick={() => onNavigate('team')}><UsersRound size={20} /><strong>项目分配</strong><small>指定设计师与运营负责人</small></button>
         <button type="button" onClick={() => onNavigate('admin-release')}><ShieldCheck size={20} /><strong>审核进度</strong><small>只读查看运营审核与设计返修</small></button>
         <button type="button" onClick={() => onNavigate('quality')}><BarChart3 size={20} /><strong>质量与问题记录</strong><small>定位生图、预审和导出问题</small></button>
@@ -9957,13 +10382,13 @@ function AdminReleasePage({ projects }) {
   );
 }
 
-function HandoffPage({ projectForm, storyboardBriefs, generationRuns, onBack, onSubmit, isSubmitting = false }) {
+function HandoffPage({ projectForm, ledgerFacts = [], storyboardBriefs, generationRuns, onBack, onSubmit, isSubmitting = false }) {
   const activeSlots = getActiveSlots(storyboardBriefs);
   const totalSlots = activeSlots.length || STORYBOARD_SLOT_COUNT;
   const selectedRuns = activeSlots
     .map((slot) => ({ slot, run: getBestRunForSlot(slot.id, generationRuns) }))
     .filter((item) => item.run?.verdict === 'usable');
-  const ready = isStoryboardPlanReady(storyboardBriefs, projectForm) && selectedRuns.length === activeSlots.length;
+  const ready = isStoryboardPlanReady(storyboardBriefs, projectForm, ledgerFacts) && selectedRuns.length === activeSlots.length;
   const attentionCount = selectedRuns.filter((item) => item.run?.aiReview?.verdict !== 'pass').length;
   const selectedCount = selectedRuns.length;
   const completionPercent = totalSlots ? Math.min(100, Math.round((selectedCount / totalSlots) * 100)) : 0;
@@ -10136,6 +10561,7 @@ function ReviewPage({ ledgerFacts, storyboardBriefs, reviewDecisions, generation
 function ExportPage({
   activeProjectId,
   projectForm,
+  ledgerFacts = [],
   storyboardBriefs,
   reviewDecisions,
   generationRuns,
@@ -10179,7 +10605,7 @@ function ExportPage({
   ];
   const readyForZip = selectedImageCount === slotTotal && selectedImageCount > 0;
   const reviewReady = activeSlots.length > 0
-    && isStoryboardPlanReady(storyboardBriefs, projectForm)
+    && isStoryboardPlanReady(storyboardBriefs, projectForm, ledgerFacts)
     && activeSlots.every((slot) => isDecisionFullyApproved(getReviewDecision(reviewDecisions, slot.id, storyboardBriefs)));
   const canExportZip = readyForZip && reviewReady && userRole === 'operator';
   const firstMissingReview = activeSlots
@@ -10360,7 +10786,7 @@ function ExportPage({
           </div>
         </section>
         <section className="vz-card panel">
-          <ExportGate reviewDecisions={reviewDecisions} storyboardBriefs={storyboardBriefs} />
+          <ExportGate reviewDecisions={reviewDecisions} storyboardBriefs={storyboardBriefs} ledgerFacts={ledgerFacts} />
         </section>
       </FocusFrame>
     </section>
@@ -10580,7 +11006,7 @@ function WorkspaceApp({ session, onLogout }) {
   const roleWorkspaceAccess = {
     designer: ['projects', 'project', 'ledger', 'storyboard', 'generation', 'handoff', 'brands'],
     operator: ['projects', 'review', 'export'],
-    admin: ['system', 'team', 'admin-release', 'brands', 'quality']
+    admin: ['system', 'projects', 'team', 'admin-release', 'brands', 'quality']
   };
   const allowedSections = roleWorkspaceAccess[session.user.role] || ['project'];
   const workspaceNavItems = session.user.role === 'designer'
@@ -10596,6 +11022,7 @@ function WorkspaceApp({ session, onLogout }) {
       ]
       : [
         { id: 'system', label: '系统与日志', icon: BarChart3 },
+        { id: 'projects', label: '项目中心', icon: FolderOpen },
         { id: 'team', label: '项目分配', icon: UsersRound },
         { id: 'admin-release', label: '审核进度', icon: ShieldCheck },
         { id: 'brands', label: '品牌库', icon: Palette },
@@ -10604,7 +11031,7 @@ function WorkspaceApp({ session, onLogout }) {
   const visibleNavItems = navItems.filter((item) => allowedSections.includes(item.id));
   const canCreateProject = ['designer', 'admin'].includes(session.user.role);
   const currentNav = [...navItems, ...globalNavItems,
-    { id: 'projects', eyebrow: 'Projects', title: '项目中心', subtitle: '查看并继续你负责的项目。' },
+    { id: 'projects', eyebrow: 'Projects', title: '项目中心', subtitle: '查看、继续、删除与恢复团队项目。' },
     { id: 'system', eyebrow: 'System Health', title: '系统与日志', subtitle: '管理员专用。用于定位问题、分配项目和查看审核进度。' },
     { id: 'admin-release', eyebrow: 'Review Progress', title: '审核进度', subtitle: '只读查看运营审核与设计返修进度。' }
   ]
@@ -10633,7 +11060,7 @@ function WorkspaceApp({ session, onLogout }) {
   const productLockChanged = currentProject ? !isSameProductLock(currentProject, projectForm) : false;
   const hasReferenceImage = Boolean(projectForm.sourceImageName || projectForm.sourceImagePreview);
   const hasLedgerDraft = ledgerFacts.length > 0;
-  const hasStoryboardBriefs = isStoryboardPlanReady(storyboardBriefs, projectForm);
+  const hasStoryboardBriefs = isStoryboardPlanReady(storyboardBriefs, projectForm, ledgerFacts);
   const exportReady = hasStoryboardBriefs
     && activeSlots.length > 0
     && activeSlots.every((slot) => isDecisionFullyApproved(getReviewDecision(reviewDecisions, slot.id, storyboardBriefs)));
@@ -11332,6 +11759,103 @@ function WorkspaceApp({ session, onLogout }) {
     }, { projectId: activeProjectId, step: 'ledger' });
     setSaveStatus(`已合并 ${selected.length} 条卖点，可继续编辑合并后的内容。`);
   };
+  const toggleRequiredLedgerFact = (index) => {
+    const target = ledgerFacts[index];
+    if (!target || !isStoryboardUsableFact(target)) return;
+    const isRequired = isRequiredStoryboardClaim(target);
+    const requiredCount = getRequiredStoryboardFacts(ledgerFacts).length;
+    if (!isRequired && requiredCount >= STORYBOARD_REQUIRED_CLAIM_LIMIT) {
+      setSaveStatus(`必选上图最多标记 ${STORYBOARD_REQUIRED_CLAIM_LIMIT} 条，避免方案被过度约束。`);
+      return;
+    }
+    const nextLedgerFacts = ledgerFacts.map((fact, currentIndex) => (
+      currentIndex === index
+        ? { ...fact, requiredInStoryboard: !isRequired }
+        : fact
+    ));
+    setLedgerFacts(nextLedgerFacts);
+    const nextProject = createProjectRecord(projectForm, nextLedgerFacts, activeProjectId, storyboardBriefs, reviewDecisions, generationRuns, promptOverrides, exportSelections);
+    const nextProjects = projects.some((project) => project.id === activeProjectId)
+      ? projects.map((project) => (project.id === activeProjectId ? nextProject : project))
+      : [nextProject, ...projects];
+    persistProjects(nextProjects);
+    appLogger.log('audit.ledger.required_claim_toggled', {
+      index,
+      claim: target.claim || '',
+      required: !isRequired
+    }, { projectId: activeProjectId, step: 'ledger' });
+    setSaveStatus(!isRequired
+      ? '已标记为必选上图。生成或编辑图片方案时会检查它是否被覆盖。'
+      : '已取消必选上图。');
+  };
+  const updateStoryboardBrief = (slotId, patch = {}, options = {}) => {
+    const currentIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(slotId));
+    if (currentIndex < 0) return;
+    const currentBrief = storyboardBriefs[currentIndex];
+    const normalizedPatch = Object.fromEntries(Object.entries(patch).map(([key, value]) => (
+      typeof value === 'string' ? [key, value.trim()] : [key, value]
+    )));
+    const hasChange = Object.entries(normalizedPatch).some(([key, value]) => (
+      String(currentBrief?.[key] || '') !== String(value || '')
+    ));
+    if (!hasChange) return;
+    const nextBrief = rebuildEditableStoryboardBrief(
+      currentBrief,
+      normalizedPatch,
+      projectForm,
+      ledgerFacts,
+      projectBrandLibrary,
+      options
+    );
+    const nextBriefs = storyboardBriefs.map((brief, index) => (
+      index === currentIndex ? nextBrief : brief
+    ));
+    commitStoryboardStructure(nextBriefs, currentIndex, '已更新当前图槽方案');
+  };
+  const rewriteStoryboardBriefPlan = (slotId) => {
+    const currentIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(slotId));
+    if (currentIndex < 0) return;
+    const currentBrief = storyboardBriefs[currentIndex];
+    const nextBrief = rebuildEditableStoryboardBrief(
+      currentBrief,
+      { expressionMode: currentBrief.expressionMode || getDefaultStoryboardExpressionMode(currentBrief.visualType, isAPlusPlan(projectForm)) },
+      projectForm,
+      ledgerFacts,
+      projectBrandLibrary,
+      { rewritePlan: true }
+    );
+    const nextBriefs = storyboardBriefs.map((brief, index) => (
+      index === currentIndex ? nextBrief : brief
+    ));
+    commitStoryboardStructure(nextBriefs, currentIndex, '已按当前表达策略重写方案');
+  };
+  const keepStoryboardBriefPlan = (slotId) => {
+    updateStoryboardBrief(slotId, { planTextStale: false }, { keepPlanText: true });
+  };
+  const undoStoryboardBriefRewrite = (slotId) => {
+    const currentIndex = storyboardBriefs.findIndex((brief) => Number(brief.id) === Number(slotId));
+    if (currentIndex < 0) return;
+    const currentBrief = storyboardBriefs[currentIndex];
+    const undo = currentBrief.strategyRewriteUndo;
+    if (!undo) return;
+    const nextBrief = rebuildEditableStoryboardBrief(
+      currentBrief,
+      {
+        visualProof: undo.visualProof || '',
+        composition: undo.composition || '',
+        expressionMode: undo.expressionMode || currentBrief.expressionMode,
+        strategyRewriteUndo: null
+      },
+      projectForm,
+      ledgerFacts,
+      projectBrandLibrary,
+      { restorePreviousPlan: true }
+    );
+    const nextBriefs = storyboardBriefs.map((brief, index) => (
+      index === currentIndex ? nextBrief : brief
+    ));
+    commitStoryboardStructure(nextBriefs, currentIndex, '已撤销上一次策略重写');
+  };
   const generateStoryboardBriefs = async () => {
     if (isPlanningStoryboard || regeneratingSlotId) return;
     if (!ledgerFacts.length) {
@@ -11922,6 +12446,7 @@ function WorkspaceApp({ session, onLogout }) {
         onAddFact={addLedgerFact}
         onDeleteFact={deleteLedgerFact}
         onMergeFacts={mergeLedgerFacts}
+        onToggleRequiredFact={toggleRequiredLedgerFact}
         onGoStoryboard={continueToStoryboard}
         focusRequest={focusRequest}
       />
@@ -11941,6 +12466,10 @@ function WorkspaceApp({ session, onLogout }) {
         onAddStoryboardSlot={addStoryboardSlot}
         onRemoveStoryboardSlot={removeStoryboardSlot}
         onMoveStoryboardSlot={moveStoryboardSlot}
+        onUpdateStoryboardBrief={updateStoryboardBrief}
+        onRewriteStoryboardBriefPlan={rewriteStoryboardBriefPlan}
+        onKeepStoryboardBriefPlan={keepStoryboardBriefPlan}
+        onUndoStoryboardBriefRewrite={undoStoryboardBriefRewrite}
         onGoGeneration={goGeneration}
         focusRequest={focusRequest}
       />
@@ -11975,6 +12504,7 @@ function WorkspaceApp({ session, onLogout }) {
     handoff: (
       <HandoffPage
         projectForm={projectForm}
+        ledgerFacts={ledgerFacts}
         storyboardBriefs={storyboardBriefs}
         generationRuns={generationRuns}
         onBack={() => navigateTo('generation', 'generation')}
@@ -12002,6 +12532,7 @@ function WorkspaceApp({ session, onLogout }) {
       <ExportPage
         activeProjectId={activeProjectId}
         projectForm={projectForm}
+        ledgerFacts={ledgerFacts}
         storyboardBriefs={storyboardBriefs}
         reviewDecisions={reviewDecisions}
         generationRuns={generationRuns}

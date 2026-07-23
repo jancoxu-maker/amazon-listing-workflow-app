@@ -341,3 +341,34 @@ test('designer can submit review when every planned slot has a usable image', as
   assert.equal(project.status, 'review');
   assert.equal(writes.some((write) => write.sql.includes("'project.submitted_for_review'")), true);
 });
+
+test('assigned designer can move a project to trash', async () => {
+  const writes = [];
+  const database = {
+    configured: true,
+    async transaction(callback) {
+      return callback({
+        async query(sql, params) {
+          writes.push({ sql, params });
+          if (sql.includes('FROM projects p') && sql.includes('deleted_at IS NULL')) {
+            return {
+              rowCount: 1,
+              rows: [{
+                id: 'prj_assigned',
+                project_name: 'Assigned project',
+                created_by: 'usr_other',
+                status: 'design',
+                has_designer_assignment: true
+              }]
+            };
+          }
+          return { rowCount: 1, rows: [] };
+        }
+      });
+    }
+  };
+  const store = createStage1Store(database);
+  const result = await store.trashProject(designer, 'prj_assigned');
+  assert.equal(result.deleted, true);
+  assert.equal(writes.some((write) => write.sql.includes("status = 'archived'")), true);
+});

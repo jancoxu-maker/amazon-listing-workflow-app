@@ -404,7 +404,17 @@ export function createStage1Store(database) {
           SELECT p.*, creator.display_name AS creator_name
           FROM projects p
           JOIN app_users creator ON creator.id = p.created_by
-          WHERE p.deleted_at IS NOT NULL AND p.created_by = $1
+          WHERE p.deleted_at IS NOT NULL
+            AND (
+              p.created_by = $1
+              OR p.deleted_by = $1
+              OR EXISTS (
+                SELECT 1 FROM project_assignments a
+                WHERE a.project_id = p.id
+                  AND a.user_id = $1
+                  AND a.assignment_role = 'designer'
+              )
+            )
           ORDER BY p.deleted_at DESC
         `, [user.id]);
     return result.rows.map((row) => ({
@@ -429,16 +439,23 @@ export function createStage1Store(database) {
     const id = String(projectId || '').trim();
     const result = await database.transaction(async (client) => {
       const current = await client.query(
-        `SELECT id, project_name, created_by, status
-         FROM projects
-         WHERE id = $1 AND deleted_at IS NULL
+        `SELECT p.id, p.project_name, p.created_by, p.status,
+           EXISTS (
+             SELECT 1 FROM project_assignments a
+             WHERE a.project_id = p.id
+               AND a.user_id = $2
+               AND a.assignment_role = 'designer'
+           ) AS has_designer_assignment
+         FROM projects p
+         WHERE p.id = $1 AND p.deleted_at IS NULL
          FOR UPDATE`,
-        [id]
+        [id, user.id]
       );
       if (!current.rowCount) throw new Stage1Error('项目不存在或已在回收站。', 404, 'PROJECT_NOT_FOUND');
       const project = current.rows[0];
-      if (user.role !== 'admin' && project.created_by !== user.id) {
-        throw new Stage1Error('设计师只能删除自己创建的项目。', 403, 'PROJECT_DELETE_FORBIDDEN');
+      const canDesignerManage = project.created_by === user.id || project.has_designer_assignment;
+      if (user.role !== 'admin' && !canDesignerManage) {
+        throw new Stage1Error('设计端只能删除自己创建或分配给自己的项目。', 403, 'PROJECT_DELETE_FORBIDDEN');
       }
       if (user.role !== 'admin' && !['draft', 'content', 'planning', 'design', 'rework'].includes(project.status)) {
         throw new Stage1Error('已进入审核或已导出的项目需要管理员移入回收站。', 409, 'PROJECT_DELETE_REQUIRES_ADMIN');
@@ -472,16 +489,23 @@ export function createStage1Store(database) {
     const id = String(projectId || '').trim();
     return database.transaction(async (client) => {
       const current = await client.query(
-        `SELECT id, project_name, created_by, status_before_delete
-         FROM projects
-         WHERE id = $1 AND deleted_at IS NOT NULL
+        `SELECT p.id, p.project_name, p.created_by, p.deleted_by, p.status_before_delete,
+           EXISTS (
+             SELECT 1 FROM project_assignments a
+             WHERE a.project_id = p.id
+               AND a.user_id = $2
+               AND a.assignment_role = 'designer'
+           ) AS has_designer_assignment
+         FROM projects p
+         WHERE p.id = $1 AND p.deleted_at IS NOT NULL
          FOR UPDATE`,
-        [id]
+        [id, user.id]
       );
       if (!current.rowCount) throw new Stage1Error('回收站中没有这个项目。', 404, 'TRASHED_PROJECT_NOT_FOUND');
       const project = current.rows[0];
-      if (user.role !== 'admin' && project.created_by !== user.id) {
-        throw new Stage1Error('设计师只能恢复自己创建的项目。', 403, 'PROJECT_RESTORE_FORBIDDEN');
+      const canDesignerManage = project.created_by === user.id || project.deleted_by === user.id || project.has_designer_assignment;
+      if (user.role !== 'admin' && !canDesignerManage) {
+        throw new Stage1Error('设计端只能恢复自己创建或分配给自己的项目。', 403, 'PROJECT_RESTORE_FORBIDDEN');
       }
       const restoredStatus = PROJECT_STATUSES.has(project.status_before_delete) && project.status_before_delete !== 'archived'
         ? project.status_before_delete
