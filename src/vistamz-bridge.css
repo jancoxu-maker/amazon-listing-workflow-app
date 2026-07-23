@@ -126,6 +126,13 @@
   border-radius: var(--vz-radius-md);
   font: 600 14px/20px var(--vz-font-ui);
 }
+.vz-root .brand-example-actions .vz-btn--icon {
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  min-height: 34px;
+  padding: 0;
+}
 .vz-root .vz-btn--primary { border-color: transparent; background: var(--vz-purple-500); color: var(--vz-text-inverse); }
 .vz-root .vz-btn--primary:hover:not(:disabled) { background: var(--vz-purple-600); color: var(--vz-text-inverse); }
 .vz-root .vz-btn--primary:active:not(:disabled) { background: var(--vz-purple-700); }

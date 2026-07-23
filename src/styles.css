@@ -11415,12 +11415,16 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
 
 .brand-example-card {
   display: grid;
-  grid-template-columns: 160px minmax(220px, 1fr) auto;
-  gap: 16px;
-  align-items: center;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "preview name actions"
+    "preview caption caption";
+  gap: 10px 16px;
+  align-items: start;
   min-width: 0;
   min-height: 116px;
   padding: 14px;
+  overflow: hidden;
   border: 1px solid var(--vz-line);
   border-radius: var(--vz-radius-md);
   background: #fff;
@@ -11430,6 +11434,7 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
 .brand-example-preview {
   position: relative;
   display: grid;
+  grid-area: preview;
   width: 160px;
   height: 92px;
   place-items: center;
@@ -11459,13 +11464,13 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
 }
 
 .brand-example-fields {
-  display: grid;
-  align-content: center;
-  gap: 10px;
+  display: contents;
   min-width: 0;
 }
 
 .brand-example-fields strong {
+  grid-area: name;
+  align-self: center;
   overflow: hidden;
   color: var(--vz-ink);
   font-size: 14px;
@@ -11475,6 +11480,7 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
 }
 
 .brand-example-fields input {
+  grid-area: caption;
   width: 100%;
   min-width: 0;
   height: 44px;
@@ -11487,21 +11493,25 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
 }
 
 .brand-example-actions {
+  grid-area: actions;
   display: flex;
+  align-self: center;
   justify-self: end;
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid var(--vz-line);
-  border-radius: var(--vz-radius-sm);
-  background: #fff;
-  box-shadow: 0 8px 18px rgba(49, 23, 61, .06);
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .brand-example-actions .vz-btn--icon {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  min-height: 32px;
+  flex: 0 0 34px;
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
   border-color: transparent;
   background: transparent;
 }
@@ -11794,7 +11804,10 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
   }
 
   .brand-example-card {
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: 88px minmax(0, 1fr) auto;
+    grid-template-areas:
+      "preview name actions"
+      "caption caption caption";
     min-height: 0;
     padding: 12px;
   }
@@ -11805,7 +11818,7 @@ textarea:focus { border-color: #7e49fe; outline: 3px solid rgba(126, 73, 254, 0.
   }
 
   .brand-example-actions {
-    grid-column: 1 / -1;
+    grid-area: actions;
     justify-content: end;
     width: fit-content;
     margin-left: auto;
